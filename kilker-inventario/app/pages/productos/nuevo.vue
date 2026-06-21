@@ -8,6 +8,7 @@ import {
   type ProductUnit
 } from '~/types/inventario'
 
+definePageMeta({ requiresRole: 'admin' })
 useHead({ title: 'Nuevo producto · Inventario Kilker' })
 
 const toast = useToast()

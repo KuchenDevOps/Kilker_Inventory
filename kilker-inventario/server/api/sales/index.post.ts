@@ -14,6 +14,7 @@ interface SaleItem {
 interface SaleBody {
   storeId: number
   note?: string
+  paymentMethod?: string
   items: SaleItem[]
 }
 
@@ -34,6 +35,9 @@ export default defineEventHandler(async (event) => {
       })
     }
   }
+
+  // Método de pago (para el corte de caja). Default efectivo; solo efectivo|tarjeta.
+  const paymentMethod = body?.paymentMethod === 'tarjeta' ? 'tarjeta' : 'efectivo'
 
   // El empleado solo puede vender en SU tienda; el admin, en cualquiera.
   if (profile.role === 'empleado' && profile.storeId !== storeId) {
@@ -88,6 +92,7 @@ export default defineEventHandler(async (event) => {
         storeId,
         createdBy: profile.id,
         status: 'emitida',
+        paymentMethod,
         note: body.note ?? null,
         totalAmount: String(totalAmount)
       })

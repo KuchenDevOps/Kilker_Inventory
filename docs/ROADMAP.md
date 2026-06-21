@@ -1,7 +1,7 @@
 # ROADMAP — Inventario Kilker
 
 > Cómo dirigir el proyecto por fases. Idioma: español.
-> Última actualización: 2026-06-20 · Fase actual: **Fase 1**.
+> Última actualización: 2026-06-21 · Fase actual: **Fase 1**.
 
 ---
 
@@ -41,9 +41,24 @@ por fases, validando specs, planes y capacidades antes de escribir código de pr
 - **El mock de Pinia se eliminó**; la UI consume datos reales: dashboard, catálogo, alta de
   producto, **entrada de stock** y **venta** llaman a `server/api/` (lecturas por SSR;
   escrituras autenticadas con Bearer). Navegación por rol (admin/empleado).
-- Adelanta trabajo de **Fase 3** (núcleo de inventario): catálogo, entradas y ventas ya
-  funcionan end-to-end contra la BD. Falta validar contra specs y construir ajuste /
-  transferencia / tickets-anulación, y proteger rutas.
+- Adelanta trabajo de **Fase 3** (núcleo de inventario): catálogo, entradas, ventas,
+  **categorías (CRUD)** e **historial+anulación de ventas** ya funcionan end-to-end contra
+  la BD. Falta validar contra specs y construir ajuste / transferencia / tickets.
+- **Protección de rutas por rol (hecho):** guard global solo-cliente
+  (`app/middleware/auth.global.ts`): sin sesión → `/login`; rutas admin marcadas con
+  `definePageMeta({ requiresRole: 'admin' })`. Ver §10 de `CLAUDE.md`.
+- **Categorías + historial/anulación de ventas (hecho):** CRUD de categorías (admin),
+  listado de ventas (empleado→su tienda, admin→todas) y anulación de factura (admin,
+  revierte kardex + repone inventario). El empleado vende; no anula. Ver §10 de `CLAUDE.md`.
+- **Tickets de corrección (hecho):** empleado solicita la anulación de una venta (abre
+  ticket); el admin aprueba (ejecuta la anulación reusando `voidInvoiceTx`) o rechaza.
+  Endpoints `POST/GET /api/tickets`, `POST /api/tickets/:id/resolve`. Ver §10 de `CLAUDE.md`.
+- **Corte de caja (hecho):** método de pago efectivo/tarjeta en la venta + cortes por turno
+  (`cash_closeouts`, migración 0003). Cada corte resume las ventas de la tienda desde el
+  corte anterior, separando efectivo/tarjeta (snapshot). Endpoints `POST/GET /api/cortes`,
+  `GET /api/cortes/:id`. Pantalla `app/pages/cortes/index.vue`. Ver §10 de `CLAUDE.md`.
+- **Layout responsivo completo** (`app/layouts/default.vue`): sidebar fija en desktop,
+  drawer deslizable en móvil (hamburguesa → overlay → X o tap fuera para cerrar).
 
 **Hecho cuando:**
 - Las "Preguntas abiertas" de `CONTEXTO.md` están resueltas y el modelo de datos está

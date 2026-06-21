@@ -23,6 +23,7 @@ import {
   boolean,
   check,
   index,
+  integer,
   numeric,
   pgEnum,
   pgTable,
@@ -84,6 +85,8 @@ export const ticketStatus = pgEnum('ticket_status', [
 export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
 
 export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta'])
+
+export const paymentMethod = pgEnum('payment_method', ['efectivo', 'tarjeta'])
 
 /** Descuentos: fuera de v1 (columnas null-able), enum listo para v2. */
 export const discountType = pgEnum('discount_type', ['porcentaje', 'combo'])
@@ -193,6 +196,8 @@ export const invoices = pgTable(
       .notNull()
       .references(() => profiles.id),
     status: invoiceStatus('status').notNull().default('emitida'),
+    // Método de pago (para el corte de caja: separa efectivo de tarjeta).
+    paymentMethod: paymentMethod('payment_method').notNull().default('efectivo'),
     note: text('note'),
     totalAmount: numeric('total_amount', { precision: 14, scale: 2 })
       .notNull()
@@ -333,6 +338,51 @@ export const tickets = pgTable('tickets', {
   resolvedAt: timestamp('resolved_at', { withTimezone: true })
 }).enableRLS()
 
+/**
+ * Corte de caja por TURNO: snapshot (estado de cuenta) de las ventas de una tienda
+ * en un periodo `[periodFrom, periodTo)`. Cada corte cubre desde el corte anterior
+ * de esa tienda (periodFrom = periodTo del anterior; null = desde el inicio) hasta
+ * el momento del corte. Es un resumen automático: no hay conteo físico de efectivo.
+ */
+export const cashCloseouts = pgTable(
+  'cash_closeouts',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    // Ventana cubierta por el corte. `period_from` null = desde el inicio.
+    periodFrom: timestamp('period_from', { withTimezone: true }),
+    periodTo: timestamp('period_to', { withTimezone: true }).notNull(),
+    // Snapshot calculado al momento del corte (ventas EMITIDAS del periodo):
+    salesCount: integer('sales_count').notNull().default(0),
+    totalEmitido: numeric('total_emitido', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    totalEfectivo: numeric('total_efectivo', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    totalTarjeta: numeric('total_tarjeta', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    // Ventas del periodo que están ANULADAS al momento del corte (informativo).
+    voidedCount: integer('voided_count').notNull().default(0),
+    totalVoided: numeric('total_voided', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [index('cash_closeouts_store_created_idx').on(t.storeId, t.createdAt)]
+).enableRLS()
+
 // ── Relaciones (para el query builder relacional de Drizzle) ──────────────────
 
 export const profilesRelations = relations(profiles, ({ one, many }) => ({
@@ -344,7 +394,8 @@ export const profilesRelations = relations(profiles, ({ one, many }) => ({
   invoices: many(invoices),
   transfers: many(transfers),
   raisedTickets: many(tickets, { relationName: 'ticketRaisedBy' }),
-  resolvedTickets: many(tickets, { relationName: 'ticketResolvedBy' })
+  resolvedTickets: many(tickets, { relationName: 'ticketResolvedBy' }),
+  cashCloseouts: many(cashCloseouts)
 }))
 
 export const storesRelations = relations(stores, ({ many }) => ({
@@ -354,7 +405,8 @@ export const storesRelations = relations(stores, ({ many }) => ({
   invoices: many(invoices),
   transfersFrom: many(transfers, { relationName: 'transferFrom' }),
   transfersTo: many(transfers, { relationName: 'transferTo' }),
-  tickets: many(tickets)
+  tickets: many(tickets),
+  cashCloseouts: many(cashCloseouts)
 }))
 
 export const categoriesRelations = relations(categories, ({ one, many }) => ({
@@ -503,6 +555,17 @@ export const ticketsRelations = relations(tickets, ({ one }) => ({
   })
 }))
 
+export const cashCloseoutsRelations = relations(cashCloseouts, ({ one }) => ({
+  store: one(stores, {
+    fields: [cashCloseouts.storeId],
+    references: [stores.id]
+  }),
+  createdBy: one(profiles, {
+    fields: [cashCloseouts.createdBy],
+    references: [profiles.id]
+  })
+}))
+
 // ── Tipos inferidos (select / insert) ────────────────────────────────────────
 export type Store = typeof stores.$inferSelect
 export type NewStore = typeof stores.$inferInsert
@@ -526,3 +589,5 @@ export type TransferItem = typeof transferItems.$inferSelect
 export type NewTransferItem = typeof transferItems.$inferInsert
 export type Ticket = typeof tickets.$inferSelect
 export type NewTicket = typeof tickets.$inferInsert
+export type CashCloseout = typeof cashCloseouts.$inferSelect
+export type NewCashCloseout = typeof cashCloseouts.$inferInsert

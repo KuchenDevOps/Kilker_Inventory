@@ -9,7 +9,15 @@
 // `serverSupabaseUser` no resuelve el usuario aunque la cookie sea válida; el
 // path Bearer sí (verificado). `requireProfile` ya soporta ambos. El cliente
 // siempre tiene un token fresco (auto-refresh), así que Bearer es robusto.
-import type { ApiCategory, ApiProduct, ApiStore, Me } from '~/types/inventario'
+import type {
+  ApiCategory,
+  ApiCorte,
+  ApiProduct,
+  ApiSale,
+  ApiStore,
+  ApiTicket,
+  Me
+} from '~/types/inventario'
 
 // El `transform` coalesce `undefined → default`: si un endpoint responde 204
 // (cuerpo vacío), ofetch resuelve `undefined` y Nuxt avisaría "must return a value".
@@ -78,6 +86,157 @@ export function useMe() {
   }
 
   return { me, refresh }
+}
+
+/**
+ * Historial de ventas (lectura AUTENTICADA, Bearer del cliente). El backend
+ * filtra por tienda según el rol (empleado: su tienda; admin: todas). Expone los
+ * filtros `status`/`storeId` como refs; al cambiarlos (o la sesión) recarga.
+ */
+export function useSales() {
+  const sales = useState<ApiSale[]>('sales', () => [])
+  const pending = useState('sales-pending', () => false)
+  const error = useState<string | null>('sales-error', () => null)
+  const status = useState<'todas' | 'emitida' | 'anulada'>('sales-status', () => 'todas')
+  const storeId = useState<number | undefined>('sales-store', () => undefined)
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      sales.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        sales.value = []
+        return
+      }
+      const q = new URLSearchParams()
+      if (status.value !== 'todas') q.set('status', status.value)
+      if (storeId.value) q.set('storeId', String(storeId.value))
+      const qs = q.toString()
+      sales.value = await $fetch<ApiSale[]>(`/api/sales${qs ? `?${qs}` : ''}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      sales.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('sales-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    watch([user, status, storeId], () => void refresh(), { immediate: true })
+  }
+
+  return { sales, pending, error, status, storeId, refresh }
+}
+
+/**
+ * Tickets de corrección (lectura AUTENTICADA, Bearer del cliente). El backend
+ * filtra por tienda según el rol. Expone `status` como ref y `refresh()`.
+ * El componente debe llamar `refresh()` en `onMounted` para evitar datos viejos
+ * (el watcher solo se instala una vez; ver lección de useSales).
+ */
+export function useTickets() {
+  const tickets = useState<ApiTicket[]>('tickets', () => [])
+  const pending = useState('tickets-pending', () => false)
+  const error = useState<string | null>('tickets-error', () => null)
+  const status = useState<'todos' | 'abierto' | 'aprobado' | 'rechazado'>(
+    'tickets-status',
+    () => 'todos'
+  )
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      tickets.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        tickets.value = []
+        return
+      }
+      const qs = status.value !== 'todos' ? `?status=${status.value}` : ''
+      tickets.value = await $fetch<ApiTicket[]>(`/api/tickets${qs}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      tickets.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('tickets-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    watch([user, status], () => void refresh(), { immediate: true })
+  }
+
+  return { tickets, pending, error, status, refresh }
+}
+
+/**
+ * Cortes de caja (lectura AUTENTICADA, Bearer del cliente). Empleado→su tienda,
+ * admin→todas (con filtro `storeId`). Llamar `refresh()` en `onMounted`.
+ */
+export function useCortes() {
+  const cortes = useState<ApiCorte[]>('cortes', () => [])
+  const pending = useState('cortes-pending', () => false)
+  const error = useState<string | null>('cortes-error', () => null)
+  const storeId = useState<number | undefined>('cortes-store', () => undefined)
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      cortes.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        cortes.value = []
+        return
+      }
+      const qs = storeId.value ? `?storeId=${storeId.value}` : ''
+      cortes.value = await $fetch<ApiCorte[]>(`/api/cortes${qs}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      cortes.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('cortes-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    watch([user, storeId], () => void refresh(), { immediate: true })
+  }
+
+  return { cortes, pending, error, storeId, refresh }
 }
 
 /**

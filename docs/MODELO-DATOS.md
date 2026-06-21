@@ -1,9 +1,14 @@
 # MODELO DE DATOS (DRAFT) — Inventario Kilker
 
-> ⚠️ **BORRADOR.** Basado en supuestos razonables para un inventario de pinturas
-> multi-sucursal. **Debe validarse contra las especificaciones** antes de implementar.
+> ⚠️ **BORRADOR DESACTUALIZADO.** Este documento es el boceto **pre-implementación** y ya
+> NO refleja el esquema real. La **fuente de verdad** es `server/db/schema.ts` (12 tablas,
+> aplicadas vía migraciones `0000`–`0003`). El esquema real implementado usa, entre otros:
+> `stores`, `profiles` (roles `admin|empleado`), `categories`, `products`, `inventory`,
+> `stock_movements` (kardex append-only), `invoices`/`invoice_items` (con `payment_method`
+> efectivo|tarjeta), `transfers`/`transfer_items`, `tickets` y **`cash_closeouts`** (cortes
+> de caja por turno). Ver `CLAUDE.md` §10 y el plan de BD para el detalle vigente.
 > Motor: **PostgreSQL (Supabase)**. Esquema definido con **Drizzle** (`server/db/schema.ts`).
-> Idioma: español. Última actualización: 2026-06-19.
+> Idioma: español. Última actualización: 2026-06-21.
 
 ---
 
