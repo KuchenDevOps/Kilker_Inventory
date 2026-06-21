@@ -33,6 +33,26 @@ async function resolveUserId(event: H3Event): Promise<string | null> {
   return user?.id ?? null
 }
 
+/**
+ * Devuelve el `profile` del usuario autenticado o `null` si no hay sesión válida
+ * (sin lanzar). Útil para endpoints como `/api/me` que deben responder 200 + null
+ * cuando no hay sesión, en vez de un 401.
+ */
+export async function getOptionalProfile(
+  event: H3Event
+): Promise<SessionProfile | null> {
+  const userId = await resolveUserId(event)
+  if (!userId) return null
+
+  const db = useDb()
+  const profile = await db.query.profiles.findFirst({
+    where: eq(profiles.id, userId)
+  })
+
+  if (!profile || !profile.isActive) return null
+  return profile
+}
+
 export async function requireProfile(
   event: H3Event,
   opts: { role?: 'admin' | 'empleado' } = {}

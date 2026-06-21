@@ -29,6 +29,8 @@ async function onSubmit() {
     errorMsg.value = 'Correo o contraseña incorrectos.'
     return
   }
+  // `useMe()` (en el layout) observa la sesión y carga el perfil con Bearer al
+  // detectar el login; solo navegamos al dashboard.
   await router.replace('/dashboard')
 }
 </script>

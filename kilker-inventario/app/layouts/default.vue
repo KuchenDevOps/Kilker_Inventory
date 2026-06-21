@@ -1,19 +1,61 @@
 <script setup lang="ts">
+import type { UserRole } from '~/types/inventario'
+
 const route = useRoute()
 const user = useSupabaseUser()
 const supabase = useSupabaseClient()
+const { me, refresh: refreshMe } = useMe()
 
-const nav = [
+type NavItem = { label: string; to: string; icon: string; roles?: UserRole[] }
+
+const allNav: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: 'i-lucide-layout-dashboard' },
-  { label: 'Nuevo producto', to: '/productos/nuevo', icon: 'i-lucide-package-plus' }
+  { label: 'Catálogo', to: '/productos', icon: 'i-lucide-package' },
+  {
+    label: 'Nuevo producto',
+    to: '/productos/nuevo',
+    icon: 'i-lucide-package-plus',
+    roles: ['admin']
+  },
+  {
+    label: 'Entrada de stock',
+    to: '/movimientos/entrada',
+    icon: 'i-lucide-arrow-down-to-line',
+    roles: ['admin']
+  },
+  {
+    label: 'Venta',
+    to: '/ventas/nueva',
+    icon: 'i-lucide-receipt-text',
+    roles: ['admin', 'empleado']
+  }
 ]
 
-function isActive(to: string) {
-  return route.path === to || route.path.startsWith(`${to}/`)
-}
+// Filtra por rol: ítems sin `roles` son públicos; el resto requiere el rol actual.
+const nav = computed(() =>
+  allNav.filter((item) => !item.roles || (me.value && item.roles.includes(me.value.role)))
+)
+
+// El ítem activo es el de prefijo más largo que coincide con la ruta actual
+// (así /productos/nuevo resalta "Nuevo producto", no "Catálogo").
+const activeTo = computed(() => {
+  const matches = nav.value
+    .filter((i) => route.path === i.to || route.path.startsWith(`${i.to}/`))
+    .sort((a, b) => b.to.length - a.to.length)
+  return matches[0]?.to
+})
+
+const roleLabel = computed(() =>
+  me.value?.role === 'admin'
+    ? 'Administrador'
+    : me.value?.role === 'empleado'
+      ? 'Empleado'
+      : null
+)
 
 async function logout() {
   await supabase.auth.signOut()
+  await refreshMe()
   await navigateTo('/login')
 }
 </script>
@@ -38,8 +80,8 @@ async function logout() {
           :key="item.to"
           :to="item.to"
           :icon="item.icon"
-          :color="isActive(item.to) ? 'primary' : 'neutral'"
-          :variant="isActive(item.to) ? 'soft' : 'ghost'"
+          :color="activeTo === item.to ? 'primary' : 'neutral'"
+          :variant="activeTo === item.to ? 'soft' : 'ghost'"
           block
           class="justify-start"
         >
@@ -48,7 +90,7 @@ async function logout() {
       </nav>
 
       <div class="p-3 border-t border-default">
-        <p class="text-xs text-muted">Fase 1 · datos de demostración</p>
+        <p class="text-xs text-muted">Fase 1 · datos reales (Supabase)</p>
       </div>
     </aside>
 
@@ -67,8 +109,8 @@ async function logout() {
             :key="item.to"
             :to="item.to"
             :icon="item.icon"
-            :color="isActive(item.to) ? 'primary' : 'neutral'"
-            :variant="isActive(item.to) ? 'soft' : 'ghost'"
+            :color="activeTo === item.to ? 'primary' : 'neutral'"
+            :variant="activeTo === item.to ? 'soft' : 'ghost'"
             square
           />
         </nav>
@@ -76,7 +118,16 @@ async function logout() {
         <!-- Sesión -->
         <div class="ml-auto flex items-center gap-2">
           <template v-if="user">
-            <span class="text-sm text-muted hidden sm:inline">{{ user.email }}</span>
+            <div class="hidden sm:flex flex-col items-end leading-tight">
+              <span class="text-sm">{{ user.email }}</span>
+              <UBadge
+                v-if="roleLabel"
+                :label="roleLabel"
+                color="neutral"
+                variant="subtle"
+                size="xs"
+              />
+            </div>
             <UButton
               color="neutral"
               variant="ghost"

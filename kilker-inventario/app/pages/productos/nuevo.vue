@@ -1,33 +1,33 @@
 <script setup lang="ts">
 import type { FormError, FormSubmitEvent } from '@nuxt/ui'
 import {
-  PRODUCT_BASES,
   PRODUCT_UNITS,
+  UNIT_LABELS,
+  type ApiProduct,
   type NewProductInput,
-  type ProductBase,
   type ProductUnit
 } from '~/types/inventario'
 
 useHead({ title: 'Nuevo producto · Inventario Kilker' })
 
-const store = useInventarioStore()
 const toast = useToast()
+const { me } = useMe()
+const { data: categories } = useCategories()
+const { data: products } = useProducts()
+const apiFetch = useApiFetch()
+
+const isAdmin = computed(() => me.value?.role === 'admin')
 
 type FormState = {
   sku: string
   name: string
-  brand: string
-  category: string
+  categoryId: number | undefined
   color: string
-  colorCode: string
-  base: ProductBase | undefined
-  finish: string
-  volume: number | undefined
   unit: ProductUnit
-  barcode: string
   price: number | undefined
   cost: number | undefined
   minQuantity: number | undefined
+  barcode: string
   isActive: boolean
 }
 
@@ -35,18 +35,13 @@ function emptyState(): FormState {
   return {
     sku: '',
     name: '',
-    brand: '',
-    category: '',
+    categoryId: undefined,
     color: '',
-    colorCode: '',
-    base: undefined,
-    finish: '',
-    volume: undefined,
-    unit: 'L',
-    barcode: '',
+    unit: 'litro',
     price: undefined,
     cost: undefined,
     minQuantity: undefined,
+    barcode: '',
     isActive: true
   }
 }
@@ -54,15 +49,18 @@ function emptyState(): FormState {
 const state = reactive<FormState>(emptyState())
 const submitting = ref(false)
 
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-const baseItems = PRODUCT_BASES.map((b) => ({ label: capitalize(b), value: b }))
-const unitItems = PRODUCT_UNITS.map((u) => ({ label: u, value: u }))
+const unitItems = PRODUCT_UNITS.map((u) => ({ label: UNIT_LABELS[u], value: u }))
+const categoryItems = computed(() =>
+  categories.value.map((c) => ({ label: c.name, value: c.id }))
+)
 
 function validate(s: FormState): FormError[] {
   const errors: FormError[] = []
   if (!s.sku.trim()) {
     errors.push({ name: 'sku', message: 'El SKU es obligatorio.' })
-  } else if (store.skuExists(s.sku)) {
+  } else if (
+    products.value.some((p) => p.sku.toLowerCase() === s.sku.trim().toLowerCase())
+  ) {
     errors.push({ name: 'sku', message: 'Ya existe un producto con este SKU.' })
   }
   if (!s.name.trim()) {
@@ -71,7 +69,10 @@ function validate(s: FormState): FormError[] {
   if (!s.unit) {
     errors.push({ name: 'unit', message: 'Selecciona una unidad.' })
   }
-  for (const field of ['volume', 'price', 'cost', 'minQuantity'] as const) {
+  if (s.price == null) {
+    errors.push({ name: 'price', message: 'El precio es obligatorio.' })
+  }
+  for (const field of ['price', 'cost', 'minQuantity'] as const) {
     const value = s[field]
     if (value != null && value < 0) {
       errors.push({ name: field, message: 'No puede ser negativo.' })
@@ -83,35 +84,44 @@ function validate(s: FormState): FormError[] {
 async function onSubmit(event: FormSubmitEvent<FormState>) {
   submitting.value = true
   const d = event.data
-  const clean = (v: string) => (v.trim() ? v.trim() : undefined)
+  const clean = (v: string) => (v.trim() ? v.trim() : null)
 
   const payload: NewProductInput = {
     sku: d.sku.trim(),
     name: d.name.trim(),
-    brand: clean(d.brand),
-    category: clean(d.category),
+    categoryId: d.categoryId ?? null,
     color: clean(d.color),
-    colorCode: clean(d.colorCode),
-    base: d.base,
-    finish: clean(d.finish),
-    volume: d.volume,
     unit: d.unit,
+    price: d.price as number,
+    cost: d.cost ?? null,
+    minQuantity: d.minQuantity ?? null,
     barcode: clean(d.barcode),
-    price: d.price,
-    cost: d.cost,
-    minQuantity: d.minQuantity,
     isActive: d.isActive
   }
 
-  const created = store.addProduct(payload)
-  toast.add({
-    title: 'Producto creado',
-    description: `${created.sku} — ${created.name}`,
-    color: 'success',
-    icon: 'i-lucide-circle-check'
-  })
-  submitting.value = false
-  await navigateTo('/dashboard')
+  try {
+    const created = await apiFetch<ApiProduct>('/api/products', {
+      method: 'POST',
+      body: payload as unknown as Record<string, unknown>
+    })
+    await refreshNuxtData('products')
+    toast.add({
+      title: 'Producto creado',
+      description: `${created.sku} — ${created.name}`,
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    await navigateTo('/productos')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo crear el producto',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submitting.value = false
+  }
 }
 
 function onReset() {
@@ -123,13 +133,13 @@ function onReset() {
   <UContainer class="py-8 max-w-3xl">
     <header class="mb-6">
       <UButton
-        to="/dashboard"
+        to="/productos"
         icon="i-lucide-arrow-left"
         variant="link"
         color="neutral"
         class="px-0 mb-2"
       >
-        Volver al dashboard
+        Volver al catálogo
       </UButton>
       <h1 class="text-2xl font-semibold">Nuevo producto</h1>
       <p class="text-sm text-muted">
@@ -138,9 +148,29 @@ function onReset() {
       </p>
     </header>
 
+    <UAlert
+      v-if="me && !isAdmin"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-lock"
+      title="Acceso restringido"
+      description="Solo un administrador puede dar de alta productos."
+      class="mb-6"
+    />
+    <UAlert
+      v-else-if="!me"
+      color="info"
+      variant="soft"
+      icon="i-lucide-log-in"
+      title="Inicia sesión"
+      description="Necesitas iniciar sesión como administrador para crear productos."
+      class="mb-6"
+    />
+
     <UForm
       :state="state"
       :validate="validate"
+      :disabled="!isAdmin"
       class="space-y-6"
       @submit="onSubmit"
     >
@@ -152,11 +182,7 @@ function onReset() {
 
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="SKU" name="sku" required>
-            <UInput
-              v-model="state.sku"
-              placeholder="ESM-BLA-1L"
-              class="w-full"
-            />
+            <UInput v-model="state.sku" placeholder="ESM-BLA-1L" class="w-full" />
           </UFormField>
 
           <UFormField label="Nombre" name="name" required>
@@ -167,72 +193,17 @@ function onReset() {
             />
           </UFormField>
 
-          <UFormField label="Marca" name="brand">
-            <UInput v-model="state.brand" placeholder="Comex" class="w-full" />
-          </UFormField>
-
-          <UFormField label="Categoría" name="category">
-            <UInput
-              v-model="state.category"
-              placeholder="Esmaltes"
+          <UFormField label="Categoría" name="categoryId">
+            <USelect
+              v-model="state.categoryId"
+              :items="categoryItems"
+              placeholder="Selecciona una categoría"
               class="w-full"
             />
           </UFormField>
-        </div>
-      </UCard>
 
-      <!-- Características de pintura -->
-      <UCard>
-        <template #header>
-          <h2 class="font-semibold">Características</h2>
-        </template>
-
-        <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Color" name="color">
             <UInput v-model="state.color" placeholder="Blanco" class="w-full" />
-          </UFormField>
-
-          <UFormField label="Código de color" name="colorCode">
-            <UInput
-              v-model="state.colorCode"
-              placeholder="N-100"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField label="Base" name="base">
-            <USelect
-              v-model="state.base"
-              :items="baseItems"
-              placeholder="Selecciona una base"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField label="Acabado" name="finish">
-            <UInput
-              v-model="state.finish"
-              placeholder="Brillante"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField label="Volumen" name="volume">
-            <UInputNumber
-              v-model="state.volume"
-              :min="0"
-              :step="0.5"
-              placeholder="1"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField label="Unidad" name="unit" required>
-            <USelect
-              v-model="state.unit"
-              :items="unitItems"
-              class="w-full"
-            />
           </UFormField>
         </div>
       </UCard>
@@ -244,7 +215,11 @@ function onReset() {
         </template>
 
         <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="Precio de venta (MXN)" name="price">
+          <UFormField label="Unidad" name="unit" required>
+            <USelect v-model="state.unit" :items="unitItems" class="w-full" />
+          </UFormField>
+
+          <UFormField label="Precio de venta (MXN)" name="price" required>
             <UInputNumber
               v-model="state.price"
               :min="0"
@@ -296,12 +271,7 @@ function onReset() {
       </UCard>
 
       <div class="flex flex-wrap justify-end gap-3">
-        <UButton
-          type="button"
-          variant="ghost"
-          color="neutral"
-          @click="onReset"
-        >
+        <UButton type="button" variant="ghost" color="neutral" @click="onReset">
           Limpiar
         </UButton>
         <UButton
@@ -309,6 +279,7 @@ function onReset() {
           icon="i-lucide-save"
           color="primary"
           :loading="submitting"
+          :disabled="!isAdmin"
         >
           Guardar producto
         </UButton>
