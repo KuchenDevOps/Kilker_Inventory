@@ -6,8 +6,10 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
   // @nuxtjs/supabase lee SUPABASE_URL, SUPABASE_KEY (anon/publishable) y
   // SUPABASE_SERVICE_KEY (solo servidor, para serverSupabaseServiceRole) del .env.
-  // redirect:false por ahora: aún no existe la página de login, así que no forzamos
-  // el middleware de auth global (se activará al construir el login).
+  // redirect:false a propósito: el middleware de redirección de @nuxtjs/supabase
+  // depende del path por cookie, que NO resuelve la sesión en este setup (ver
+  // memoria del proyecto). La protección de rutas se hace con un guard propio
+  // solo-cliente en app/middleware/auth.global.ts (sesión por Bearer del cliente).
   supabase: {
     redirect: false,
     // La capa de datos es Drizzle; el cliente de Supabase solo se usa para auth.

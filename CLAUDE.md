@@ -2,7 +2,7 @@
 
 > Manual operativo para agentes (Claude Code) y desarrolladores que trabajen este repo.
 > **Idioma de toda la documentación del proyecto: español.**
-> Última actualización: 2026-06-20 · Estado: **Fase 1 — primeras pantallas** (specs aún
+> Última actualización: 2026-06-21 · Estado: **Fase 1 — primeras pantallas** (specs aún
 > pendientes; UI inicial sobre datos mock en memoria).
 
 ---
@@ -201,25 +201,79 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 - **Fase 0:** documentación y decisiones de arquitectura — **completada**.
 - **Fase 1 (en curso):** UI conectada al backend real (specs aún pendientes).
   - Scaffold Nuxt 4 + Pinia + **Nuxt UI v4** (Tailwind v4) en `kilker-inventario/`.
-  - **BD migrada y sembrada en Supabase** (11 tablas, enums, RLS, kardex append-only).
+  - **BD migrada y sembrada en Supabase** (12 tablas, enums, RLS, kardex append-only;
+    incluye `cash_closeouts` para cortes de caja, migración `0003`).
   - **El mock de Pinia fue eliminado.** La UI consume el backend real:
     - **Lecturas públicas** vía `useFetch` (SSR): `GET /api/products`, `/api/stores`,
       `/api/categories`. Composables en `app/composables/useInventoryApi.ts`.
     - **Pantallas**: dashboard (`app/pages/dashboard.vue`), catálogo
       (`app/pages/productos/index.vue`), alta de producto (`app/pages/productos/nuevo.vue`),
       **entrada de stock** (`app/pages/movimientos/entrada.vue`) y **venta**
-      (`app/pages/ventas/nueva.vue`). Navegación por rol en `app/layouts/default.vue`.
+      (`app/pages/ventas/nueva.vue`).
+    - **Layout responsivo** en `app/layouts/default.vue`: sidebar fija en desktop (md+);
+      en móvil se oculta fuera de pantalla y se abre/cierra con un botón hamburguesa
+      (overlay semitransparente, cierre al navegar o pulsar X). No hay nav compacta
+      en el header: la sidebar es el único punto de navegación en todos los breakpoints.
     - Tipos alineados al backend en `app/types/inventario.ts` (ids numéricos; `unit`
       ∈ litro|galon|cubeta; los `numeric` llegan como **string** desde la API).
+    - **Categorías (CRUD, admin)**: `app/pages/categorias/index.vue` (tabla con
+      nombre/padre/nº productos + alta/edición inline + borrado con confirmación).
+    - **Historial de ventas**: `app/pages/ventas/index.vue` (listado con filtros de
+      estado y sucursal; empleado ve solo su tienda, admin todas; admin **anula** directo,
+      empleado **solicita anulación** (abre ticket) o ve **"Esperando corrección"** si la
+      venta ya tiene un ticket abierto — `GET /api/sales` expone `pendingCorrection`).
+    - **Tickets de corrección**: `app/pages/tickets/index.vue` (empleado ve/solicita,
+      admin aprueba→anula o rechaza). Composable `useTickets()`.
+    - **Cortes de caja**: `app/pages/cortes/index.vue` (historial + "Hacer corte" +
+      detalle/estado de cuenta del periodo). La venta (`ventas/nueva.vue`) ahora pide
+      **método de pago** (efectivo/tarjeta). Composable `useCortes()`.
   - **Endpoints añadidos**: `GET /api/me` (perfil/rol; 204 si no hay sesión),
-    `GET /api/categories`, `POST /api/products` (admin). Ya existían
-    `POST /api/movements/entrada` (admin) y `POST /api/sales` (empleado/admin).
+    `GET /api/categories` (enriquecido: `productCount`+`parentName`), `POST /api/products`
+    (admin). Ya existían `POST /api/movements/entrada` (admin) y `POST /api/sales`
+    (empleado/admin).
+  - **Categorías (endpoints, admin)**: `POST /api/categories`, `PATCH /api/categories/:id`
+    (valida ciclos de jerarquía), `DELETE /api/categories/:id` (bloquea 409 si tiene
+    productos o subcategorías).
+  - **Ventas / anulación (endpoints)**: `GET /api/sales` (lista; empleado→su tienda,
+    admin→todas, filtros `status`/`storeId`), `GET /api/sales/:id` (detalle con líneas),
+    `POST /api/sales/:id/void` (**solo admin**): en una transacción inserta movimientos
+    `anulacion` que revierten cada `venta` (`reversesMovementId`), repone `inventory` y
+    marca la factura `anulada` (`voidedAt/By/Reason`). Kardex append-only: el original no
+    se toca. La lógica vive en `server/utils/corrections.ts` (`voidInvoiceTx`), compartida
+    con la aprobación de tickets. El empleado **sí vende** (restringido a su tienda).
+  - **Tickets de corrección (endpoints)**: `POST /api/tickets` (empleado/admin abre un
+    ticket de anulación sobre una factura de su tienda; valida factura emitida y sin ticket
+    abierto duplicado), `GET /api/tickets` (empleado→su tienda, admin→todos, filtro
+    `status`), `POST /api/tickets/:id/resolve` (**solo admin**): `aprobar` ejecuta
+    `voidInvoiceTx` y marca el ticket `aprobado` en una transacción; `rechazar` solo cierra
+    el ticket. El empleado NO anula directo (403); abre ticket → admin resuelve. v1 solo
+    target `factura` (target `movimiento` queda para después).
+  - **Corte de caja (endpoints + esquema)**: enum `payment_method` (efectivo|tarjeta) +
+    columna `invoices.payment_method` (default efectivo) + tabla `cash_closeouts`
+    (migración `0003`). `POST /api/sales` guarda el método de pago. `POST /api/cortes`
+    (empleado→su tienda, admin→cualquiera): toma la ventana **desde el corte anterior** de
+    esa tienda (turnos) hasta ahora, suma las ventas EMITIDAS separando efectivo/tarjeta y
+    cuenta las anuladas, y guarda el **snapshot** (resumen automático, sin conteo físico de
+    efectivo). `GET /api/cortes` (lista) y `GET /api/cortes/:id` (detalle: snapshot + ventas
+    del periodo). ⚠️ Los totales del corte son **inmutables** (foto al cierre); el detalle
+    re-consulta el estado ACTUAL de cada venta (puede diferir si se anula después del corte).
   - **Auth en la UI (Bearer, no cookie):** ver §7 — el path por cookie de
     `serverSupabaseUser` NO resuelve aquí; las llamadas autenticadas (`/api/me` y
     escrituras) van con `Authorization: Bearer <access_token>` desde la sesión viva.
+  - **Protección de rutas por rol (hecho):** guard global **solo-cliente** en
+    `app/middleware/auth.global.ts` (la auth es client-only, el SSR no resuelve sesión).
+    Sin sesión → `/login`; con sesión en `/login` → `/dashboard`; rutas marcadas con
+    `definePageMeta({ requiresRole: 'admin' })` (alta de producto y entrada de stock)
+    redirigen a `/dashboard` si el rol no coincide (carga el perfil con Bearer, reusa el
+    estado `me`). Defensa en profundidad: los endpoints siguen exigiendo auth/rol
+    (401/403). `RouteMeta.requiresRole` tipado en `app/types/route.d.ts`. ⚠️ Costo
+    conocido: en cargas SSR de una ruta protegida **sin** sesión, el servidor renderiza
+    la página y el cliente redirige → *hydration mismatch* + flash breve (solo afecta
+    accesos sin sesión, que terminan en login igual). Se elimina si se pasa la app a
+    SPA (`ssr:false`) — decisión pendiente del usuario.
 - **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
-- **Pendiente / bloqueante:** especificaciones funcionales; que el **usuario pruebe el
-  login real** y los flujos de escritura desde el navegador; protección de rutas
-  (`supabase.redirect` o middleware) cuando el login esté validado; otros movimientos
-  (ajuste, transferencia, tickets/anulación); confirmación de planes/regiones.
+- **Pendiente / bloqueante:** especificaciones funcionales; movimientos de **ajuste** y
+  **transferencia** entre sucursales; tickets target `movimiento` (v1 solo `factura`);
+  folio secuencial formal; (opcional) corte con conteo físico de efectivo y detalle
+  congelado; confirmación de planes/regiones.
 - Ver el plan completo por fases en [`docs/ROADMAP.md`](docs/ROADMAP.md).

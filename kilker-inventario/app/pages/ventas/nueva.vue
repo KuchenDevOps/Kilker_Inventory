@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { UNIT_LABELS } from '~/types/inventario'
+import { PAYMENT_LABELS, UNIT_LABELS, type PaymentMethod } from '~/types/inventario'
 
 // Forma mínima de la respuesta de /api/sales que consume la UI.
 interface SaleResult {
@@ -26,6 +26,11 @@ type Line = {
 
 const storeId = ref<number | undefined>(undefined)
 const note = ref('')
+const paymentMethod = ref<PaymentMethod>('efectivo')
+const paymentItems = (Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((v) => ({
+  label: PAYMENT_LABELS[v],
+  value: v
+}))
 const lines = reactive<Line[]>([{ productId: undefined, quantity: undefined, unitPrice: undefined }])
 const submitting = ref(false)
 
@@ -94,6 +99,7 @@ async function onSubmit() {
       body: {
         storeId: storeId.value,
         note: note.value.trim() || undefined,
+        paymentMethod: paymentMethod.value,
         items: validLines.value.map((l) => ({
           productId: l.productId,
           quantity: l.quantity,
@@ -175,15 +181,24 @@ async function onSubmit() {
             />
           </UFormField>
 
-          <UFormField label="Nota" name="note">
-            <UInput
-              v-model="note"
+          <UFormField label="Método de pago" name="paymentMethod" required>
+            <USelect
+              v-model="paymentMethod"
+              :items="paymentItems"
               :disabled="!canOperate"
-              placeholder="Cliente, observaciones…"
               class="w-full"
             />
           </UFormField>
         </div>
+
+        <UFormField label="Nota" name="note">
+          <UInput
+            v-model="note"
+            :disabled="!canOperate"
+            placeholder="Cliente, observaciones…"
+            class="w-full"
+          />
+        </UFormField>
 
         <USeparator />
 

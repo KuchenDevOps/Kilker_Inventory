@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { UNIT_LABELS } from '~/types/inventario'
 
+definePageMeta({ requiresRole: 'admin' })
 useHead({ title: 'Entrada de stock · Inventario Kilker' })
 
 const toast = useToast()
