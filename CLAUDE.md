@@ -47,7 +47,7 @@ forma razonable). La empresa autorizó **Vercel**, una plataforma Node/serverles
 
 ---
 
-## 3. Arquitectura y despliegue
+## 3. Arquitectura y despliegue 
 
 ```
 Equipo en sucursal (navegador)
@@ -150,10 +150,19 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 ## 7. Auth y roles
 
-- **Supabase Auth** vía `@nuxtjs/supabase` (email/contraseña u otros proveedores, a definir).
-- Tabla **`profiles`** (1:1 con `auth.users`) guarda datos de aplicación + **rol**.
-- Roles/permisos (probable: **admin, bodega/almacén, ventas** — a confirmar con specs) se
-  verifican en **server middleware** de Nuxt; opcionalmente reforzar con **RLS** en Supabase.
+- **Supabase Auth** vía `@nuxtjs/supabase` (email/contraseña; roles `admin | empleado`).
+- Tabla **`profiles`** (1:1 con `auth.users`) guarda datos de aplicación + **rol** + `store_id`.
+- Roles/permisos se verifican en `server/utils/auth.ts` → `requireProfile(event,{role})`
+  (en endpoints de escritura) y `getOptionalProfile(event)` (para `GET /api/me`); reforzado
+  con **RLS** en Supabase (sin policies = acceso solo server-side, que bypassa RLS).
+- ⚠️ **Auth en la UI se hace con Bearer, NO con cookie.** Con este setup
+  (`@nuxtjs/supabase` v2 + Nuxt 4), `serverSupabaseUser(event)` **no resuelve el usuario
+  desde la cookie** aunque ésta sea válida y no esté expirada (verificado). El path
+  `Authorization: Bearer <access_token>` sí funciona. Por eso las llamadas autenticadas del
+  cliente (`/api/me` y todas las escrituras) adjuntan el Bearer tomado de la sesión viva de
+  Supabase (`supabase.auth.getSession()`), que siempre está fresca. `requireProfile` acepta
+  ambos paths. Las lecturas públicas (`/api/products`, `/api/stores`, `/api/categories`) no
+  requieren auth y se sirven por SSR con `useFetch`.
 
 ---
 
@@ -190,14 +199,27 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 ## 10. Estado actual
 
 - **Fase 0:** documentación y decisiones de arquitectura — **completada**.
-- **Fase 1 (en curso):** primeras pantallas de UI mientras llegan las specs.
+- **Fase 1 (en curso):** UI conectada al backend real (specs aún pendientes).
   - Scaffold Nuxt 4 + Pinia + **Nuxt UI v4** (Tailwind v4) en `kilker-inventario/`.
-  - Pantallas: **dashboard de métricas** (`app/pages/dashboard.vue`) y **alta de producto**
-    (`app/pages/productos/nuevo.vue`), con layout y navegación (`app/layouts/default.vue`).
-  - Datos **mock en memoria** en el store Pinia `app/stores/inventario.ts` (sin backend
-    todavía). Tipos del dominio en `app/types/inventario.ts`.
+  - **BD migrada y sembrada en Supabase** (11 tablas, enums, RLS, kardex append-only).
+  - **El mock de Pinia fue eliminado.** La UI consume el backend real:
+    - **Lecturas públicas** vía `useFetch` (SSR): `GET /api/products`, `/api/stores`,
+      `/api/categories`. Composables en `app/composables/useInventoryApi.ts`.
+    - **Pantallas**: dashboard (`app/pages/dashboard.vue`), catálogo
+      (`app/pages/productos/index.vue`), alta de producto (`app/pages/productos/nuevo.vue`),
+      **entrada de stock** (`app/pages/movimientos/entrada.vue`) y **venta**
+      (`app/pages/ventas/nueva.vue`). Navegación por rol en `app/layouts/default.vue`.
+    - Tipos alineados al backend en `app/types/inventario.ts` (ids numéricos; `unit`
+      ∈ litro|galon|cubeta; los `numeric` llegan como **string** desde la API).
+  - **Endpoints añadidos**: `GET /api/me` (perfil/rol; 204 si no hay sesión),
+    `GET /api/categories`, `POST /api/products` (admin). Ya existían
+    `POST /api/movements/entrada` (admin) y `POST /api/sales` (empleado/admin).
+  - **Auth en la UI (Bearer, no cookie):** ver §7 — el path por cookie de
+    `serverSupabaseUser` NO resuelve aquí; las llamadas autenticadas (`/api/me` y
+    escrituras) van con `Authorization: Bearer <access_token>` desde la sesión viva.
 - **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
-- **Pendiente / bloqueante:** especificaciones funcionales, backend real (`server/api/` +
-  Drizzle/Supabase) que reemplace el mock, y confirmación de planes/regiones (Vercel Pro,
-  Supabase, región México).
+- **Pendiente / bloqueante:** especificaciones funcionales; que el **usuario pruebe el
+  login real** y los flujos de escritura desde el navegador; protección de rutas
+  (`supabase.redirect` o middleware) cuando el login esté validado; otros movimientos
+  (ajuste, transferencia, tickets/anulación); confirmación de planes/regiones.
 - Ver el plan completo por fases en [`docs/ROADMAP.md`](docs/ROADMAP.md).

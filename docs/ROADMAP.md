@@ -35,11 +35,15 @@ por fases, validando specs, planes y capacidades antes de escribir código de pr
 - Confirmar **planes y regiones**: Vercel Pro (uso comercial), plan de Supabase, región
   cercana a México; crear proyecto de Supabase y cuenta/equipo de Vercel.
 
-**Adelanto de UI (sobre datos mock, mientras llegan las specs):**
+**Adelanto de UI + backend (ya conectados, mientras llegan las specs):**
 - Scaffold Nuxt 4 + Pinia + **Nuxt UI v4** en `kilker-inventario/`.
-- **Pantalla de alta de producto** (`app/pages/productos/nuevo.vue`) y **dashboard de
-  métricas** (`app/pages/dashboard.vue`), con datos mock en el store
-  `app/stores/inventario.ts`. Se reemplazará por `server/api/` + Drizzle al confirmar specs.
+- **BD migrada/sembrada en Supabase** + `server/api/` con Drizzle (ver §10 de `CLAUDE.md`).
+- **El mock de Pinia se eliminó**; la UI consume datos reales: dashboard, catálogo, alta de
+  producto, **entrada de stock** y **venta** llaman a `server/api/` (lecturas por SSR;
+  escrituras autenticadas con Bearer). Navegación por rol (admin/empleado).
+- Adelanta trabajo de **Fase 3** (núcleo de inventario): catálogo, entradas y ventas ya
+  funcionan end-to-end contra la BD. Falta validar contra specs y construir ajuste /
+  transferencia / tickets-anulación, y proteger rutas.
 
 **Hecho cuando:**
 - Las "Preguntas abiertas" de `CONTEXTO.md` están resueltas y el modelo de datos está

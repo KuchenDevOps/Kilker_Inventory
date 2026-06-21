@@ -97,10 +97,12 @@ Vercel.**
 - [ ] **Estabilidad de internet** en sucursales → ¿se necesita **offline/PWA**?
 - [ ] **Atributos reales del catálogo** de pinturas (color, código de color, base,
       acabado, tamaño/litros, marca, línea).
-- [ ] **Valores provisionales (supuestos) usados en la UI de Fase 1** — confirmar y ajustar:
-      `base` ∈ {agua, aceite, latex, epoxica, otro}; `unidad` ∈ {L, gal, ml, kg, pieza}.
-      Definidos en `kilker-inventario/app/types/inventario.ts` (`PRODUCT_BASES`,
-      `PRODUCT_UNITS`). También se asume que un producto = **una variante vendible (1 SKU)**.
+- [x] **Atributos de catálogo v1 (congelados en el plan v1):** se descartaron
+      `base`/`acabado`/`volumen`/`marca` del mock. El catálogo v1 solo tiene `color` (texto
+      libre) y `unit` ∈ **{litro, galon, cubeta}** (enum `product_unit`). Tipos en
+      `kilker-inventario/app/types/inventario.ts` (`PRODUCT_UNITS`, `UNIT_LABELS`). Sigue el
+      supuesto: un producto = **una variante vendible (1 SKU)**. (Confirmar con specs si
+      hace falta reintroducir base/acabado/tamaño.)
 - [ ] ¿Manejo de **lotes/caducidad**? ¿**Códigos de barras**?
 - [ ] ¿**Transferencias** entre sucursales? ¿**Órdenes de compra/venta** o solo stock?
 - [ ] ¿**Reportes** y exportación (Excel/PDF)? ¿Integración con **facturación/POS**?

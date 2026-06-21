@@ -5,7 +5,8 @@
       "name": "kilker-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "kilker-inventario", "run", "dev"],
-      "port": 3000
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }

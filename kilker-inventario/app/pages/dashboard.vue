@@ -1,17 +1,10 @@
 <script setup lang="ts">
-const store = useInventarioStore()
-const {
-  totalProducts,
-  activeProducts,
-  totalUnits,
-  totalLocations,
-  totalCategories,
-  inventoryValue,
-  lowStock,
-  recentProducts
-} = storeToRefs(store)
+import { UNIT_LABELS } from '~/types/inventario'
 
 useHead({ title: 'Dashboard · Inventario Kilker' })
+
+const { data: products, pending: loadingProducts, error: productsError } = useProducts()
+const { data: stores } = useStores()
 
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -19,6 +12,32 @@ const currency = new Intl.NumberFormat('es-MX', {
   maximumFractionDigits: 0
 })
 const number = new Intl.NumberFormat('es-MX')
+
+const totalProducts = computed(() => products.value.length)
+const activeProducts = computed(() => products.value.filter((p) => p.isActive).length)
+const totalUnits = computed(() =>
+  products.value.reduce((sum, p) => sum + p.totalStock, 0)
+)
+/** Valor del inventario a precio de venta: Σ (precio × existencias). */
+const inventoryValue = computed(() =>
+  products.value.reduce((sum, p) => sum + Number(p.price) * p.totalStock, 0)
+)
+const activeStores = computed(() => stores.value.filter((s) => s.isActive).length)
+const totalCategories = computed(
+  () => new Set(products.value.map((p) => p.categoryId).filter((id) => id != null)).size
+)
+
+/** Productos activos cuya existencia total está bajo el mínimo definido. */
+const lowStock = computed(() =>
+  products.value
+    .filter((p) => p.isActive && p.minQuantity != null)
+    .map((p) => ({ product: p, stock: p.totalStock, min: Number(p.minQuantity) }))
+    .filter((row) => row.stock < row.min)
+    .sort((a, b) => a.stock - b.stock)
+)
+
+/** El endpoint ya ordena por fecha de alta desc; tomamos los primeros. */
+const recentProducts = computed(() => products.value.slice(0, 6))
 
 const metrics = computed(() => [
   {
@@ -38,22 +57,18 @@ const metrics = computed(() => [
   {
     label: 'Valor de inventario',
     value: currency.format(inventoryValue.value),
-    hint: 'precio × existencias',
+    hint: 'a precio de venta',
     icon: 'i-lucide-banknote',
     color: 'text-success'
   },
   {
     label: 'Sucursales',
-    value: number.format(totalLocations.value),
+    value: number.format(activeStores.value),
     hint: `${totalCategories.value} categorías`,
     icon: 'i-lucide-store',
     color: 'text-warning'
   }
 ])
-
-function stockOf(id: string) {
-  return store.stockOf(id)
-}
 </script>
 
 <template>
@@ -61,14 +76,21 @@ function stockOf(id: string) {
     <header class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Dashboard</h1>
-        <p class="text-sm text-muted">
-          Resumen del inventario · datos de demostración
-        </p>
+        <p class="text-sm text-muted">Resumen del inventario · datos reales</p>
       </div>
       <UButton to="/productos/nuevo" icon="i-lucide-plus" color="primary">
         Nuevo producto
       </UButton>
     </header>
+
+    <UAlert
+      v-if="productsError"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      title="No se pudieron cargar los productos"
+      :description="productsError.message"
+    />
 
     <!-- Tarjetas de métricas -->
     <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -101,7 +123,10 @@ function stockOf(id: string) {
           </div>
         </template>
 
-        <p v-if="!lowStock.length" class="text-sm text-muted py-6 text-center">
+        <p v-if="loadingProducts" class="text-sm text-muted py-6 text-center">
+          Cargando…
+        </p>
+        <p v-else-if="!lowStock.length" class="text-sm text-muted py-6 text-center">
           Sin alertas: todo el stock está por encima del mínimo. 🎉
         </p>
         <ul v-else class="divide-y divide-default">
@@ -116,7 +141,7 @@ function stockOf(id: string) {
             </div>
             <div class="text-right shrink-0">
               <p class="text-sm font-semibold text-warning">
-                {{ row.stock }} / {{ row.product.minQuantity }}
+                {{ row.stock }} / {{ row.min }}
               </p>
               <p class="text-xs text-muted">existencia / mínimo</p>
             </div>
@@ -130,10 +155,29 @@ function stockOf(id: string) {
           <div class="flex items-center gap-2">
             <UIcon name="i-lucide-clock" class="size-5 text-muted" />
             <h2 class="font-semibold">Productos recientes</h2>
+            <UButton
+              to="/productos"
+              variant="link"
+              color="neutral"
+              size="xs"
+              class="ml-auto"
+              trailing-icon="i-lucide-arrow-right"
+            >
+              Ver catálogo
+            </UButton>
           </div>
         </template>
 
-        <ul class="divide-y divide-default">
+        <p v-if="loadingProducts" class="text-sm text-muted py-6 text-center">
+          Cargando…
+        </p>
+        <p
+          v-else-if="!recentProducts.length"
+          class="text-sm text-muted py-6 text-center"
+        >
+          Aún no hay productos. Da de alta el primero.
+        </p>
+        <ul v-else class="divide-y divide-default">
           <li
             v-for="p in recentProducts"
             :key="p.id"
@@ -142,7 +186,8 @@ function stockOf(id: string) {
             <div class="min-w-0">
               <p class="font-medium truncate">{{ p.name }}</p>
               <p class="text-xs text-muted">
-                {{ p.sku }} · {{ p.category ?? 'sin categoría' }}
+                {{ p.sku }} · {{ p.category ?? 'sin categoría' }} ·
+                {{ UNIT_LABELS[p.unit] }}
               </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -151,9 +196,7 @@ function stockOf(id: string) {
                 :color="p.isActive ? 'success' : 'neutral'"
                 variant="subtle"
               />
-              <span class="text-sm text-muted tabular-nums"
-                >{{ stockOf(p.id) }} u.</span
-              >
+              <span class="text-sm text-muted tabular-nums">{{ p.totalStock }} u.</span>
             </div>
           </li>
         </ul>
