@@ -47,7 +47,7 @@ forma razonable). La empresa autorizó **Vercel**, una plataforma Node/serverles
 
 ---
 
-## 3. Arquitectura y despliegue
+## 3. Arquitectura y despliegue 
 
 ```
 Equipo en sucursal (navegador)

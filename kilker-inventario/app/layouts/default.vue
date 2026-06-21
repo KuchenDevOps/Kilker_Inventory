@@ -1,5 +1,7 @@
 <script setup lang="ts">
 const route = useRoute()
+const user = useSupabaseUser()
+const supabase = useSupabaseClient()
 
 const nav = [
   { label: 'Dashboard', to: '/dashboard', icon: 'i-lucide-layout-dashboard' },
@@ -8,6 +10,11 @@ const nav = [
 
 function isActive(to: string) {
   return route.path === to || route.path.startsWith(`${to}/`)
+}
+
+async function logout() {
+  await supabase.auth.signOut()
+  await navigateTo('/login')
 }
 </script>
 
@@ -54,7 +61,7 @@ function isActive(to: string) {
         <span class="font-semibold md:hidden">Kilker</span>
 
         <!-- Navegación compacta en móvil -->
-        <nav class="flex md:hidden gap-1 ml-auto">
+        <nav class="flex md:hidden gap-1">
           <UButton
             v-for="item in nav"
             :key="item.to"
@@ -65,6 +72,30 @@ function isActive(to: string) {
             square
           />
         </nav>
+
+        <!-- Sesión -->
+        <div class="ml-auto flex items-center gap-2">
+          <template v-if="user">
+            <span class="text-sm text-muted hidden sm:inline">{{ user.email }}</span>
+            <UButton
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-log-out"
+              @click="logout"
+            >
+              Salir
+            </UButton>
+          </template>
+          <UButton
+            v-else
+            to="/login"
+            color="primary"
+            variant="soft"
+            icon="i-lucide-log-in"
+          >
+            Entrar
+          </UButton>
+        </div>
       </header>
 
       <main class="flex-1 overflow-y-auto">
