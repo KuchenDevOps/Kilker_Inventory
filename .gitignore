@@ -153,4 +153,5 @@ vite.config.ts.timestamp-*
 crashlytics-build.properties
 #Docs
 .docs/CONVENCIONES-AGENTES.MD
+Claude.md
 
