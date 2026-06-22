@@ -152,4 +152,5 @@ vite.config.ts.timestamp-*
 # Crashlytics generated file
 crashlytics-build.properties
 #Docs
+.docs/CONVENCIONES-AGENTES.MD
 
