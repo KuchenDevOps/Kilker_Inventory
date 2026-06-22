@@ -151,7 +151,7 @@ vite.config.ts.timestamp-*
 .Trashes
 # Crashlytics generated file
 crashlytics-build.properties
-#Docs
-.docs/CONVENCIONES-AGENTES.MD
-.Claude.md
+# Docs internos del agente (no versionar)
+CLAUDE.md
+docs/CONVENCIONES-AGENTE.md
 
