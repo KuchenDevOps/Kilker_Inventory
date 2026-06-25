@@ -1,14 +1,8 @@
-// Composables de acceso a la API del inventario.
-//
-// LECTURAS PÚBLICAS (products/stores/categories): useFetch con SSR y caché por
-// `key`. No requieren auth.
-//
-// LLAMADAS AUTENTICADAS (/api/me y escrituras): se hacen en cliente adjuntando
-// `Authorization: Bearer <access_token>` tomado de la sesión viva de Supabase.
-// Motivo: con este setup de @nuxtjs/supabase, el path por COOKIE de
-// `serverSupabaseUser` no resuelve el usuario aunque la cookie sea válida; el
-// path Bearer sí (verificado). `requireProfile` ya soporta ambos. El cliente
-// siempre tiene un token fresco (auto-refresh), así que Bearer es robusto.
+// ───────────────────────────────────────────────
+//  COMPOSABLES DE LA API DE INVENTARIO
+// ───────────────────────────────────────────────
+// Lecturas públicas: useFetch (SSR). Llamadas autenticadas: Bearer del cliente
+// (la cookie no resuelve aquí; ver §7 de CLAUDE.md).
 import type {
   ApiCategory,
   ApiCorte,
@@ -19,10 +13,13 @@ import type {
   Me
 } from '~/types/inventario'
 
-// El `transform` coalesce `undefined → default`: si un endpoint responde 204
-// (cuerpo vacío), ofetch resuelve `undefined` y Nuxt avisaría "must return a value".
+// transform coalesce undefined→default por si el endpoint responde 204 (cuerpo vacío).
 
-/** Catálogo de productos con su categoría y stock total (lectura pública). */
+// ───────────────────────────────────────────────
+//  LECTURAS PÚBLICAS (useFetch SSR)
+// ───────────────────────────────────────────────
+
+/** Catálogo de productos con categoría y stock total. */
 export function useProducts() {
   return useFetch<ApiProduct[]>('/api/products', {
     key: 'products',
@@ -31,7 +28,7 @@ export function useProducts() {
   })
 }
 
-/** Tiendas/sucursales (lectura pública). */
+/** Tiendas/sucursales. */
 export function useStores() {
   return useFetch<ApiStore[]>('/api/stores', {
     key: 'stores',
@@ -40,7 +37,7 @@ export function useStores() {
   })
 }
 
-/** Categorías para el selector de alta de producto (lectura pública). */
+/** Categorías para el selector de alta de producto. */
 export function useCategories() {
   return useFetch<ApiCategory[]>('/api/categories', {
     key: 'categories',
@@ -49,11 +46,11 @@ export function useCategories() {
   })
 }
 
-/**
- * Perfil del usuario autenticado, compartido por toda la app (`useState('me')`).
- * Se resuelve en CLIENTE con Bearer y se re-resuelve cuando cambia la sesión
- * (login/logout). En SSR queda `null` (la barra de rol hidrata tras el montaje).
- */
+// ───────────────────────────────────────────────
+//  LECTURAS AUTENTICADAS (Bearer del cliente)
+// ───────────────────────────────────────────────
+
+/** Perfil del usuario autenticado, compartido vía useState('me'). */
 export function useMe() {
   const me = useState<Me | null>('me', () => null)
   const user = useSupabaseUser()
@@ -77,8 +74,7 @@ export function useMe() {
     }
   }
 
-  // Solo el primer consumidor (el layout, que vive toda la sesión) instala el
-  // watcher; el resto de componentes solo leen el estado compartido `me`.
+  // Solo el primer consumidor instala el watcher; el resto lee el estado compartido.
   const watching = useState('me-watching', () => false)
   if (import.meta.client && !watching.value) {
     watching.value = true
@@ -88,11 +84,7 @@ export function useMe() {
   return { me, refresh }
 }
 
-/**
- * Historial de ventas (lectura AUTENTICADA, Bearer del cliente). El backend
- * filtra por tienda según el rol (empleado: su tienda; admin: todas). Expone los
- * filtros `status`/`storeId` como refs; al cambiarlos (o la sesión) recarga.
- */
+/** Historial de ventas; el backend filtra por rol. Filtros status/storeId recargan. */
 export function useSales() {
   const sales = useState<ApiSale[]>('sales', () => [])
   const pending = useState('sales-pending', () => false)
@@ -140,12 +132,7 @@ export function useSales() {
   return { sales, pending, error, status, storeId, refresh }
 }
 
-/**
- * Tickets de corrección (lectura AUTENTICADA, Bearer del cliente). El backend
- * filtra por tienda según el rol. Expone `status` como ref y `refresh()`.
- * El componente debe llamar `refresh()` en `onMounted` para evitar datos viejos
- * (el watcher solo se instala una vez; ver lección de useSales).
- */
+/** Tickets de corrección; filtra por rol. Llamar refresh() en onMounted. */
 export function useTickets() {
   const tickets = useState<ApiTicket[]>('tickets', () => [])
   const pending = useState('tickets-pending', () => false)
@@ -192,10 +179,7 @@ export function useTickets() {
   return { tickets, pending, error, status, refresh }
 }
 
-/**
- * Cortes de caja (lectura AUTENTICADA, Bearer del cliente). Empleado→su tienda,
- * admin→todas (con filtro `storeId`). Llamar `refresh()` en `onMounted`.
- */
+/** Cortes de caja; empleado→su tienda, admin→todas. Llamar refresh() en onMounted. */
 export function useCortes() {
   const cortes = useState<ApiCorte[]>('cortes', () => [])
   const pending = useState('cortes-pending', () => false)
@@ -239,11 +223,11 @@ export function useCortes() {
   return { cortes, pending, error, storeId, refresh }
 }
 
-/**
- * `$fetch` autenticado para ESCRITURAS: adjunta el Bearer de la sesión viva.
- * Llamar en el `setup` del componente (captura el cliente Supabase); usar el
- * wrapper devuelto dentro de los handlers de eventos.
- */
+// ───────────────────────────────────────────────
+//  ESCRITURAS Y UTILIDADES
+// ───────────────────────────────────────────────
+
+/** $fetch autenticado para escrituras: adjunta el Bearer de la sesión viva. */
 export function useApiFetch() {
   const supabase = useSupabaseClient()
   return async <T = unknown>(
@@ -267,7 +251,7 @@ export function useApiFetch() {
   }
 }
 
-/** Extrae un mensaje legible de un error de $fetch (FetchError de ofetch). */
+/** Extrae un mensaje legible de un error de $fetch. */
 export function apiErrorMessage(e: unknown, fallback = 'Ocurrió un error.'): string {
   const err = e as {
     data?: { statusMessage?: string; message?: string }

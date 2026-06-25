@@ -1,5 +1,7 @@
-// GET /api/cortes/:id — detalle de un corte: el snapshot + las ventas del periodo
-// (estado de cuenta). Empleado: solo cortes de su tienda. Admin: cualquiera.
+// ───────────────────────────────────────────────
+//  GET /api/cortes/:id — detalle de un corte
+// ───────────────────────────────────────────────
+// Snapshot + ventas del periodo. Empleado: su tienda. Admin: cualquiera.
 import { and, asc, eq, gte, lt } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { cashCloseouts, invoices } from '../../db/schema'
@@ -24,7 +26,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'Corte de otra tienda' })
   }
 
-  // Ventas cubiertas por el corte (su misma ventana [periodFrom, periodTo)).
+  // Ventas en la ventana del corte [periodFrom, periodTo).
   const conds = [
     eq(invoices.storeId, corte.storeId),
     lt(invoices.issuedAt, corte.periodTo)

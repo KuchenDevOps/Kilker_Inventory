@@ -1,21 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Seed del CATÁLOGO — Inventario Kilker
-//
-// Siembra datos base reutilizando el mock de la UI (app/stores/inventario.ts):
-// tiendas, categorías, productos e inventario inicial por (producto × tienda).
-//
-// ⚠️ ALCANCE: solo catálogo. NO siembra `profiles` (usuarios), ni `invoices` /
-// `stock_movements` (llevan `created_by → profiles`, y `profiles.id` tiene FK a
-// `auth.users`, que gestiona Supabase Auth). Eso requiere crear usuarios vía
-// Supabase Auth (service_role key) y se hará al cablear auth.
-//
-// Ejecutar: `npm run db:seed` (usa tsx). Conecta por DIRECT_URL (session pooler).
-// Es un seed de DESARROLLO: resetea el catálogo (borra e inserta) en una
-// transacción, así que es idempotente. No correr sobre datos reales.
-//
-// Mapeo de unidades del mock (todo venía en "L") al enum v1 `product_unit`
-// según el tamaño de envase típico en MX: 1 L → litro, 4 L → galon, 19 L → cubeta.
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+//  SEED DEL CATÁLOGO (solo desarrollo)
+// ───────────────────────────────────────────────
+// Resetea e inserta tiendas/categorías/productos/inventario. No siembra usuarios.
+// Ejecutar: npm run db:seed (DIRECT_URL). No correr sobre datos reales.
 
 import 'dotenv/config'
 import process from 'node:process'
@@ -59,7 +46,7 @@ const productSeed: {
   { sku: 'THI-1L', name: 'Thinner estándar 1 L', category: 'Solventes', color: null, unit: 'litro', price: '95', cost: '60', minQuantity: '20', isActive: false }
 ]
 
-// Existencias por (producto, tienda). Algunas quedan bajo el mínimo a propósito.
+// Existencias por (producto, tienda); algunas bajo el mínimo a propósito.
 const inventorySeed: { sku: string; store: string; quantity: string }[] = [
   { sku: 'ESM-BLA-1L', store: 'MTZ', quantity: '4' },
   { sku: 'ESM-BLA-1L', store: 'NTE', quantity: '3' },
@@ -76,7 +63,7 @@ const db = drizzle(client, { schema })
 
 async function main() {
   await db.transaction(async (tx) => {
-    // Reset del catálogo en orden seguro de FKs (solo dev; tablas de movimientos vacías).
+    // Reset en orden seguro de FKs.
     await tx.delete(inventory)
     await tx.delete(products)
     await tx.delete(categories)

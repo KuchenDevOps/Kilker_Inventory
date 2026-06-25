@@ -1,6 +1,7 @@
-// GET /api/products — catálogo con su categoría y stock total (todas las tiendas).
-// Lectura pública por ahora (sin auth todavía). Usa el cliente Drizzle en runtime
-// (pooler de Supabase). El stock total se deriva sumando `inventory` por producto.
+// ───────────────────────────────────────────────
+//  GET /api/products — catálogo (lectura pública)
+// ───────────────────────────────────────────────
+// Con categoría y stock total (suma de inventory en todas las tiendas).
 import { useDb } from '../../db'
 
 export default defineEventHandler(async () => {
@@ -26,7 +27,7 @@ export default defineEventHandler(async () => {
     cost: p.cost,
     minQuantity: p.minQuantity,
     isActive: p.isActive,
-    // Saldo materializado: Σ existencias en todas las tiendas.
+    // Σ existencias en todas las tiendas.
     totalStock: p.inventory.reduce((sum, i) => sum + Number(i.quantity), 0)
   }))
 })

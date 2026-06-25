@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// Página de inicio de sesión. Usa Supabase Auth (email + contraseña).
-// Sin layout (pantalla completa). Al autenticarse, redirige al dashboard.
+// Login con Supabase Auth (email + contraseña); sin layout.
 definePageMeta({ layout: false })
 
 const supabase = useSupabaseClient()
@@ -29,8 +28,7 @@ async function onSubmit() {
     errorMsg.value = 'Correo o contraseña incorrectos.'
     return
   }
-  // `useMe()` (en el layout) observa la sesión y carga el perfil con Bearer al
-  // detectar el login; solo navegamos al dashboard.
+  // useMe() (en el layout) carga el perfil al detectar la sesión.
   await router.replace('/dashboard')
 }
 </script>

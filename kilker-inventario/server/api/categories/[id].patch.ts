@@ -1,5 +1,7 @@
-// PATCH /api/categories/:id — editar nombre y/o padre de una categoría (solo admin).
-// Evita ciclos: el nuevo padre no puede ser la propia categoría ni un descendiente.
+// ───────────────────────────────────────────────
+//  PATCH /api/categories/:id — editar (admin)
+// ───────────────────────────────────────────────
+// Edita nombre/padre; valida ciclos de jerarquía.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { categories } from '../../db/schema'
@@ -66,7 +68,7 @@ export default defineEventHandler(async (event) => {
       if (!parent) {
         throw createError({ statusCode: 400, statusMessage: 'La categoría padre no existe' })
       }
-      // Evitar ciclos: subir por la cadena de padres; si encontramos `id`, sería ciclo.
+      // Evitar ciclos: subir por la cadena de padres buscando id.
       let cursor: number | null = parent.parentId
       let guard = 0
       while (cursor != null && guard++ < 100) {

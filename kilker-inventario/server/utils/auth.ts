@@ -1,10 +1,7 @@
-// Auth de servidor — Inventario Kilker.
-//
-// `requireProfile(event, { role })` identifica al usuario autenticado y devuelve su
-// `profile` (con rol y tienda). Acepta dos vías:
-//   - Cookie de sesión de @nuxtjs/supabase (navegador).
-//   - Header `Authorization: Bearer <access_token>` (clientes API / pruebas).
-// Lanza 401 si no hay sesión y 403 si el perfil está inactivo o no tiene el rol.
+// ───────────────────────────────────────────────
+//  AUTH DE SERVIDOR
+// ───────────────────────────────────────────────
+// Resuelve el perfil del usuario por cookie o Bearer; verifica rol y actividad.
 import type { H3Event } from 'h3'
 import { createClient } from '@supabase/supabase-js'
 import { eq } from 'drizzle-orm'
@@ -33,11 +30,7 @@ async function resolveUserId(event: H3Event): Promise<string | null> {
   return user?.id ?? null
 }
 
-/**
- * Devuelve el `profile` del usuario autenticado o `null` si no hay sesión válida
- * (sin lanzar). Útil para endpoints como `/api/me` que deben responder 200 + null
- * cuando no hay sesión, en vez de un 401.
- */
+/** Devuelve el perfil autenticado o null (sin lanzar). Para /api/me. */
 export async function getOptionalProfile(
   event: H3Event
 ): Promise<SessionProfile | null> {

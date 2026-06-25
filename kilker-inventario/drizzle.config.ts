@@ -1,17 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Configuración de drizzle-kit — Inventario Kilker
-//
-// Usa la CONEXIÓN DIRECTA (DIRECT_URL, puerto 5432) para generar y aplicar
-// migraciones — NO el pooler de transacciones (ese es solo para runtime).
-// `schemaFilter: ['public']` evita que drizzle-kit toque el esquema `auth`
-// gestionado por Supabase (donde vive `auth.users`).
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+//  CONFIG DRIZZLE-KIT (migraciones)
+// ───────────────────────────────────────────────
+// Usa DIRECT_URL (5432), no el pooler. schemaFilter 'public' protege auth.
 
-// `drizzle.config.ts` queda fuera de los tsconfig generados por Nuxt (.nuxt/*):
-// es un archivo de herramienta que ejecuta drizzle-kit, no Nuxt. El editor lo
-// abre como "proyecto inferido" sin @types/node, por lo que `process` daría
-// "Cannot find name 'process'". Este directivo incluye los tipos de node de
-// forma explícita y autocontenida (sobrevive a `nuxt prepare`).
+// reference de tipos node: el archivo corre fuera de los tsconfig de Nuxt.
 /// <reference types="node" />
 import 'dotenv/config'
 import { defineConfig } from 'drizzle-kit'

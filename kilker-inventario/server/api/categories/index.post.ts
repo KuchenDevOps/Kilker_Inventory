@@ -1,5 +1,7 @@
-// POST /api/categories — alta de una categoría/línea de producto (solo admin).
-// `parentId` opcional (jerarquía); si viene debe existir.
+// ───────────────────────────────────────────────
+//  POST /api/categories — alta de categoría (admin)
+// ───────────────────────────────────────────────
+// parentId opcional; si viene debe existir.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { categories } from '../../db/schema'
@@ -26,7 +28,7 @@ export default defineEventHandler(async (event) => {
 
   const db = useDb()
 
-  // Nombre único (case-insensitive) para evitar duplicados confusos.
+  // Nombre único (case-insensitive).
   const dup = await db.query.categories.findFirst({
     where: (c, { sql }) => sql`lower(${c.name}) = lower(${name})`
   })

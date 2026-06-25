@@ -1,6 +1,7 @@
-// POST /api/sales/:id/void — anular una venta (solo admin, anulación directa).
-// La lógica vive en `voidInvoiceTx` (server/utils/corrections.ts), compartida con
-// la aprobación de tickets. Kardex append-only: el original NUNCA se toca.
+// ───────────────────────────────────────────────
+//  POST /api/sales/:id/void — anular venta (admin)
+// ───────────────────────────────────────────────
+// Delega en voidInvoiceTx (compartido con tickets). Kardex append-only.
 import { useDb } from '../../../db'
 
 interface VoidBody {

@@ -1,17 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Seed de AUTH — Inventario Kilker
-//
-// Crea los usuarios de prueba en Supabase Auth (admin API, service_role) y sus
-// `profiles` (que tienen FK a auth.users). Idempotente: si el usuario ya existe,
-// reutiliza su id; el profile se hace upsert.
-//
-//   - admin@kilker.mx   → rol admin    (store_id NULL = acceso global)
-//   - empleado@kilker.mx → rol empleado (asignado a la tienda MTZ)
-//
-// Requiere catálogo ya sembrado (`npm run db:seed`) para resolver la tienda MTZ.
-// Ejecutar: `npm run db:seed:auth`. Usa SERVICE_KEY (Auth) + DIRECT_URL (Drizzle).
-// Seed de DESARROLLO: contraseña temporal compartida; cambiar en producción.
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+//  SEED DE AUTH (solo desarrollo)
+// ───────────────────────────────────────────────
+// Crea usuarios de prueba en Supabase Auth + sus profiles (idempotente).
+// Requiere catálogo sembrado. Ejecutar: npm run db:seed:auth. Cambiar password en prod.
 
 import 'dotenv/config'
 import process from 'node:process'

@@ -1,6 +1,7 @@
-// DELETE /api/categories/:id — eliminar una categoría (solo admin).
-// Bloquea si tiene productos asociados o subcategorías (devuelve 409 claro),
-// para no romper las FKs ni dejar productos huérfanos sin querer.
+// ───────────────────────────────────────────────
+//  DELETE /api/categories/:id — borrar (admin)
+// ───────────────────────────────────────────────
+// Bloquea con 409 si tiene productos o subcategorías.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { categories, products } from '../../db/schema'

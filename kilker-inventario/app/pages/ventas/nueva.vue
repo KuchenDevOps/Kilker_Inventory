@@ -250,6 +250,8 @@ async function onSubmit() {
               <UInputNumber
                 v-model="line.unitPrice"
                 :min="0"
+                :step="0.01"
+                :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
                 :disabled="!canOperate"
                 :placeholder="productOf(line.productId)?.price ?? 'precio lista'"
                 class="w-full"

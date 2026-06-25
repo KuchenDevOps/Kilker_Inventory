@@ -151,5 +151,6 @@ vite.config.ts.timestamp-*
 .Trashes
 # Crashlytics generated file
 crashlytics-build.properties
-#Docs
+# Docs internos del agente (no versionar)
+
 

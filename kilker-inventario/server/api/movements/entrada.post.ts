@@ -1,6 +1,7 @@
-// POST /api/movements/entrada — entrada de stock (solo admin).
-// Inserta un stock_movements(entrada, +cantidad) y sube `inventory` por
-// (producto × tienda), todo en UNA transacción Drizzle.
+// ───────────────────────────────────────────────
+//  POST /api/movements/entrada — entrada de stock (admin)
+// ───────────────────────────────────────────────
+// En transacción: inserta el movimiento y sube inventory por (producto × tienda).
 import { eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { inventory, products, stockMovements } from '../../db/schema'

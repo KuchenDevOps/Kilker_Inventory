@@ -1,7 +1,7 @@
-// POST /api/sales — registrar una venta (empleado en su tienda; admin en cualquiera).
-// En UNA transacción: crea `invoices` + `invoice_items`, genera un
-// `stock_movements(venta, −cantidad)` por línea y baja `inventory`. Valida que el
-// empleado venda solo en su tienda y que no quede stock negativo.
+// ───────────────────────────────────────────────
+//  POST /api/sales — registrar una venta
+// ───────────────────────────────────────────────
+// En transacción: crea factura + líneas, movimientos de venta y baja inventario.
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { inventory, invoiceItems, invoices, products, stockMovements, stores } from '../../db/schema'
@@ -36,10 +36,10 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // Método de pago (para el corte de caja). Default efectivo; solo efectivo|tarjeta.
+  // Método de pago (corte de caja). Default efectivo.
   const paymentMethod = body?.paymentMethod === 'tarjeta' ? 'tarjeta' : 'efectivo'
 
-  // El empleado solo puede vender en SU tienda; el admin, en cualquiera.
+  // El empleado solo vende en su tienda.
   if (profile.role === 'empleado' && profile.storeId !== storeId) {
     throw createError({
       statusCode: 403,
@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
     const store = await tx.query.stores.findFirst({ where: eq(stores.id, storeId) })
     if (!store) throw createError({ statusCode: 404, statusMessage: 'Tienda no existe' })
 
-    // Resolver precios (snapshot) y validar existencias antes de tocar nada.
+    // Resolver precios (snapshot) y validar existencias antes de escribir.
     const lines: { productId: number; quantity: number; unitPrice: number; lineTotal: number }[] = []
     for (const it of items) {
       const productId = Number(it.productId)
@@ -78,7 +78,7 @@ export default defineEventHandler(async (event) => {
 
     const totalAmount = lines.reduce((sum, l) => sum + l.lineTotal, 0)
 
-    // Folio provisional secuencial por tienda (secuencia formal pendiente, ver plan).
+    // Folio provisional por tienda (secuencia formal pendiente).
     const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(invoices)

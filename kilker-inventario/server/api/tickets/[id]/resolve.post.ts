@@ -1,7 +1,7 @@
-// POST /api/tickets/:id/resolve — resolver un ticket de corrección (solo admin).
-// action 'aprobar': ejecuta la anulación de la factura (voidInvoiceTx) y marca el
-// ticket `aprobado`, todo en UNA transacción. action 'rechazar': solo marca el
-// ticket `rechazado`. El ticket debe estar `abierto`.
+// ───────────────────────────────────────────────
+//  POST /api/tickets/:id/resolve — resolver (admin)
+// ───────────────────────────────────────────────
+// aprobar: anula la factura + marca aprobado en transacción. rechazar: solo cierra.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../../db'
 import { tickets } from '../../../db/schema'
@@ -50,7 +50,7 @@ export default defineEventHandler(async (event) => {
     return updated
   }
 
-  // Aprobación: ejecutar la corrección. v1 solo soporta target `factura`.
+  // Aprobación: ejecutar la corrección. v1 solo target factura.
   if (ticket.target !== 'factura' || ticket.invoiceId == null) {
     throw createError({
       statusCode: 400,

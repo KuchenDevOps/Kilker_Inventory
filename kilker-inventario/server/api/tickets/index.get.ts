@@ -1,5 +1,7 @@
-// GET /api/tickets — tickets de corrección.
-// Empleado: solo los de SU tienda. Admin: todos (filtro opcional ?status).
+// ───────────────────────────────────────────────
+//  GET /api/tickets — tickets de corrección
+// ───────────────────────────────────────────────
+// Empleado: su tienda. Admin: todos (filtro ?status).
 import { and, desc, eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { tickets } from '../../db/schema'

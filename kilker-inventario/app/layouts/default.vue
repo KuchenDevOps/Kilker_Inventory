@@ -60,8 +60,7 @@ const nav = computed(() =>
   allNav.filter((item) => !item.roles || (me.value && item.roles.includes(me.value.role)))
 )
 
-// El ítem activo es el de prefijo más largo que coincide con la ruta actual
-// (así /productos/nuevo resalta "Nuevo producto", no "Catálogo").
+// Ítem activo: el de prefijo más largo que coincide con la ruta.
 const activeTo = computed(() => {
   const matches = nav.value
     .filter((i) => route.path === i.to || route.path.startsWith(`${i.to}/`))

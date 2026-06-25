@@ -1,8 +1,7 @@
-// POST /api/cortes — hacer un corte de caja (empleado en su tienda; admin en cualquiera).
-// Cubre las ventas de la tienda DESDE el corte anterior (periodFrom = periodTo del
-// último corte; null si es el primero) HASTA ahora. Es un resumen automático: cuenta
-// y suma las ventas EMITIDAS del periodo separando efectivo/tarjeta, e informa las
-// que estén ANULADAS al momento del corte. Guarda el snapshot en `cash_closeouts`.
+// ───────────────────────────────────────────────
+//  POST /api/cortes — hacer un corte de caja
+// ───────────────────────────────────────────────
+// Ventana desde el corte anterior; suma ventas emitidas (efectivo/tarjeta) y anuladas.
 import { and, desc, eq, gte, lt } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { cashCloseouts, invoices, stores } from '../../db/schema'
@@ -16,7 +15,7 @@ export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
   const body = await readBody<CorteBody>(event)
 
-  // El empleado corta su propia tienda; el admin elige cualquiera.
+  // Empleado corta su tienda; admin elige cualquiera.
   let storeId: number
   if (profile.role === 'empleado') {
     if (profile.storeId == null) {
@@ -35,7 +34,7 @@ export default defineEventHandler(async (event) => {
   const store = await db.query.stores.findFirst({ where: eq(stores.id, storeId) })
   if (!store) throw createError({ statusCode: 404, statusMessage: 'Tienda no existe' })
 
-  // Inicio del periodo = fin del último corte de esta tienda (null = desde el inicio).
+  // Inicio = fin del último corte (null = desde el inicio).
   const last = await db.query.cashCloseouts.findFirst({
     where: eq(cashCloseouts.storeId, storeId),
     orderBy: [desc(cashCloseouts.periodTo)]
@@ -43,7 +42,7 @@ export default defineEventHandler(async (event) => {
   const periodFrom = last?.periodTo ?? null
   const periodTo = new Date()
 
-  // Ventas de la tienda dentro de la ventana [periodFrom, periodTo).
+  // Ventas dentro de la ventana [periodFrom, periodTo).
   const conds = [eq(invoices.storeId, storeId), lt(invoices.issuedAt, periodTo)]
   if (periodFrom) conds.push(gte(invoices.issuedAt, periodFrom))
   const rows = await db

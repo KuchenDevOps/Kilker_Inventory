@@ -1,6 +1,7 @@
-// POST /api/products — alta de un producto del catálogo (solo admin).
-// Inserta una fila en `products`. No crea inventario (eso llega con una entrada).
-// Los campos numeric se guardan como string (numeric de Postgres).
+// ───────────────────────────────────────────────
+//  POST /api/products — alta de producto (admin)
+// ───────────────────────────────────────────────
+// Inserta en products; no crea inventario. Los numeric se guardan como string.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { categories, products, productUnit } from '../../db/schema'
@@ -66,7 +67,7 @@ export default defineEventHandler(async (event) => {
 
   const db = useDb()
 
-  // SKU único (la BD también lo garantiza; validamos antes para un 409 claro).
+  // SKU único: validamos antes para un 409 claro.
   const existing = await db.query.products.findFirst({
     where: eq(products.sku, sku)
   })
