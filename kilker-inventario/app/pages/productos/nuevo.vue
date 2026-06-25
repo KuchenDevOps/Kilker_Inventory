@@ -250,8 +250,6 @@ function onReset() {
             <UInputNumber
               v-model="state.minQuantity"
               :min="0"
-              :step="0.01"
-              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
               placeholder="10"
               class="w-full"
             />
