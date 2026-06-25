@@ -64,6 +64,7 @@ export default defineEventHandler(async (event) => {
   }
   const cost = optionalAmount(body?.cost, 'Costo')
   const minQuantity = optionalAmount(body?.minQuantity, 'Stock mínimo')
+  const maxQuantity = optionalAmount(body?.maxQuantity, 'Stock maximo')
 
   const db = useDb()
 
@@ -102,6 +103,7 @@ export default defineEventHandler(async (event) => {
       cost,
       barcode: cleanText(body?.barcode),
       minQuantity,
+      maxQuantity,
       isActive: body?.isActive ?? true
     })
     .returning()

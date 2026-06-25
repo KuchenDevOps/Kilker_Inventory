@@ -31,6 +31,7 @@ export interface ApiProduct {
   price: string
   cost: string | null
   minQuantity: string | null
+  maxQuantity: string | null
   isActive: boolean
   /** Existencia total sumando todas las tiendas (number, ya calculado). */
   totalStock: number
@@ -87,6 +88,7 @@ export interface NewProductInput {
   cost?: number | null
   barcode?: string | null
   minQuantity?: number | null
+  maxQuantity?: number | null
   isActive?: boolean
 }
 
@@ -100,12 +102,13 @@ export interface EntradaInput {
 }
 
 /** Método de pago de una venta (enum `payment_method`). */
-export type PaymentMethod = 'efectivo' | 'tarjeta'
+export type PaymentMethod = 'efectivo' | 'tarjeta' | 'transferencia'
 
 /** Etiquetas en español para cada método de pago. */
 export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   efectivo: 'Efectivo',
-  tarjeta: 'Tarjeta'
+  tarjeta: 'Tarjeta',
+  transferencia: 'Transferencia'
 }
 
 /** Cuerpo para registrar una venta (`POST /api/sales`). */

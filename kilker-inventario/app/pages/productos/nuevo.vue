@@ -28,6 +28,7 @@ type FormState = {
   price: number | undefined
   cost: number | undefined
   minQuantity: number | undefined
+  maxQuantity: number | undefined
   barcode: string
   isActive: boolean
 }
@@ -73,7 +74,7 @@ function validate(s: FormState): FormError[] {
   if (s.price == null) {
     errors.push({ name: 'price', message: 'El precio es obligatorio.' })
   }
-  for (const field of ['price', 'cost', 'minQuantity'] as const) {
+  for (const field of ['price', 'cost', 'minQuantity', 'maxQuantity'] as const) {
     const value = s[field]
     if (value != null && value < 0) {
       errors.push({ name: field, message: 'No puede ser negativo.' })
@@ -96,6 +97,7 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
     price: d.price as number,
     cost: d.cost ?? null,
     minQuantity: d.minQuantity ?? null,
+    minQuantity: d.maxQuantity ?? null,
     barcode: clean(d.barcode),
     isActive: d.isActive
   }
@@ -249,6 +251,19 @@ function onReset() {
           >
             <UInputNumber
               v-model="state.minQuantity"
+              :min="0"
+              placeholder="10"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UFormField
+            label="Stock Maximo"
+            name="maxQuantity"
+            help="Stock Maximo Permitido del producto"
+          >
+            <UInputNumber
+              v-model="state.maxQuantity"
               :min="0"
               placeholder="10"
               class="w-full"
