@@ -43,6 +43,7 @@ export default defineEventHandler(async (event) => {
     totalEmitido: c.totalEmitido,
     totalEfectivo: c.totalEfectivo,
     totalTarjeta: c.totalTarjeta,
+    totalTransferencia: c.totalTransferencia,
     voidedCount: c.voidedCount,
     totalVoided: c.totalVoided,
     note: c.note,

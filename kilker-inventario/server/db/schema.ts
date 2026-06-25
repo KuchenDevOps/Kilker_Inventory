@@ -351,6 +351,9 @@ export const cashCloseouts = pgTable(
     totalTarjeta: numeric('total_tarjeta', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),
+    totalTransferencia: numeric('total_transferencia', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
     // Ventas del periodo anuladas al momento del corte (informativo).
     voidedCount: integer('voided_count').notNull().default(0),
     totalVoided: numeric('total_voided', { precision: 14, scale: 2 })

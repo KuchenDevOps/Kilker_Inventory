@@ -182,6 +182,7 @@ export interface ApiCorte {
   totalEmitido: string
   totalEfectivo: string
   totalTarjeta: string
+  totalTransferencia: string
   voidedCount: number
   totalVoided: string
   note: string | null

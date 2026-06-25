@@ -58,6 +58,7 @@ export default defineEventHandler(async (event) => {
   let totalEmitido = 0
   let totalEfectivo = 0
   let totalTarjeta = 0
+  let totalTransferencia = 0
   let voidedCount = 0
   let totalVoided = 0
   for (const r of rows) {
@@ -68,8 +69,20 @@ export default defineEventHandler(async (event) => {
     } else {
       salesCount += 1
       totalEmitido += amount
-      if (r.paymentMethod === 'tarjeta') totalTarjeta += amount
-      else totalEfectivo += amount
+      switch(r.paymentMethod)
+      {
+        case 'efectivo':
+          totalEfectivo += amount
+          break
+
+        case 'tarjeta':
+          totalTarjeta += amount
+          break
+
+        case 'transferencia':
+          totalTransferencia += amount
+          break
+      }
     }
   }
 
@@ -84,6 +97,7 @@ export default defineEventHandler(async (event) => {
       totalEmitido: String(totalEmitido),
       totalEfectivo: String(totalEfectivo),
       totalTarjeta: String(totalTarjeta),
+      totalTransferencia: String(totalTransferencia),
       voidedCount,
       totalVoided: String(totalVoided),
       note: typeof body?.note === 'string' ? body.note.trim() || null : null
