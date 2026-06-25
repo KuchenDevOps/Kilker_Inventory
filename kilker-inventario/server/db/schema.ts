@@ -1,21 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Esquema Drizzle — Inventario Kilker (modelo de datos v1)
-//
-// Fuente de verdad del esquema de Postgres (Supabase). Se modifica SOLO aquí y
-// se aplica con drizzle-kit (generate + migrate). Nunca a mano en Supabase.
-//
-// Decisiones congeladas (ver plan v1):
-//   - `stock_movements` es el libro APPEND-ONLY (fuente de verdad). Guarda delta
-//     de cantidad e importe con signo (+ entra, − sale). La inmutabilidad
-//     (rechazo de UPDATE/DELETE) se refuerza con un trigger en una migración
-//     SQL manual, no desde Drizzle.
-//   - `inventory` es saldo MATERIALIZADO por (producto × tienda); se actualiza
-//     junto con cada movimiento dentro de la misma transacción.
-//   - IDs de negocio: `bigint generated always as identity`. `profiles.id` es
-//     uuid (FK a `auth.users` que gestiona Supabase Auth).
-//   - Cantidades: numeric(14,3). Dinero: numeric(14,2).
-//   - Identificadores en inglés; etiquetas de UI en español.
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+//  ESQUEMA DRIZZLE — INVENTARIO KILKER (v1)
+// ───────────────────────────────────────────────
+// Fuente de verdad del esquema Postgres. Solo se edita aquí + drizzle-kit.
+// stock_movements: kardex append-only con signo. inventory: saldo materializado.
 
 import { relations, sql } from 'drizzle-orm'
 import {
@@ -34,17 +21,12 @@ import {
   type AnyPgColumn
 } from 'drizzle-orm/pg-core'
 
-// ── Esquema `auth` gestionado por Supabase ───────────────────────────────────
-// NO modelamos `auth.users` aquí a propósito: si se declara como tabla Drizzle,
-// `drizzle-kit generate` emite un `CREATE TABLE auth.users`, que rompe la
-// migración contra Supabase (la tabla ya existe). `schemaFilter: ['public']` NO
-// evita esa emisión. Por eso `profiles.id` es un uuid PK simple y la FK a
-// `auth.users(id) ON DELETE CASCADE` se crea en una migración SQL manual
-// (ver server/db/migrations/*_supabase_setup.sql). Patrón recomendado por
-// Supabase para tablas gestionadas por Auth.
+// auth.users la gestiona Supabase; no se modela aquí. FK a profiles vía migración SQL.
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-/** created_at + updated_at con zona horaria (timestamptz). */
+// ───────────────────────────────────────────────
+//  HELPERS
+// ───────────────────────────────────────────────
+/** created_at + updated_at con zona horaria. */
 const timestamps = () => ({
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
@@ -55,7 +37,9 @@ const timestamps = () => ({
     .$onUpdate(() => new Date())
 })
 
-// ── Enums (pgEnum) ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+//  ENUMS
+// ───────────────────────────────────────────────
 export const userRole = pgEnum('user_role', ['admin', 'empleado'])
 
 export const movementType = pgEnum('movement_type', [
@@ -88,10 +72,12 @@ export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta'])
 
 export const paymentMethod = pgEnum('payment_method', ['efectivo', 'tarjeta'])
 
-/** Descuentos: fuera de v1 (columnas null-able), enum listo para v2. */
+/** Descuentos: enum listo para v2. */
 export const discountType = pgEnum('discount_type', ['porcentaje', 'combo'])
 
-// ── Tablas ─────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+//  TABLAS
+// ───────────────────────────────────────────────
 
 /** Tiendas / sucursales. Cada una controla su propio stock. */
 export const stores = pgTable('stores', {
@@ -107,12 +93,11 @@ export const stores = pgTable('stores', {
 
 /** Perfil de aplicación (1:1 con auth.users) + rol y tienda del empleado. */
 export const profiles = pgTable('profiles', {
-  // FK a auth.users(id) ON DELETE CASCADE: se añade en la migración SQL manual
-  // (auth.users lo gestiona Supabase, no Drizzle). Ver nota del esquema `auth`.
+  // FK a auth.users ON DELETE CASCADE: se añade vía migración SQL manual.
   id: uuid('id').primaryKey(),
   fullName: text('full_name').notNull(),
   role: userRole('role').notNull(),
-  // Tienda del empleado; `admin` puede ser null (acceso global).
+  // Tienda del empleado; admin puede ser null (acceso global).
   storeId: bigint('store_id', { mode: 'number' }).references(() => stores.id, {
     onDelete: 'set null'
   }),
@@ -187,7 +172,7 @@ export const invoices = pgTable(
     id: bigint('id', { mode: 'number' })
       .primaryKey()
       .generatedAlwaysAsIdentity(),
-    // Folio secuencial por tienda (la secuencia se define en migración SQL).
+    // Folio secuencial por tienda (secuencia en migración SQL).
     folio: text('folio').notNull(),
     storeId: bigint('store_id', { mode: 'number' })
       .notNull()
@@ -196,7 +181,7 @@ export const invoices = pgTable(
       .notNull()
       .references(() => profiles.id),
     status: invoiceStatus('status').notNull().default('emitida'),
-    // Método de pago (para el corte de caja: separa efectivo de tarjeta).
+    // Método de pago (corte de caja separa efectivo/tarjeta).
     paymentMethod: paymentMethod('payment_method').notNull().default('efectivo'),
     note: text('note'),
     totalAmount: numeric('total_amount', { precision: 14, scale: 2 })
@@ -229,7 +214,7 @@ export const invoiceItems = pgTable('invoice_items', {
   quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
   unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
   lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull(),
-  // v2 (future-proof): null en v1.
+  // v2: null en v1.
   discountType: discountType('discount_type'),
   discountValue: numeric('discount_value', { precision: 14, scale: 2 }),
   taxRate: numeric('tax_rate', { precision: 5, scale: 2 })
@@ -249,7 +234,7 @@ export const stockMovements = pgTable(
       .notNull()
       .references(() => stores.id),
     type: movementType('type').notNull(),
-    // Signo: + entrada, − salida.
+    // Signo: + entra, − sale.
     quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
     unitValue: numeric('unit_value', { precision: 14, scale: 2 }).notNull(),
     totalValue: numeric('total_value', { precision: 14, scale: 2 }).notNull(),
@@ -259,7 +244,7 @@ export const stockMovements = pgTable(
     transferId: bigint('transfer_id', { mode: 'number' }).references(
       () => transfers.id
     ),
-    // Liga la reversa (anulacion) con el movimiento original.
+    // Liga la reversa (anulacion) al movimiento original.
     reversesMovementId: bigint('reverses_movement_id', {
       mode: 'number'
     }).references((): AnyPgColumn => stockMovements.id),
@@ -338,12 +323,7 @@ export const tickets = pgTable('tickets', {
   resolvedAt: timestamp('resolved_at', { withTimezone: true })
 }).enableRLS()
 
-/**
- * Corte de caja por TURNO: snapshot (estado de cuenta) de las ventas de una tienda
- * en un periodo `[periodFrom, periodTo)`. Cada corte cubre desde el corte anterior
- * de esa tienda (periodFrom = periodTo del anterior; null = desde el inicio) hasta
- * el momento del corte. Es un resumen automático: no hay conteo físico de efectivo.
- */
+/** Corte de caja por turno: snapshot de ventas de la tienda desde el corte anterior. */
 export const cashCloseouts = pgTable(
   'cash_closeouts',
   {
@@ -356,10 +336,10 @@ export const cashCloseouts = pgTable(
     createdBy: uuid('created_by')
       .notNull()
       .references(() => profiles.id),
-    // Ventana cubierta por el corte. `period_from` null = desde el inicio.
+    // Ventana del corte. period_from null = desde el inicio.
     periodFrom: timestamp('period_from', { withTimezone: true }),
     periodTo: timestamp('period_to', { withTimezone: true }).notNull(),
-    // Snapshot calculado al momento del corte (ventas EMITIDAS del periodo):
+    // Snapshot de ventas emitidas del periodo.
     salesCount: integer('sales_count').notNull().default(0),
     totalEmitido: numeric('total_emitido', { precision: 14, scale: 2 })
       .notNull()
@@ -370,7 +350,7 @@ export const cashCloseouts = pgTable(
     totalTarjeta: numeric('total_tarjeta', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),
-    // Ventas del periodo que están ANULADAS al momento del corte (informativo).
+    // Ventas del periodo anuladas al momento del corte (informativo).
     voidedCount: integer('voided_count').notNull().default(0),
     totalVoided: numeric('total_voided', { precision: 14, scale: 2 })
       .notNull()
@@ -383,7 +363,9 @@ export const cashCloseouts = pgTable(
   (t) => [index('cash_closeouts_store_created_idx').on(t.storeId, t.createdAt)]
 ).enableRLS()
 
-// ── Relaciones (para el query builder relacional de Drizzle) ──────────────────
+// ───────────────────────────────────────────────
+//  RELACIONES
+// ───────────────────────────────────────────────
 
 export const profilesRelations = relations(profiles, ({ one, many }) => ({
   store: one(stores, {
@@ -566,7 +548,9 @@ export const cashCloseoutsRelations = relations(cashCloseouts, ({ one }) => ({
   })
 }))
 
-// ── Tipos inferidos (select / insert) ────────────────────────────────────────
+// ───────────────────────────────────────────────
+//  TIPOS INFERIDOS (select / insert)
+// ───────────────────────────────────────────────
 export type Store = typeof stores.$inferSelect
 export type NewStore = typeof stores.$inferInsert
 export type Profile = typeof profiles.$inferSelect

@@ -1,7 +1,7 @@
-// POST /api/tickets — abrir un ticket de corrección (empleado o admin).
-// v1: solo correcciones de tipo `factura` (solicitud de anulación de una venta).
-// El empleado solo puede levantar tickets de SU tienda; el admin, de cualquiera.
-// Crea el ticket en estado `abierto`; el admin lo resuelve en /tickets/:id/resolve.
+// ───────────────────────────────────────────────
+//  POST /api/tickets — abrir ticket de corrección
+// ───────────────────────────────────────────────
+// v1 solo target factura. Crea el ticket en estado abierto; admin lo resuelve.
 import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, tickets } from '../../db/schema'
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
   const invoice = await db.query.invoices.findFirst({ where: eq(invoices.id, invoiceId) })
   if (!invoice) throw createError({ statusCode: 404, statusMessage: 'Venta no existe' })
 
-  // El empleado solo levanta tickets de su tienda.
+  // Empleado solo abre tickets de su tienda.
   if (profile.role === 'empleado' && profile.storeId !== invoice.storeId) {
     throw createError({
       statusCode: 403,

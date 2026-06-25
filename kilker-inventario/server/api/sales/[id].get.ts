@@ -1,5 +1,7 @@
-// GET /api/sales/:id — detalle de una venta (cabecera + líneas con producto).
-// Empleado: solo si la venta es de su tienda. Admin: cualquiera.
+// ───────────────────────────────────────────────
+//  GET /api/sales/:id — detalle de una venta
+// ───────────────────────────────────────────────
+// Cabecera + líneas. Empleado: su tienda. Admin: cualquiera.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices } from '../../db/schema'

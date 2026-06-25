@@ -1,5 +1,4 @@
-// Aumenta el tipo de meta de ruta con los campos propios que usa el guard global
-// (app/middleware/auth.global.ts) y que se declaran con definePageMeta en cada page.
+// Extiende RouteMeta con los campos que usa el guard global (requiresRole).
 import 'vue-router'
 
 declare module 'vue-router' {

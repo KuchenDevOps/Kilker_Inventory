@@ -1,6 +1,7 @@
-// GET /api/sales — historial de ventas (facturas internas).
-// Empleado: solo las de SU tienda. Admin: todas (filtro opcional ?storeId).
-// Devuelve cabeceras con datos resumidos para el listado.
+// ───────────────────────────────────────────────
+//  GET /api/sales — historial de ventas
+// ───────────────────────────────────────────────
+// Empleado: su tienda. Admin: todas (filtros ?storeId/?status).
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, tickets } from '../../db/schema'
@@ -35,8 +36,7 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // Facturas con un ticket de corrección ABIERTO (para mostrar "esperando
-  // corrección" en vez de permitir solicitarla de nuevo).
+  // Facturas con ticket abierto (marca "esperando corrección").
   const invoiceIds = rows.map((r) => r.id)
   const pending = new Set<number>()
   if (invoiceIds.length) {

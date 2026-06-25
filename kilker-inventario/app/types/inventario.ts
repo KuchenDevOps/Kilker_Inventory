@@ -1,14 +1,9 @@
-// Tipos del dominio de inventario — alineados al BACKEND REAL (server/api + Drizzle).
-//
-// Reemplazan a los tipos del mock anterior. Notas importantes del shape real:
-//   - Los IDs de negocio son numéricos (`bigint` en Postgres → `number`).
-//   - `unit` es el enum v1 `product_unit`: 'litro' | 'galon' | 'cubeta'.
-//   - Los campos `numeric` de Postgres (price, cost, minQuantity, quantity…) llegan
-//     como STRING por la API. Hay que `Number(...)` antes de operar/formatear.
-//   - El catálogo v1 NO tiene base/acabado/volumen/marca (ver plan v1).
-// Las etiquetas visibles en la UI van en español.
+// ───────────────────────────────────────────────
+//  TIPOS DEL DOMINIO DE INVENTARIO
+// ───────────────────────────────────────────────
+// Alineados al backend. IDs numéricos; los numeric llegan como string (usar Number()).
 
-/** Roles de usuario (enum `user_role`). */
+/** Roles de usuario (enum user_role). */
 export type UserRole = 'admin' | 'empleado'
 
 /** Unidades de medida del catálogo (enum `product_unit`). */
@@ -77,7 +72,11 @@ export interface Me {
   storeId: number | null
 }
 
-/** Cuerpo para crear un producto (`POST /api/products`, solo admin). */
+// ───────────────────────────────────────────────
+//  CUERPOS DE PETICIÓN (POST/PATCH)
+// ───────────────────────────────────────────────
+
+/** Cuerpo para crear un producto (POST /api/products, solo admin). */
 export interface NewProductInput {
   sku: string
   name: string
@@ -117,7 +116,11 @@ export interface SaleInput {
   items: { productId: number; quantity: number; unitPrice?: number }[]
 }
 
-/** Estado de una factura/venta (enum `invoice_status`). */
+// ───────────────────────────────────────────────
+//  RESPUESTAS DE LECTURA (GET)
+// ───────────────────────────────────────────────
+
+/** Estado de una factura/venta (enum invoice_status). */
 export type InvoiceStatus = 'emitida' | 'anulada'
 
 /** Estado de un ticket de corrección (enum `ticket_status`). */

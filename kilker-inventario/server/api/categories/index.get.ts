@@ -1,7 +1,7 @@
-// GET /api/categories — categorías/líneas de producto, ordenadas por nombre.
-// Lectura pública. Alimenta el selector de categoría del alta de producto y la
-// sección de gestión de categorías. Incluye `productCount` y `parentName`
-// (aditivos: el selector solo usa id/name/parentId).
+// ───────────────────────────────────────────────
+//  GET /api/categories — categorías (lectura pública)
+// ───────────────────────────────────────────────
+// Ordenadas por nombre; enriquecidas con productCount y parentName.
 import { sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { products } from '../../db/schema'
@@ -13,7 +13,7 @@ export default defineEventHandler(async () => {
     orderBy: (c, { asc }) => [asc(c.name)]
   })
 
-  // Conteo de productos por categoría (una sola consulta agregada).
+  // Conteo de productos por categoría (consulta agregada).
   const counts = await db
     .select({
       categoryId: products.categoryId,

@@ -152,6 +152,5 @@ vite.config.ts.timestamp-*
 # Crashlytics generated file
 crashlytics-build.properties
 # Docs internos del agente (no versionar)
-CLAUDE.md
-docs/CONVENCIONES-AGENTE.md
+
 

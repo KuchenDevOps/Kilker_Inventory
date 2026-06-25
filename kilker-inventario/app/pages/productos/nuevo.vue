@@ -224,6 +224,8 @@ function onReset() {
             <UInputNumber
               v-model="state.price"
               :min="0"
+              :step="0.01"
+              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
               placeholder="280"
               class="w-full"
             />
@@ -233,6 +235,8 @@ function onReset() {
             <UInputNumber
               v-model="state.cost"
               :min="0"
+              :step="0.01"
+              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
               placeholder="180"
               class="w-full"
             />
@@ -246,6 +250,8 @@ function onReset() {
             <UInputNumber
               v-model="state.minQuantity"
               :min="0"
+              :step="0.01"
+              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
               placeholder="10"
               class="w-full"
             />

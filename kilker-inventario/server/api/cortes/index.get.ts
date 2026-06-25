@@ -1,5 +1,7 @@
-// GET /api/cortes — historial de cortes de caja.
-// Empleado: solo los de SU tienda. Admin: todos (filtro opcional ?storeId).
+// ───────────────────────────────────────────────
+//  GET /api/cortes — historial de cortes de caja
+// ───────────────────────────────────────────────
+// Empleado: su tienda. Admin: todos (filtro ?storeId).
 import { and, desc, eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { cashCloseouts } from '../../db/schema'

@@ -1,5 +1,7 @@
-// GET /api/stores — tiendas/sucursales, ordenadas por código.
-// Lectura pública por ahora (sin auth todavía).
+// ───────────────────────────────────────────────
+//  GET /api/stores — tiendas (lectura pública)
+// ───────────────────────────────────────────────
+// Ordenadas por código.
 import { useDb } from '../../db'
 
 export default defineEventHandler(async () => {

@@ -11,8 +11,7 @@ const { sales, pending, error, status, storeId, refresh } = useSales()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
-// El estado de useSales es compartido y su watcher solo se instala una vez; al
-// (re)entrar a la página refrescamos para no mostrar datos viejos.
+// Estado compartido: refrescamos al entrar para no mostrar datos viejos.
 onMounted(() => {
   refresh()
 })
