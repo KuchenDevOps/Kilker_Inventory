@@ -37,7 +37,9 @@ export default defineEventHandler(async (event) => {
   }
 
   // Método de pago (corte de caja). Default efectivo.
-  const paymentMethod = body?.paymentMethod === 'tarjeta' ? 'tarjeta' : 'efectivo'
+  const allowed = [ 'efectivo', 'tarjeta', 'transferencia']
+  const paymentMethod = allowed.includes(body?.paymentMethod as never) ?
+    (body?.paymentMethod as typeof allowed[number]) : 'efectivo' 
 
   // El empleado solo vende en su tienda.
   if (profile.role === 'empleado' && profile.storeId !== storeId) {

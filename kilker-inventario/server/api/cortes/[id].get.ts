@@ -50,6 +50,7 @@ export default defineEventHandler(async (event) => {
     totalEmitido: corte.totalEmitido,
     totalEfectivo: corte.totalEfectivo,
     totalTarjeta: corte.totalTarjeta,
+    totalTransferencia: corte.totalTransferencia,
     voidedCount: corte.voidedCount,
     totalVoided: corte.totalVoided,
     note: corte.note,

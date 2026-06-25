@@ -70,7 +70,7 @@ export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
 
 export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta'])
 
-export const paymentMethod = pgEnum('payment_method', ['efectivo', 'tarjeta'])
+export const paymentMethod = pgEnum('payment_method', ['efectivo', 'tarjeta', 'transferencia'])
 
 /** Descuentos: enum listo para v2. */
 export const discountType = pgEnum('discount_type', ['porcentaje', 'combo'])
@@ -124,6 +124,7 @@ export const products = pgTable('products', {
     .generatedAlwaysAsIdentity(),
   sku: text('sku').notNull().unique(),
   name: text('name').notNull(),
+  maxQuantity: numeric('max_quantity', {precision: 14, scale: 3}),
   categoryId: bigint('category_id', { mode: 'number' }).references(
     () => categories.id
   ),
@@ -348,6 +349,9 @@ export const cashCloseouts = pgTable(
       .notNull()
       .default('0'),
     totalTarjeta: numeric('total_tarjeta', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    totalTransferencia: numeric('total_transferencia', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),
     // Ventas del periodo anuladas al momento del corte (informativo).

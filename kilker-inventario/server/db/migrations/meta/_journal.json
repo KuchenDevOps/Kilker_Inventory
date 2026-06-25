@@ -29,6 +29,20 @@
       "when": 1782076015560,
       "tag": "0003_ambitious_psylocke",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782411581068,
+      "tag": "0004_conscious_matthew_murdock",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782413312589,
+      "tag": "0005_dark_thunderbolt_ross",
+      "breakpoints": true
     }
   ]
 }

@@ -26,6 +26,7 @@ export default defineEventHandler(async () => {
     price: p.price,
     cost: p.cost,
     minQuantity: p.minQuantity,
+    maxQuantity: p.maxQuantity,
     isActive: p.isActive,
     // Σ existencias en todas las tiendas.
     totalStock: p.inventory.reduce((sum, i) => sum + Number(i.quantity), 0)
