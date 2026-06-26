@@ -18,6 +18,7 @@ interface NewProductBody {
   cost?: number | string | null
   barcode?: string | null
   minQuantity?: number | string | null
+  maxQuantity?: number | string | null
   isActive?: boolean
 }
 

@@ -90,6 +90,9 @@ export interface NewProductInput {
   minQuantity?: number | null
   maxQuantity?: number | null
   isActive?: boolean
+
+
+  
 }
 
 /** Cuerpo para registrar una entrada de stock (`POST /api/movements/entrada`). */
