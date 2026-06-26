@@ -240,14 +240,14 @@ export function useApiFetch() {
   ): Promise<T> => {
     const { data } = await supabase.auth.getSession()
     const token = data.session?.access_token
-    return await $fetch<T>(url, {
+    return (await $fetch<T>(url, {
       method: opts.method,
       body: opts.body,
       headers: {
         ...opts.headers,
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       }
-    })
+    })) as T
   }
 }
 

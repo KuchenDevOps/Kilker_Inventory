@@ -155,6 +155,8 @@ async function onSubmit() {
             <UInputNumber
               v-model="state.unitValue"
               :min="0"
+              :step="0.01"
+              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
               :disabled="!isAdmin"
               :placeholder="selectedProduct?.cost ?? 'costo del producto'"
               class="w-full"
