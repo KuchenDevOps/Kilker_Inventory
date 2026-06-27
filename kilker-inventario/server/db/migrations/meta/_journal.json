@@ -43,6 +43,13 @@
       "when": 1782413312589,
       "tag": "0005_dark_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782525651772,
+      "tag": "0006_condemned_barracuda",
+      "breakpoints": true
     }
   ]
 }

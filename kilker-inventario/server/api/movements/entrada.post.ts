@@ -10,8 +10,9 @@ interface EntradaBody {
   productId: number
   storeId: number
   quantity: number
-  unitValue?: number
   reason?: string
+  supplierInvoiceNumber?: string
+  supplierInvoiceDate?: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -38,7 +39,8 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 404, statusMessage: 'Producto no existe' })
     }
 
-    const unitValue = body.unitValue != null ? Number(body.unitValue) : Number(product.cost ?? 0)
+    // Costo estándar del producto (sin captura manual por entrada).
+    const unitValue = Number(product.cost ?? 0)
     const totalValue = quantity * unitValue
 
     const [movement] = await tx
@@ -51,6 +53,8 @@ export default defineEventHandler(async (event) => {
         unitValue: String(unitValue),
         totalValue: String(totalValue),
         reason: body.reason ?? null,
+        supplierInvoiceNumber: body.supplierInvoiceNumber?.trim() || null,
+        supplierInvoiceDate: body.supplierInvoiceDate || null,
         createdBy: profile.id
       })
       .returning()

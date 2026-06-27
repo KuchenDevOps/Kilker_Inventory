@@ -4,20 +4,28 @@ import {
   PRODUCT_UNITS,
   UNIT_LABELS,
   type ApiProduct,
-  type NewProductInput,
+  type ApiProductDetail,
+  type ProductUpdateInput,
   type ProductUnit
 } from '~/types/inventario'
 
 definePageMeta({ requiresRole: 'admin' })
-useHead({ title: 'Nuevo producto · Inventario Kilker' })
+useHead({ title: 'Editar producto · Inventario Kilker' })
+
+const route = useRoute()
+const id = Number(route.params.id)
 
 const toast = useToast()
 const { me } = useMe()
 const { data: categories } = useCategories()
-const { data: products } = useProducts()
 const apiFetch = useApiFetch()
 
 const isAdmin = computed(() => me.value?.role === 'admin')
+
+const { data: product, pending, error } = useFetch<ApiProductDetail>(
+  `/api/products/${id}`,
+  { key: `product-${id}` }
+)
 
 type FormState = {
   sku: string
@@ -33,24 +41,42 @@ type FormState = {
   isActive: boolean
 }
 
-function emptyState(): FormState {
-  return {
-    sku: '',
-    name: '',
-    categoryId: undefined,
-    color: '',
-    unit: 'litro',
-    price: undefined,
-    cost: undefined,
-    minQuantity: undefined,
-    maxQuantity: undefined,
-    barcode: '',
-    isActive: true
-  }
-}
-
-const state = reactive<FormState>(emptyState())
+const state = reactive<FormState>({
+  sku: '',
+  name: '',
+  categoryId: undefined,
+  color: '',
+  unit: 'litro',
+  price: undefined,
+  cost: undefined,
+  minQuantity: undefined,
+  maxQuantity: undefined,
+  barcode: '',
+  isActive: true
+})
 const submitting = ref(false)
+
+const num = (v: string | null) => (v != null ? Number(v) : undefined)
+
+// Precarga el formulario cuando llega el producto.
+watch(
+  product,
+  (p) => {
+    if (!p) return
+    state.sku = p.sku
+    state.name = p.name
+    state.categoryId = p.categoryId ?? undefined
+    state.color = p.color ?? ''
+    state.unit = p.unit
+    state.price = num(p.price)
+    state.cost = num(p.cost)
+    state.minQuantity = num(p.minQuantity)
+    state.maxQuantity = num(p.maxQuantity)
+    state.barcode = p.barcode ?? ''
+    state.isActive = p.isActive
+  },
+  { immediate: true }
+)
 
 const unitItems = PRODUCT_UNITS.map((u) => ({ label: UNIT_LABELS[u], value: u }))
 const categoryItems = computed(() =>
@@ -59,13 +85,6 @@ const categoryItems = computed(() =>
 
 function validate(s: FormState): FormError[] {
   const errors: FormError[] = []
-  if (!s.sku.trim()) {
-    errors.push({ name: 'sku', message: 'El SKU es obligatorio.' })
-  } else if (
-    products.value.some((p) => p.sku.toLowerCase() === s.sku.trim().toLowerCase())
-  ) {
-    errors.push({ name: 'sku', message: 'Ya existe un producto con este SKU.' })
-  }
   if (!s.name.trim()) {
     errors.push({ name: 'name', message: 'El nombre es obligatorio.' })
   }
@@ -89,8 +108,7 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
   const d = event.data
   const clean = (v: string) => (v.trim() ? v.trim() : null)
 
-  const payload: NewProductInput = {
-    sku: d.sku.trim(),
+  const payload: ProductUpdateInput = {
     name: d.name.trim(),
     categoryId: d.categoryId ?? null,
     color: clean(d.color),
@@ -104,21 +122,21 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
   }
 
   try {
-    const created = await apiFetch<ApiProduct>('/api/products', {
-      method: 'POST',
+    const updated = await apiFetch<ApiProduct>(`/api/products/${id}`, {
+      method: 'PATCH',
       body: payload as unknown as Record<string, unknown>
     })
     await refreshNuxtData('products')
     toast.add({
-      title: 'Producto creado',
-      description: `${created.sku} — ${created.name}`,
+      title: 'Producto actualizado',
+      description: `${updated.sku} — ${updated.name}`,
       color: 'success',
       icon: 'i-lucide-circle-check'
     })
     await navigateTo('/productos')
   } catch (e) {
     toast.add({
-      title: 'No se pudo crear el producto',
+      title: 'No se pudo actualizar el producto',
       description: apiErrorMessage(e),
       color: 'error',
       icon: 'i-lucide-triangle-alert'
@@ -126,10 +144,6 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
   } finally {
     submitting.value = false
   }
-}
-
-function onReset() {
-  Object.assign(state, emptyState())
 }
 </script>
 
@@ -145,9 +159,9 @@ function onReset() {
       >
         Volver al catálogo
       </UButton>
-      <h1 class="text-2xl font-semibold">Nuevo producto</h1>
+      <h1 class="text-2xl font-semibold">Editar producto</h1>
       <p class="text-sm text-muted">
-        Alta de un producto del catálogo. Los campos con
+        El SKU no se puede cambiar. Los campos con
         <span class="text-error">*</span> son obligatorios.
       </p>
     </header>
@@ -158,20 +172,22 @@ function onReset() {
       variant="soft"
       icon="i-lucide-lock"
       title="Acceso restringido"
-      description="Solo un administrador puede dar de alta productos."
+      description="Solo un administrador puede editar productos."
       class="mb-6"
     />
     <UAlert
-      v-else-if="!me"
-      color="info"
+      v-else-if="error"
+      color="error"
       variant="soft"
-      icon="i-lucide-log-in"
-      title="Inicia sesión"
-      description="Necesitas iniciar sesión como administrador para crear productos."
+      icon="i-lucide-triangle-alert"
+      title="No se pudo cargar el producto"
+      :description="error.message"
       class="mb-6"
     />
+    <p v-else-if="pending" class="text-sm text-muted">Cargando…</p>
 
     <UForm
+      v-else
       :state="state"
       :validate="validate"
       :disabled="!isAdmin"
@@ -185,8 +201,8 @@ function onReset() {
         </template>
 
         <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="SKU" name="sku" required>
-            <UInput v-model="state.sku" placeholder="ESM-BLA-1L" class="w-full" />
+          <UFormField label="SKU" name="sku" help="No editable.">
+            <UInput v-model="state.sku" disabled class="w-full" />
           </UFormField>
 
           <UFormField label="Nombre" name="name" required>
@@ -228,7 +244,7 @@ function onReset() {
               v-model="state.price"
               :min="0"
               :step="0.01"
-              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
+              :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
               placeholder="280"
               class="w-full"
             />
@@ -239,7 +255,7 @@ function onReset() {
               v-model="state.cost"
               :min="0"
               :step="0.01"
-              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
+              :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
               placeholder="180"
               class="w-full"
             />
@@ -259,14 +275,14 @@ function onReset() {
           </UFormField>
 
           <UFormField
-            label="Stock Maximo"
+            label="Stock máximo"
             name="maxQuantity"
-            help="Stock Maximo Permitido del producto"
+            help="Stock máximo permitido del producto."
           >
             <UInputNumber
               v-model="state.maxQuantity"
               :min="0"
-              placeholder="10"
+              placeholder="100"
               class="w-full"
             />
           </UFormField>
@@ -292,8 +308,8 @@ function onReset() {
       </UCard>
 
       <div class="flex flex-wrap justify-end gap-3">
-        <UButton type="button" variant="ghost" color="neutral" @click="onReset">
-          Limpiar
+        <UButton to="/productos" variant="ghost" color="neutral">
+          Cancelar
         </UButton>
         <UButton
           type="submit"
@@ -302,7 +318,7 @@ function onReset() {
           :loading="submitting"
           :disabled="!isAdmin"
         >
-          Guardar producto
+          Guardar cambios
         </UButton>
       </div>
     </UForm>

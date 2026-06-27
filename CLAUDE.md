@@ -117,6 +117,7 @@ npm install
 npm run dev                  # servidor de desarrollo Nuxt (http://localhost:3000)
 npm run build                # build de producción
 npx eslint .                 # lint (config en eslint.config.mjs vía @nuxt/eslint)
+npm run typecheck            # chequeo de tipos (vue-tsc); eslint y dev NO chequean tipos
 
 # (pendientes hasta crear server/db/schema.ts)
 npx drizzle-kit generate     # genera SQL de migración desde server/db/schema.ts
@@ -257,6 +258,19 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     efectivo). `GET /api/cortes` (lista) y `GET /api/cortes/:id` (detalle: snapshot + ventas
     del periodo). ⚠️ Los totales del corte son **inmutables** (foto al cierre); el detalle
     re-consulta el estado ACTUAL de cada venta (puede diferir si se anula después del corte).
+  - **Productos — edición/borrado (hecho):** `PATCH /api/products/:id` (admin; el **SKU no
+    se edita**), `DELETE /api/products/:id` (admin; **409 si tiene historial** de
+    movimientos/ventas/transferencias → desactivar en su lugar), `GET /api/products/:id`
+    (detalle con `barcode`). UI: `app/pages/productos/[id]/editar.vue` + botones editar/borrar
+    (con confirmación) en el catálogo.
+  - **QA del cliente (migraciones 0004-0006):** método de pago `transferencia` (enum); `products.
+    max_quantity`; `cash_closeouts.total_transferencia` (el corte separa efectivo/tarjeta/
+    transferencia); `stock_movements.supplier_invoice_number/date` (factura del proveedor en
+    entradas); decimales en inputs de precio/costo. **Costo estándar de la marca:** se quitó la
+    captura manual de "Costo unitario" en la entrada (toma `products.cost` automático); no hay
+    costeo por lote (FIFO/promedio).
+  - **Typecheck (hecho):** `npm run typecheck` (vue-tsc). ⚠️ Ni eslint ni el dev server
+    chequean tipos; usar este comando antes de dar por bueno un cambio.
   - **Auth en la UI (Bearer, no cookie):** ver §7 — el path por cookie de
     `serverSupabaseUser` NO resuelve aquí; las llamadas autenticadas (`/api/me` y
     escrituras) van con `Authorization: Bearer <access_token>` desde la sesión viva.
@@ -273,7 +287,10 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     SPA (`ssr:false`) — decisión pendiente del usuario.
 - **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
 - **Pendiente / bloqueante:** especificaciones funcionales; movimientos de **ajuste** y
-  **transferencia** entre sucursales; tickets target `movimiento` (v1 solo `factura`);
-  folio secuencial formal; (opcional) corte con conteo físico de efectivo y detalle
-  congelado; confirmación de planes/regiones.
+  **transferencia** entre sucursales (tablas `transfers`/`transfer_items` ya en el esquema);
+  **vista de kardex/historial de movimientos** (hoy `supplier_invoice_*` se guarda pero no se
+  muestra); tickets target `movimiento` (v1 solo `factura`); folio secuencial formal; reportes
+  y exportación; (opcional) corte con conteo físico de efectivo y detalle congelado;
+  confirmación de planes/regiones. **Hardening:** RLS policies (solo si hay acceso directo del
+  cliente; hoy todo es server-side), migrar `SUPABASE_SERVICE_KEY`→`NUXT_SUPABASE_SECRET_KEY`.
 - Ver el plan completo por fases en [`docs/ROADMAP.md`](docs/ROADMAP.md).

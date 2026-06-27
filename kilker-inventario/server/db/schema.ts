@@ -9,6 +9,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   index,
   integer,
   numeric,
@@ -250,6 +251,8 @@ export const stockMovements = pgTable(
       mode: 'number'
     }).references((): AnyPgColumn => stockMovements.id),
     reason: text('reason'),
+    supplierInvoiceNumber: text('supplier_invoice_number'),
+    supplierInvoiceDate: date('supplier_invoice_date'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => profiles.id),

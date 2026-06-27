@@ -16,14 +16,16 @@ const state = reactive<{
   productId: number | undefined
   storeId: number | undefined
   quantity: number | undefined
-  unitValue: number | undefined
   reason: string
+  supplierInvoiceNumber: string
+  supplierInvoiceDate: string
 }>({
   productId: undefined,
   storeId: undefined,
   quantity: undefined,
-  unitValue: undefined,
-  reason: ''
+  reason: '',
+  supplierInvoiceNumber: '',
+  supplierInvoiceDate: ''
 })
 const submitting = ref(false)
 
@@ -59,8 +61,9 @@ async function onSubmit() {
         productId: state.productId,
         storeId: state.storeId,
         quantity: state.quantity,
-        unitValue: state.unitValue ?? undefined,
-        reason: state.reason.trim() || undefined
+        reason: state.reason.trim() || undefined,
+        supplierInvoiceNumber: state.supplierInvoiceNumber.trim() || undefined,
+        supplierInvoiceDate: state.supplierInvoiceDate || undefined,
       }
     })
     await refreshNuxtData('products')
@@ -72,8 +75,9 @@ async function onSubmit() {
       icon: 'i-lucide-circle-check'
     })
     state.quantity = undefined
-    state.unitValue = undefined
     state.reason = ''
+    state.supplierInvoiceNumber = ''
+    state.supplierInvoiceDate = ''
   } catch (e) {
     toast.add({
       title: 'No se pudo registrar la entrada',
@@ -146,22 +150,6 @@ async function onSubmit() {
               class="w-full"
             />
           </UFormField>
-
-          <UFormField
-            label="Costo unitario (MXN)"
-            name="unitValue"
-            help="Opcional. Si se omite, se usa el costo del producto."
-          >
-            <UInputNumber
-              v-model="state.unitValue"
-              :min="0"
-              :step="0.01"
-              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
-              :disabled="!isAdmin"
-              :placeholder="selectedProduct?.cost ?? 'costo del producto'"
-              class="w-full"
-            />
-          </UFormField>
         </div>
 
         <UFormField label="Motivo / referencia" name="reason">
@@ -173,6 +161,23 @@ async function onSubmit() {
           />
         </UFormField>
 
+        <UFormField label="Número de factura" name="supplierInvoiceNumber">
+          <UInput
+            v-model="state.supplierInvoiceNumber"
+            :disabled="!isAdmin"
+            placeholder="A-12345"
+            class="w-full"
+          />
+        </UFormField>
+        
+        <UFormField label="Fecha de factura" name="supplierInvoiceDate">
+          <UInput
+            v-model="state.supplierInvoiceDate"
+            type="date"
+            :disabled="!isAdmin"
+            class="w-full"
+          />
+        </UFormField>
         <div
           v-if="selectedProduct"
           class="rounded-lg bg-elevated/50 px-4 py-3 text-sm text-muted"

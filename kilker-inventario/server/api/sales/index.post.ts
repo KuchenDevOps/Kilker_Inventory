@@ -37,9 +37,10 @@ export default defineEventHandler(async (event) => {
   }
 
   // Método de pago (corte de caja). Default efectivo.
-  const allowed = [ 'efectivo', 'tarjeta', 'transferencia']
-  const paymentMethod = allowed.includes(body?.paymentMethod as never) ?
-    (body?.paymentMethod as typeof allowed[number]) : 'efectivo' 
+  const allowed = ['efectivo', 'tarjeta', 'transferencia'] as const
+  const paymentMethod = allowed.includes(body?.paymentMethod as never)
+    ? (body?.paymentMethod as (typeof allowed)[number])
+    : 'efectivo'
 
   // El empleado solo vende en su tienda.
   if (profile.role === 'empleado' && profile.storeId !== storeId) {
@@ -81,11 +82,11 @@ export default defineEventHandler(async (event) => {
     const totalAmount = lines.reduce((sum, l) => sum + l.lineTotal, 0)
 
     // Folio provisional por tienda (secuencia formal pendiente).
-    const [{ count }] = await tx
+    const [folioRow] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(invoices)
       .where(eq(invoices.storeId, storeId))
-    const folio = `${store.code}-${String(Number(count) + 1).padStart(4, '0')}`
+    const folio = `${store.code}-${String(Number(folioRow?.count ?? 0) + 1).padStart(4, '0')}`
 
     const [invoice] = await tx
       .insert(invoices)
@@ -99,6 +100,9 @@ export default defineEventHandler(async (event) => {
         totalAmount: String(totalAmount)
       })
       .returning()
+    if (!invoice) {
+      throw createError({ statusCode: 500, statusMessage: 'No se pudo crear la factura' })
+    }
 
     for (const l of lines) {
       await tx.insert(invoiceItems).values({
