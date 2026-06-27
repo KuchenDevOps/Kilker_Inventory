@@ -37,6 +37,22 @@ export interface ApiProduct {
   totalStock: number
 }
 
+/** Detalle de un producto (`GET /api/products/:id`); incluye barcode, sin totalStock. */
+export interface ApiProductDetail {
+  id: number
+  sku: string
+  name: string
+  categoryId: number | null
+  color: string | null
+  unit: ProductUnit
+  price: string
+  cost: string | null
+  barcode: string | null
+  minQuantity: string | null
+  maxQuantity: string | null
+  isActive: boolean
+}
+
 /** Tienda/sucursal tal como la devuelve `GET /api/stores`. */
 export interface ApiStore {
   id: number
@@ -95,12 +111,14 @@ export interface NewProductInput {
   
 }
 
+/** Cuerpo para editar un producto (`PATCH /api/products/:id`, admin). SKU no editable. */
+export type ProductUpdateInput = Partial<Omit<NewProductInput, 'sku'>>
+
 /** Cuerpo para registrar una entrada de stock (`POST /api/movements/entrada`). */
 export interface EntradaInput {
   productId: number
   storeId: number
   quantity: number
-  unitValue?: number
   reason?: string
   supplierInvoiceNumber?: string
   supplierInvoiceDate?: string

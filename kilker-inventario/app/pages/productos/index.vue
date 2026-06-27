@@ -73,14 +73,15 @@ const filtered = computed(() => {
               <th class="px-4 py-3 font-medium text-right">Precio</th>
               <th class="px-4 py-3 font-medium text-right">Existencia</th>
               <th class="px-4 py-3 font-medium text-center">Estado</th>
+              <th v-if="isAdmin" class="px-4 py-3 font-medium text-right">Editar</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="7" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td :colspan="isAdmin ? 8 : 7" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!filtered.length">
-              <td colspan="7" class="px-4 py-8 text-center text-muted">
+              <td :colspan="isAdmin ? 8 : 7" class="px-4 py-8 text-center text-muted">
                 Sin resultados.
               </td>
             </tr>
@@ -106,6 +107,15 @@ const filtered = computed(() => {
                   :label="p.isActive ? 'Activo' : 'Inactivo'"
                   :color="p.isActive ? 'success' : 'neutral'"
                   variant="subtle"
+                />
+              </td>
+              <td v-if="isAdmin" class="px-4 py-3 text-right">
+                <UButton
+                  :to="`/productos/${p.id}/editar`"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-pencil"
                 />
               </td>
             </tr>

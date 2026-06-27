@@ -16,7 +16,6 @@ const state = reactive<{
   productId: number | undefined
   storeId: number | undefined
   quantity: number | undefined
-  unitValue: number | undefined
   reason: string
   supplierInvoiceNumber: string
   supplierInvoiceDate: string
@@ -24,7 +23,6 @@ const state = reactive<{
   productId: undefined,
   storeId: undefined,
   quantity: undefined,
-  unitValue: undefined,
   reason: '',
   supplierInvoiceNumber: '',
   supplierInvoiceDate: ''
@@ -63,7 +61,6 @@ async function onSubmit() {
         productId: state.productId,
         storeId: state.storeId,
         quantity: state.quantity,
-        unitValue: state.unitValue ?? undefined,
         reason: state.reason.trim() || undefined,
         supplierInvoiceNumber: state.supplierInvoiceNumber.trim() || undefined,
         supplierInvoiceDate: state.supplierInvoiceDate || undefined,
@@ -78,7 +75,6 @@ async function onSubmit() {
       icon: 'i-lucide-circle-check'
     })
     state.quantity = undefined
-    state.unitValue = undefined
     state.reason = ''
     state.supplierInvoiceNumber = ''
     state.supplierInvoiceDate = ''
@@ -151,22 +147,6 @@ async function onSubmit() {
               :min="0"
               :disabled="!isAdmin"
               placeholder="10"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField
-            label="Costo unitario (MXN)"
-            name="unitValue"
-            help="Opcional. Si se omite, se usa el costo del producto."
-          >
-            <UInputNumber
-              v-model="state.unitValue"
-              :min="0"
-              :step="0.01"
-              :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
-              :disabled="!isAdmin"
-              :placeholder="selectedProduct?.cost ?? 'costo del producto'"
               class="w-full"
             />
           </UFormField>
