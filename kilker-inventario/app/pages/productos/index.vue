@@ -7,6 +7,34 @@ const { data: products, pending, error } = useProducts()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
+const toast = useToast()
+const apiFetch = useApiFetch()
+const confirmingDeleteId = ref<number | null>(null)
+const deleting = ref(false)
+
+async function deleteProduct(id: number) {
+  deleting.value = true
+  try {
+    await apiFetch(`/api/products/${id}`, { method: 'DELETE' })
+    await refreshNuxtData('products')
+    toast.add({
+      title: 'Producto borrado',
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    confirmingDeleteId.value = null
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo borrar el producto',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    deleting.value = false
+  }
+}
+
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN'
@@ -73,7 +101,7 @@ const filtered = computed(() => {
               <th class="px-4 py-3 font-medium text-right">Precio</th>
               <th class="px-4 py-3 font-medium text-right">Existencia</th>
               <th class="px-4 py-3 font-medium text-center">Estado</th>
-              <th v-if="isAdmin" class="px-4 py-3 font-medium text-right">Editar</th>
+              <th v-if="isAdmin" class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-default">
@@ -110,13 +138,43 @@ const filtered = computed(() => {
                 />
               </td>
               <td v-if="isAdmin" class="px-4 py-3 text-right">
-                <UButton
-                  :to="`/productos/${p.id}/editar`"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  icon="i-lucide-pencil"
-                />
+                <div class="flex items-center justify-end gap-1">
+                  <template v-if="confirmingDeleteId === p.id">
+                    <span class="text-xs text-muted mr-1">¿Borrar?</span>
+                    <UButton
+                      size="xs"
+                      color="error"
+                      variant="soft"
+                      icon="i-lucide-check"
+                      :loading="deleting"
+                      @click="deleteProduct(p.id)"
+                    />
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-x"
+                      :disabled="deleting"
+                      @click="confirmingDeleteId = null"
+                    />
+                  </template>
+                  <template v-else>
+                    <UButton
+                      :to="`/productos/${p.id}/editar`"
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-pencil"
+                    />
+                    <UButton
+                      size="xs"
+                      color="error"
+                      variant="ghost"
+                      icon="i-lucide-trash-2"
+                      @click="confirmingDeleteId = p.id"
+                    />
+                  </template>
+                </div>
               </td>
             </tr>
           </tbody>

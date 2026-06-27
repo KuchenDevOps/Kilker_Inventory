@@ -57,8 +57,16 @@ por fases, validando specs, planes y capacidades antes de escribir código de pr
   (`cash_closeouts`, migración 0003). Cada corte resume las ventas de la tienda desde el
   corte anterior, separando efectivo/tarjeta (snapshot). Endpoints `POST/GET /api/cortes`,
   `GET /api/cortes/:id`. Pantalla `app/pages/cortes/index.vue`. Ver §10 de `CLAUDE.md`.
+- **Productos — edición y borrado (hecho):** `PATCH /api/products/:id` (admin, SKU no
+  editable) y `DELETE /api/products/:id` (admin; bloquea 409 si el producto tiene historial
+  → desactivar). UI: página de edición + botones en el catálogo. Ver §10 de `CLAUDE.md`.
+- **QA del cliente (hecho):** método de pago `transferencia`; stock máximo; factura del
+  proveedor (número/fecha) en entradas; el corte separa efectivo/tarjeta/transferencia;
+  decimales en precios/costos. **Costo estándar de la marca** (sin captura manual de costo
+  por entrada ni costeo por lote). Migraciones 0004-0006.
 - **Layout responsivo completo** (`app/layouts/default.vue`): sidebar fija en desktop,
   drawer deslizable en móvil (hamburguesa → overlay → X o tap fuera para cerrar).
+- **Calidad:** `npm run typecheck` (vue-tsc) disponible; eslint + typecheck verdes.
 
 **Hecho cuando:**
 - Las "Preguntas abiertas" de `CONTEXTO.md` están resueltas y el modelo de datos está
