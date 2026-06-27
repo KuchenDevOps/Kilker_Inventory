@@ -102,6 +102,8 @@ export interface EntradaInput {
   quantity: number
   unitValue?: number
   reason?: string
+  supplierInvoiceNumber?: string
+  supplierInvoiceDate?: string
 }
 
 /** Método de pago de una venta (enum `payment_method`). */

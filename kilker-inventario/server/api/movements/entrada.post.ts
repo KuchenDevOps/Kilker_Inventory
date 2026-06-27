@@ -12,6 +12,8 @@ interface EntradaBody {
   quantity: number
   unitValue?: number
   reason?: string
+  supplierInvoiceNumber?: string
+  supplierInvoiceDate?: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -51,6 +53,8 @@ export default defineEventHandler(async (event) => {
         unitValue: String(unitValue),
         totalValue: String(totalValue),
         reason: body.reason ?? null,
+        supplierInvoiceNumber: body.supplierInvoiceNumber?.trim() || null,
+        supplierInvoiceDate: body.supplierInvoiceDate || null,
         createdBy: profile.id
       })
       .returning()
