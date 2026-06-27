@@ -35,6 +35,8 @@ export interface ApiProduct {
   isActive: boolean
   /** Existencia total sumando todas las tiendas (number, ya calculado). */
   totalStock: number
+  /** Existencia por tienda */
+  byStore: { storeId: number; quantity: number }[]
 }
 
 /** Detalle de un producto (`GET /api/products/:id`); incluye barcode, sin totalStock. */
