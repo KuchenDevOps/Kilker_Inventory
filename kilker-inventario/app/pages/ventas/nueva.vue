@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { PAYMENT_LABELS, UNIT_LABELS, type PaymentMethod } from '~/types/inventario'
-
+import { ref } from 'vue'
 // Forma mínima de la respuesta de /api/sales que consume la UI.
 interface SaleResult {
   invoice: { folio: string; totalAmount: string }
@@ -22,6 +22,8 @@ type Line = {
   productId: number | undefined
   quantity: number | undefined
   unitPrice: number | undefined
+  discount: number | undefined
+
 }
 
 const storeId = ref<number | undefined>(undefined)
@@ -31,7 +33,7 @@ const paymentItems = (Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((v) =>
   label: PAYMENT_LABELS[v],
   value: v
 }))
-const lines = reactive<Line[]>([{ productId: undefined, quantity: undefined, unitPrice: undefined }])
+const lines = reactive<Line[]>([{ productId: undefined, quantity: undefined, unitPrice: undefined, discount: undefined }])
 const submitting = ref(false)
 
 // El empleado vende solo en su tienda; se fija y bloquea. El admin elige.
@@ -70,13 +72,15 @@ function effectivePrice(line: Line): number {
 }
 
 function lineTotal(line: Line): number {
-  return effectivePrice(line) * (line.quantity ?? 0)
+  const base = effectivePrice(line) * (line.quantity ?? 0)
+  return base * (1 - (line.discount ?? 0) / 100)
 }
 
 const grandTotal = computed(() => lines.reduce((sum, l) => sum + lineTotal(l), 0))
 
 function addLine() {
-  lines.push({ productId: undefined, quantity: undefined, unitPrice: undefined })
+  lines.push({ productId: undefined, quantity: undefined, unitPrice: undefined, discount: 0 })
+  
 }
 function removeLine(i: number) {
   lines.splice(i, 1)
@@ -121,7 +125,8 @@ async function onSubmit() {
     lines.splice(0, lines.length, {
       productId: undefined,
       quantity: undefined,
-      unitPrice: undefined
+      unitPrice: undefined,
+      discount: undefined,
     })
   } catch (e) {
     toast.add({
@@ -133,6 +138,37 @@ async function onSubmit() {
   } finally {
     submitting.value = false
   }
+}
+
+const discounts = ref([
+  {
+    id: 1,
+    name: '5',
+  },
+  {
+    id: 2,
+    name: '10',
+  },
+  {
+    id: 3,
+    name: '15',
+  },
+  {
+    id: 4,
+    name: '20',
+  },
+  {
+    id: 5,
+    name: '25',
+  },
+])
+
+const selectedId = ref<number | null>(null)
+
+const handleClick = (item: { id: number, name: string }) => {
+  selectedId.value = item.id
+  const numericValue = Number(item.name)/100
+  console.log(`Clicked: ${item.name}`)
 }
 </script>
 
@@ -280,8 +316,30 @@ async function onSubmit() {
               {{ UNIT_LABELS[productOf(line.productId)!.unit] }} · existencia total:
               {{ stockInStore(line.productId) }}
             </p>
+
+            <div class="sm:col-span-12 flex items-center gap-2 flex-wrap">
+    <span class="text-xs text-muted">Descuento:</span>
+    <UButton
+      v-for="item in discounts"
+      :key="item.id"
+      size="xs"
+      :color="line.discount === Number(item.name) ? 'primary' : 'neutral'"
+      :variant="line.discount === Number(item.name) ? 'solid' : 'subtle'"
+      @click="line.discount = line.discount === Number(item.name) ? 0 : Number(item.name)"
+    >
+      {{ item.name }}%
+    </UButton>
+    <span v-if="line.discount" class="text-xs text-muted ml-auto">
+      −{{ line.discount }}% aplicado
+    </span>
+  </div>
+      
           </div>
+          
+          
         </div>
+
+
 
         <USeparator />
 
@@ -304,6 +362,8 @@ async function onSubmit() {
           </UButton>
         </div>
       </form>
+
+    
     </UCard>
   </UContainer>
 </template>
