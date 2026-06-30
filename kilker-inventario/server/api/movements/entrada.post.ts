@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  POST /api/movements/entrada — entrada de stock (admin)
+//  POST /api/movements/entrada — entrada de stock (admin o empleado)
 // ───────────────────────────────────────────────
 // En transacción: inserta el movimiento y sube inventory por (producto × tienda).
 import { eq, sql } from 'drizzle-orm'
@@ -16,16 +16,22 @@ interface EntradaBody {
 }
 
 export default defineEventHandler(async (event) => {
-  const profile = await requireProfile(event, { role: 'admin' })
+  // Admin y empleado pueden registrar entradas.
+  const profile = await requireProfile(event)
   const body = await readBody<EntradaBody>(event)
 
   const productId = Number(body?.productId)
-  const storeId = Number(body?.storeId)
+  // Admin elige la tienda desde el body; el empleado siempre usa la suya.
+  const storeId =
+    profile.role === 'admin' ? Number(body?.storeId) : Number(profile.storeId)
   const quantity = Number(body?.quantity)
   if (!productId || !storeId || !(quantity > 0)) {
     throw createError({
       statusCode: 400,
-      statusMessage: 'productId, storeId y quantity (>0) son requeridos'
+      statusMessage:
+        profile.role === 'admin'
+          ? 'productId, storeId y quantity (>0) son requeridos'
+          : 'productId y quantity (>0) son requeridos; tu perfil debe tener una sucursal asignada'
     })
   }
 

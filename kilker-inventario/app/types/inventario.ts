@@ -64,6 +64,22 @@ export interface ApiStore {
   isActive: boolean
   createdAt: string
   updatedAt: string
+  /** Nº de empleados asignados (campo aditivo del endpoint). */
+  employeeCount?: number
+}
+
+/** Cuerpo para crear una sucursal (`POST /api/stores`, admin). */
+export interface NewStoreInput {
+  name: string
+  code: string
+  address?: string | null
+}
+
+/** Cuerpo para editar una sucursal (`PATCH /api/stores/:id`, admin). El código no se edita. */
+export interface StoreUpdateInput {
+  name?: string
+  address?: string | null
+  isActive?: boolean
 }
 
 /** Categoría tal como la devuelve `GET /api/categories`. */
@@ -89,6 +105,37 @@ export interface Me {
   fullName: string
   role: UserRole
   storeId: number | null
+}
+
+/** Usuario/empleado tal como lo lista `GET /api/users` (admin). */
+export interface ApiUser {
+  id: string
+  email: string | null
+  fullName: string
+  role: UserRole
+  storeId: number | null
+  storeCode: string | null
+  storeName: string | null
+  isActive: boolean
+  createdAt: string
+}
+
+/** Cuerpo para crear un usuario (`POST /api/users`, admin). */
+export interface NewUserInput {
+  email: string
+  password: string
+  fullName: string
+  role: UserRole
+  storeId?: number | null
+}
+
+/** Cuerpo para editar un usuario (`PATCH /api/users/:id`, admin). El email no se edita. */
+export interface UserUpdateInput {
+  fullName?: string
+  role?: UserRole
+  storeId?: number | null
+  isActive?: boolean
+  password?: string
 }
 
 // ───────────────────────────────────────────────
