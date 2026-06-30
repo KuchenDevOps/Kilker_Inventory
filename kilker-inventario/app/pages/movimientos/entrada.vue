@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { UNIT_LABELS } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
 useHead({ title: 'Entrada de stock · Inventario Kilker' })
 
 const toast = useToast()
@@ -11,6 +10,13 @@ const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
 const isAdmin = computed(() => me.value?.role === 'admin')
+// Sucursal del empleado (admin la elige en el selector).
+const myStore = computed(() =>
+  stores.value.find((s) => s.id === me.value?.storeId)
+)
+// El empleado debe tener una sucursal asignada para poder registrar.
+const employeeBlocked = computed(() => !!me.value && !isAdmin.value && !myStore.value)
+const canEdit = computed(() => !!me.value && !employeeBlocked.value)
 
 const state = reactive<{
   productId: number | undefined
@@ -43,13 +49,16 @@ const selectedProduct = computed(() =>
   products.value.find((p) => p.id === state.productId)
 )
 
-const canSubmit = computed(
-  () =>
-    isAdmin.value &&
-    state.productId != null &&
-    state.storeId != null &&
-    (state.quantity ?? 0) > 0
+// Tienda destino de la entrada: la elegida por admin, o la del empleado.
+const targetStore = computed(() =>
+  isAdmin.value ? stores.value.find((s) => s.id === state.storeId) : myStore.value
 )
+
+const canSubmit = computed(() => {
+  if (!canEdit.value) return false
+  if (state.productId == null || (state.quantity ?? 0) <= 0) return false
+  return isAdmin.value ? state.storeId != null : true
+})
 
 async function onSubmit() {
   if (!canSubmit.value) return
@@ -59,18 +68,18 @@ async function onSubmit() {
       method: 'POST',
       body: {
         productId: state.productId,
-        storeId: state.storeId,
+        // El empleado no envía storeId; el backend usa la suya.
+        storeId: isAdmin.value ? state.storeId : undefined,
         quantity: state.quantity,
         reason: state.reason.trim() || undefined,
         supplierInvoiceNumber: state.supplierInvoiceNumber.trim() || undefined,
-        supplierInvoiceDate: state.supplierInvoiceDate || undefined,
+        supplierInvoiceDate: state.supplierInvoiceDate || undefined
       }
     })
     await refreshNuxtData('products')
-    const store = stores.value.find((s) => s.id === state.storeId)
     toast.add({
       title: 'Entrada registrada',
-      description: `+${state.quantity} de ${selectedProduct.value?.sku} en ${store?.code}`,
+      description: `+${state.quantity} de ${selectedProduct.value?.sku} en ${targetStore.value?.code}`,
       color: 'success',
       icon: 'i-lucide-circle-check'
     })
@@ -102,20 +111,20 @@ async function onSubmit() {
     </header>
 
     <UAlert
-      v-if="me && !isAdmin"
-      color="warning"
-      variant="soft"
-      icon="i-lucide-lock"
-      title="Acceso restringido"
-      description="Solo un administrador puede registrar entradas de stock."
-    />
-    <UAlert
-      v-else-if="!me"
+      v-if="!me"
       color="info"
       variant="soft"
       icon="i-lucide-log-in"
       title="Inicia sesión"
-      description="Necesitas iniciar sesión como administrador para registrar entradas."
+      description="Necesitas iniciar sesión para registrar entradas."
+    />
+    <UAlert
+      v-else-if="employeeBlocked"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-store"
+      title="Sin sucursal asignada"
+      description="Tu perfil no tiene una sucursal asignada. Contacta a un administrador."
     />
 
     <UCard>
@@ -125,18 +134,24 @@ async function onSubmit() {
             <USelect
               v-model="state.productId"
               :items="productItems"
-              :disabled="!isAdmin"
+              :disabled="!canEdit"
               placeholder="Selecciona un producto"
               class="w-full"
             />
           </UFormField>
 
-          <UFormField label="Sucursal" name="storeId" required>
+          <UFormField label="Sucursal" name="storeId" :required="isAdmin">
             <USelect
+              v-if="isAdmin"
               v-model="state.storeId"
               :items="storeItems"
-              :disabled="!isAdmin"
               placeholder="Selecciona una sucursal"
+              class="w-full"
+            />
+            <UInput
+              v-else
+              :model-value="myStore ? `${myStore.code} · ${myStore.name}` : '—'"
+              disabled
               class="w-full"
             />
           </UFormField>
@@ -145,7 +160,7 @@ async function onSubmit() {
             <UInputNumber
               v-model="state.quantity"
               :min="0"
-              :disabled="!isAdmin"
+              :disabled="!canEdit"
               placeholder="10"
               class="w-full"
             />
@@ -155,7 +170,7 @@ async function onSubmit() {
         <UFormField label="Motivo / referencia" name="reason">
           <UInput
             v-model="state.reason"
-            :disabled="!isAdmin"
+            :disabled="!canEdit"
             placeholder="Compra a proveedor, factura #…"
             class="w-full"
           />
@@ -164,17 +179,17 @@ async function onSubmit() {
         <UFormField label="Número de factura" name="supplierInvoiceNumber">
           <UInput
             v-model="state.supplierInvoiceNumber"
-            :disabled="!isAdmin"
+            :disabled="!canEdit"
             placeholder="A-12345"
             class="w-full"
           />
         </UFormField>
-        
+
         <UFormField label="Fecha de factura" name="supplierInvoiceDate">
           <UInput
             v-model="state.supplierInvoiceDate"
             type="date"
-            :disabled="!isAdmin"
+            :disabled="!canEdit"
             class="w-full"
           />
         </UFormField>

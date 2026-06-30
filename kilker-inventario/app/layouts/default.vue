@@ -5,6 +5,7 @@ const route = useRoute()
 const user = useSupabaseUser()
 const supabase = useSupabaseClient()
 const { me, refresh: refreshMe } = useMe()
+const { data: stores } = useStores()
 
 type NavItem = { label: string; to: string; icon: string; roles?: UserRole[] }
 
@@ -24,10 +25,22 @@ const allNav: NavItem[] = [
     roles: ['admin']
   },
   {
+    label: 'Sucursales',
+    to: '/tiendas',
+    icon: 'i-lucide-store',
+    roles: ['admin']
+  },
+  {
+    label: 'Empleados',
+    to: '/empleados',
+    icon: 'i-lucide-users',
+    roles: ['admin']
+  },
+  {
     label: 'Entrada de stock',
     to: '/movimientos/entrada',
     icon: 'i-lucide-arrow-down-to-line',
-    roles: ['admin']
+    roles: ['admin', 'empleado']
   },
   {
     label: 'Venta',
@@ -74,6 +87,17 @@ const roleLabel = computed(() =>
     : me.value?.role === 'empleado'
       ? 'Empleado'
       : null
+)
+
+// Sucursal del usuario: el empleado ve la suya; el admin opera global.
+const myStore = computed(() => stores.value.find((s) => s.id === me.value?.storeId))
+const storeLabel = computed(() => {
+  if (!me.value) return null
+  if (me.value.role === 'admin') return 'Todas las sucursales'
+  return myStore.value ? myStore.value.name : 'Sin sucursal'
+})
+const storeIcon = computed(() =>
+  me.value?.role === 'admin' ? 'i-lucide-globe' : 'i-lucide-store'
 )
 
 const sidebarOpen = ref(false)
@@ -160,15 +184,25 @@ async function logout() {
         <!-- Sesión -->
         <div class="ml-auto flex items-center gap-2">
           <template v-if="user">
-            <div class="hidden sm:flex flex-col items-end leading-tight">
+            <div class="hidden sm:flex flex-col items-end gap-1 leading-tight">
               <span class="text-sm">{{ user.email }}</span>
-              <UBadge
-                v-if="roleLabel"
-                :label="roleLabel"
-                color="neutral"
-                variant="subtle"
-                size="xs"
-              />
+              <div class="flex items-center gap-1">
+                <UBadge
+                  v-if="roleLabel"
+                  :label="roleLabel"
+                  color="neutral"
+                  variant="subtle"
+                  size="xs"
+                />
+                <UBadge
+                  v-if="storeLabel"
+                  :label="storeLabel"
+                  :icon="storeIcon"
+                  color="primary"
+                  variant="subtle"
+                  size="xs"
+                />
+              </div>
             </div>
             <UButton
               color="neutral"

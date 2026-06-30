@@ -10,6 +10,7 @@ import type {
   ApiSale,
   ApiStore,
   ApiTicket,
+  ApiUser,
   Me
 } from '~/types/inventario'
 
@@ -221,6 +222,48 @@ export function useCortes() {
   }
 
   return { cortes, pending, error, storeId, refresh }
+}
+
+/** Usuarios/empleados (admin). Llamar refresh() en onMounted. */
+export function useUsers() {
+  const users = useState<ApiUser[]>('users', () => [])
+  const pending = useState('users-pending', () => false)
+  const error = useState<string | null>('users-error', () => null)
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      users.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        users.value = []
+        return
+      }
+      users.value = await $fetch<ApiUser[]>('/api/users', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      users.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('users-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    watch(user, () => void refresh(), { immediate: true })
+  }
+
+  return { users, pending, error, refresh }
 }
 
 // ───────────────────────────────────────────────
