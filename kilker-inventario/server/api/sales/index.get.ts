@@ -2,9 +2,9 @@
 //  GET /api/sales — historial de ventas
 // ───────────────────────────────────────────────
 // Empleado: su tienda. Admin: todas (filtros ?storeId/?status).
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { invoices, tickets } from '../../db/schema'
+import { invoices, profiles, stores, tickets } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -23,6 +23,36 @@ export default defineEventHandler(async (event) => {
   }
   if (query.status === 'emitida' || query.status === 'anulada') {
     filters.push(eq(invoices.status, query.status))
+  }
+
+  // Rango de fechas (issued_at): from inclusivo, to exclusivo.
+  if (query.from) filters.push(gte(invoices.issuedAt, new Date(String(query.from))))
+  if (query.to) filters.push(lt(invoices.issuedAt, new Date(String(query.to))))
+
+  // Búsqueda ?q: folio, método de pago, sucursal (name/code), empleado que emitió.
+  const q = String(query.q ?? '').trim()
+  if (q) {
+    const like = `%${q}%`
+    const [storeIds, profIds] = await Promise.all([
+      db
+        .select({ id: stores.id })
+        .from(stores)
+        .where(or(ilike(stores.name, like), ilike(stores.code, like))),
+      db.select({ id: profiles.id }).from(profiles).where(ilike(profiles.fullName, like))
+    ])
+
+    const orParts = [ilike(invoices.folio, like)]
+    const pm = q.toLowerCase()
+    for (const m of ['efectivo', 'tarjeta', 'transferencia'] as const) {
+      if (m.includes(pm)) orParts.push(eq(invoices.paymentMethod, m))
+    }
+    if (storeIds.length) {
+      orParts.push(inArray(invoices.storeId, storeIds.map((r) => r.id)))
+    }
+    if (profIds.length) {
+      orParts.push(inArray(invoices.createdBy, profIds.map((r) => r.id)))
+    }
+    filters.push(or(...orParts)!)
   }
 
   const rows = await db.query.invoices.findMany({

@@ -7,7 +7,7 @@ const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { sales, pending, error, status, storeId, refresh } = useSales()
+const { sales, pending, error, status, storeId, from, to, search, refresh } = useSales()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
@@ -143,9 +143,17 @@ async function confirmRequest(sale: ApiSale) {
       <UButton to="/ventas/nueva" icon="i-lucide-plus" color="primary"> Nueva venta </UButton>
     </header>
 
-    <div class="flex flex-wrap gap-3">
-      <USelect v-model="status" :items="statusItems" class="w-44" />
-      <USelect v-if="isAdmin" v-model="storeFilter" :items="storeItems" class="w-60" />
+    <div class="space-y-3">
+      <FiltroPeriodo
+        v-model:search="search"
+        v-model:from="from"
+        v-model:to="to"
+        search-placeholder="Buscar folio, sucursal, empleado, método de pago…"
+      />
+      <div class="flex flex-wrap gap-3">
+        <USelect v-model="status" :items="statusItems" class="w-44" />
+        <USelect v-if="isAdmin" v-model="storeFilter" :items="storeItems" class="w-60" />
+      </div>
     </div>
 
     <UAlert

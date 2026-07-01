@@ -326,11 +326,26 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
       afectados; la UI lo muestra en el toast.
     - Verificado: eslint + typecheck limpios; endpoints exigen auth (401) y el desglose/entrada
       probados en vivo. El alta real de usuarios (crea cuenta en Auth) la prueba el usuario.
+  - **Historial de entradas de stock (hecho, 2026-06-30, el AGENTE, SIN migración):**
+    nuevo `GET /api/movements` (calcado de `sales/index.get.ts`: empleado→su tienda,
+    admin→todas con `?storeId`; solo `type='entrada'`). Filtros de fecha `?from/?to`
+    (rango sobre `created_at`, from inclusivo/to exclusivo) y búsqueda `?q` (producto
+    name/sku/barcode, nº factura proveedor, sucursal, empleado; se pre-resuelven ids en
+    tablas relacionadas y se filtra con `inArray` para no abandonar el `findMany`
+    relacional). Página `app/pages/movimientos/index.vue` + nav "Entradas (historial)" +
+    composable `useMovements()` + tipo `ApiMovement`. **La misma barra de filtros se agregó
+    al historial de ventas**: `GET /api/sales` ahora acepta `?from/?to` (sobre `issued_at`)
+    y `?q` (folio, método de pago, sucursal, empleado); `useSales()` ganó `from/to/search`.
+    Componente compartido `app/components/FiltroPeriodo.vue` (botones Todo/Día/Semana/Mes que
+    calculan el rango del periodo CONCRETO elegido — no relativo — + input date/month +
+    barra de búsqueda). Verificado en vivo: búsqueda por folio (11→1) y filtro por mes
+    (junio 2026 = 11 ventas, julio = 0) sobre ventas; typecheck + eslint limpios.
 - **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
 - **Pendiente / bloqueante:** especificaciones funcionales; movimientos de **ajuste** y
   **transferencia** entre sucursales (tablas `transfers`/`transfer_items` ya en el esquema);
-  **vista de kardex/historial de movimientos** (hoy `supplier_invoice_*` se guarda pero no se
-  muestra); tickets target `movimiento` (v1 solo `factura`); folio secuencial formal; reportes
+  **vista de kardex completo** (ya hay historial de **entradas** en `/movimientos`; falta
+  mostrar ventas/anulaciones/ajustes/transferencias en una vista unificada); tickets target
+  `movimiento` (v1 solo `factura`); folio secuencial formal; reportes
   y exportación; (opcional) corte con conteo físico de efectivo y detalle congelado;
   confirmación de planes/regiones. **Hardening:** RLS policies (solo si hay acceso directo del
   cliente; hoy todo es server-side), migrar `SUPABASE_SERVICE_KEY`→`NUXT_SUPABASE_SECRET_KEY`.
