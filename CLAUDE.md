@@ -215,6 +215,13 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
       en móvil se oculta fuera de pantalla y se abre/cierra con un botón hamburguesa
       (overlay semitransparente, cierre al navegar o pulsar X). No hay nav compacta
       en el header: la sidebar es el único punto de navegación en todos los breakpoints.
+      **Nav en secciones plegables** (2026-06-30): Dashboard suelto + secciones acordeón
+      (Productos, Entradas de stock, Ventas, Caja, Administración) con encabezado
+      clicable (chevron), **acordeón estricto (una sola sección abierta a la vez**, ref
+      `openSection: string | null`) y auto-apertura de la sección de la página actual. La estructura
+      es `NavEntry = NavLink | NavSection`; el filtrado por rol se aplica a los hijos y
+      omite la sección si queda vacía. El ítem activo se detecta sobre los enlaces
+      aplanados (`allLinks`) por prefijo más largo.
     - Tipos alineados al backend en `app/types/inventario.ts` (ids numéricos; `unit`
       ∈ litro|galon|cubeta; los `numeric` llegan como **string** desde la API).
     - **Categorías (CRUD, admin)**: `app/pages/categorias/index.vue` (tabla con
