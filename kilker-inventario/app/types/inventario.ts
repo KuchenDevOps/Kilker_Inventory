@@ -241,6 +241,25 @@ export interface ApiSale {
   pendingCorrection?: boolean
 }
 
+/** Entrada de stock tal como la lista `GET /api/movements`. Los numeric → string. */
+export interface ApiMovement {
+  id: number
+  productId: number
+  productName: string | null
+  productSku: string | null
+  unit: ProductUnit | null
+  storeId: number
+  storeCode: string | null
+  storeName: string | null
+  quantity: string
+  unitValue: string
+  totalValue: string
+  supplierInvoiceNumber: string | null
+  supplierInvoiceDate: string | null
+  createdByName: string | null
+  createdAt: string
+}
+
 /** Corte de caja (snapshot) tal como lo lista `GET /api/cortes`. Los numeric → string. */
 export interface ApiCorte {
   id: number

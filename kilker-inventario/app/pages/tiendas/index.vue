@@ -60,7 +60,10 @@ async function save() {
       })
       toast.add({ title: 'Sucursal creada', color: 'success', icon: 'i-lucide-circle-check' })
     } else {
-      await apiFetch(`/api/stores/${editingId.value}`, {
+      const res = await apiFetch<{
+        deactivatedEmployees?: number
+        reactivatedEmployees?: number
+      }>(`/api/stores/${editingId.value}`, {
         method: 'PATCH',
         body: {
           name,
@@ -68,7 +71,19 @@ async function save() {
           isActive: formIsActive.value
         }
       })
-      toast.add({ title: 'Sucursal actualizada', color: 'success', icon: 'i-lucide-circle-check' })
+      const deact = res?.deactivatedEmployees ?? 0
+      const react = res?.reactivatedEmployees ?? 0
+      toast.add({
+        title: 'Sucursal actualizada',
+        description:
+          deact > 0
+            ? `Se desactivaron también ${deact} empleado(s).`
+            : react > 0
+              ? `Se reactivaron también ${react} empleado(s).`
+              : undefined,
+        color: 'success',
+        icon: 'i-lucide-circle-check'
+      })
     }
     await refresh()
     closeForm()
@@ -87,12 +102,22 @@ async function save() {
 async function toggleActive(s: ApiStore) {
   togglingId.value = s.id
   try {
-    await apiFetch(`/api/stores/${s.id}`, {
+    const res = await apiFetch<{
+      deactivatedEmployees?: number
+      reactivatedEmployees?: number
+    }>(`/api/stores/${s.id}`, {
       method: 'PATCH',
       body: { isActive: !s.isActive }
     })
+    const n = (s.isActive ? res?.deactivatedEmployees : res?.reactivatedEmployees) ?? 0
     toast.add({
       title: s.isActive ? 'Sucursal desactivada' : 'Sucursal activada',
+      description:
+        n > 0
+          ? s.isActive
+            ? `Se desactivaron también ${n} empleado(s).`
+            : `Se reactivaron también ${n} empleado(s).`
+          : undefined,
       color: 'success',
       icon: 'i-lucide-circle-check'
     })
