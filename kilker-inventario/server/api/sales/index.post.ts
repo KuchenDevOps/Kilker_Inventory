@@ -16,6 +16,7 @@ interface SaleBody {
   note?: string
   paymentMethod?: string
   items: SaleItem[]
+  discount?: number 
 }
 
 export default defineEventHandler(async (event) => {
@@ -82,7 +83,13 @@ export default defineEventHandler(async (event) => {
       lines.push({ productId, quantity, unitPrice, lineTotal: quantity * unitPrice })
     }
 
-    const totalAmount = lines.reduce((sum, l) => sum + l.lineTotal, 0)
+    const subTotal = lines.reduce((sum, l) => sum + l.lineTotal, 0)
+
+    const discountPct = Math.min(Math.max(Number(body?.discount ?? 0), 0), 100)
+
+    const discountAmount = subTotal * (discountPct / 100)
+
+    const totalAmount = subTotal - discountAmount
 
     // Folio provisional por tienda (secuencia formal pendiente).
     const [folioRow] = await tx
