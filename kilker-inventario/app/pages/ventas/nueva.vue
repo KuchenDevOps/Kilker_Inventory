@@ -16,7 +16,17 @@ const apiFetch = useApiFetch()
 
 const isEmployee = computed(() => me.value?.role === 'empleado')
 const isAdmin = computed(() => me.value?.role === 'admin')
-const canOperate = computed(() => isEmployee.value || isAdmin.value)
+// Sucursal del empleado; debe existir y estar activa para poder vender.
+const myStore = computed(() => stores.value.find((s) => s.id === me.value?.storeId))
+const employeeNoStore = computed(() => isEmployee.value && !myStore.value)
+const employeeStoreInactive = computed(
+  () => isEmployee.value && !!myStore.value && !myStore.value.isActive
+)
+const canOperate = computed(
+  () =>
+    isAdmin.value ||
+    (isEmployee.value && !employeeNoStore.value && !employeeStoreInactive.value)
+)
 
 type Line = {
   productId: number | undefined
@@ -42,7 +52,9 @@ watchEffect(() => {
 })
 
 const storeItems = computed(() =>
-  stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
+  stores.value
+    .filter((s) => s.isActive)
+    .map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 )
 const productItems = computed(() =>
   products.value.map((p) => ({ label: `${p.sku} — ${p.name}`, value: p.id }))
@@ -147,20 +159,36 @@ async function onSubmit() {
     </header>
 
     <UAlert
-      v-if="me && !canOperate"
-      color="warning"
-      variant="soft"
-      icon="i-lucide-lock"
-      title="Acceso restringido"
-      description="Tu perfil no puede registrar ventas."
-    />
-    <UAlert
-      v-else-if="!me"
+      v-if="!me"
       color="info"
       variant="soft"
       icon="i-lucide-log-in"
       title="Inicia sesión"
       description="Necesitas iniciar sesión para registrar ventas."
+    />
+    <UAlert
+      v-else-if="employeeNoStore"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-store"
+      title="Sin sucursal asignada"
+      description="Tu perfil no tiene una sucursal asignada. Contacta a un administrador."
+    />
+    <UAlert
+      v-else-if="employeeStoreInactive"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-store"
+      title="Sucursal inactiva"
+      description="Tu sucursal está desactivada. No puedes registrar ventas. Contacta a un administrador."
+    />
+    <UAlert
+      v-else-if="!canOperate"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-lock"
+      title="Acceso restringido"
+      description="Tu perfil no puede registrar ventas."
     />
 
     <UCard>

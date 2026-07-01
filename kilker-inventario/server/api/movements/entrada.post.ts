@@ -4,7 +4,7 @@
 // En transacción: inserta el movimiento y sube inventory por (producto × tienda).
 import { eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { inventory, products, stockMovements } from '../../db/schema'
+import { inventory, products, stockMovements, stores } from '../../db/schema'
 
 interface EntradaBody {
   productId: number
@@ -43,6 +43,14 @@ export default defineEventHandler(async (event) => {
     })
     if (!product) {
       throw createError({ statusCode: 404, statusMessage: 'Producto no existe' })
+    }
+
+    const store = await tx.query.stores.findFirst({ where: eq(stores.id, storeId) })
+    if (!store) {
+      throw createError({ statusCode: 404, statusMessage: 'Sucursal no existe' })
+    }
+    if (!store.isActive) {
+      throw createError({ statusCode: 400, statusMessage: 'La sucursal está inactiva' })
     }
 
     // Costo estándar del producto (sin captura manual por entrada).

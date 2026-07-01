@@ -55,6 +55,9 @@ export default defineEventHandler(async (event) => {
   return await db.transaction(async (tx) => {
     const store = await tx.query.stores.findFirst({ where: eq(stores.id, storeId) })
     if (!store) throw createError({ statusCode: 404, statusMessage: 'Tienda no existe' })
+    if (!store.isActive) {
+      throw createError({ statusCode: 400, statusMessage: 'La sucursal está inactiva' })
+    }
 
     // Resolver precios (snapshot) y validar existencias antes de escribir.
     const lines: { productId: number; quantity: number; unitPrice: number; lineTotal: number }[] = []

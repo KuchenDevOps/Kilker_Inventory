@@ -14,8 +14,12 @@ const isAdmin = computed(() => me.value?.role === 'admin')
 const myStore = computed(() =>
   stores.value.find((s) => s.id === me.value?.storeId)
 )
-// El empleado debe tener una sucursal asignada para poder registrar.
-const employeeBlocked = computed(() => !!me.value && !isAdmin.value && !myStore.value)
+// El empleado debe tener una sucursal asignada y activa para poder registrar.
+const employeeNoStore = computed(() => !!me.value && !isAdmin.value && !myStore.value)
+const employeeStoreInactive = computed(
+  () => !!me.value && !isAdmin.value && !!myStore.value && !myStore.value.isActive
+)
+const employeeBlocked = computed(() => employeeNoStore.value || employeeStoreInactive.value)
 const canEdit = computed(() => !!me.value && !employeeBlocked.value)
 
 const state = reactive<{
@@ -42,7 +46,9 @@ const productItems = computed(() =>
   }))
 )
 const storeItems = computed(() =>
-  stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
+  stores.value
+    .filter((s) => s.isActive)
+    .map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 )
 
 const selectedProduct = computed(() =>
@@ -119,12 +125,20 @@ async function onSubmit() {
       description="Necesitas iniciar sesión para registrar entradas."
     />
     <UAlert
-      v-else-if="employeeBlocked"
+      v-else-if="employeeNoStore"
       color="warning"
       variant="soft"
       icon="i-lucide-store"
       title="Sin sucursal asignada"
       description="Tu perfil no tiene una sucursal asignada. Contacta a un administrador."
+    />
+    <UAlert
+      v-else-if="employeeStoreInactive"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-store"
+      title="Sucursal inactiva"
+      description="Tu sucursal está desactivada. No puedes registrar entradas. Contacta a un administrador."
     />
 
     <UCard>
