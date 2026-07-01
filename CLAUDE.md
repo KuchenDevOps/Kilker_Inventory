@@ -314,6 +314,16 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
       `isActive=false`** (ya bloquea el acceso: `requireProfile`/`getOptionalProfile` lo checan; el
       usuario de Auth no se borra). Página `empleados/index.vue` + `useUsers()` + nav "Empleados"
       (admin). Tipos `ApiUser`/`NewUserInput`/`UserUpdateInput`.
+    - **Sucursales inactivas — filtro + bloqueo:** los selectores de tienda en `entrada.vue` y
+      `ventas/nueva.vue` filtran `isActive`. Bloqueo real en backend: `POST /api/movements/entrada`
+      y `POST /api/sales` cargan la tienda y lanzan **400 "La sucursal está inactiva"** si no está
+      activa (aplica a admin y empleado). UI: el empleado con sucursal inactiva ve alerta "Sucursal
+      inactiva" y el formulario queda bloqueado.
+    - **Cascada tienda→empleados (simétrica):** `PATCH /api/stores/:id` propaga el cambio de
+      `isActive` a los empleados de esa tienda (en transacción), en ambos sentidos: desactivar la
+      tienda desactiva sus empleados, reactivarla los reactiva. **Solo si el estado realmente
+      cambia** (editar nombre/dirección no toca a los empleados). Devuelve el nº de empleados
+      afectados; la UI lo muestra en el toast.
     - Verificado: eslint + typecheck limpios; endpoints exigen auth (401) y el desglose/entrada
       probados en vivo. El alta real de usuarios (crea cuenta en Auth) la prueba el usuario.
 - **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
