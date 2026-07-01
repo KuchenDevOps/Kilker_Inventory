@@ -104,6 +104,7 @@ async function onSubmit() {
         storeId: storeId.value,
         note: note.value.trim() || undefined,
         paymentMethod: paymentMethod.value,
+        discount: discount.value || undefined,
         items: validLines.value.map((l) => ({
           productId: l.productId,
           quantity: l.quantity,
