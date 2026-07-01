@@ -7,85 +7,145 @@ const supabase = useSupabaseClient()
 const { me, refresh: refreshMe } = useMe()
 const { data: stores } = useStores()
 
-type NavItem = { label: string; to: string; icon: string; roles?: UserRole[] }
+type NavLink = { label: string; to: string; icon: string; roles?: UserRole[] }
+type NavSection = { section: string; icon: string; children: NavLink[] }
+type NavEntry = NavLink | NavSection
 
-const allNav: NavItem[] = [
+const isSection = (e: NavEntry): e is NavSection => 'section' in e
+
+// Estructura en secciones: Dashboard suelto; el resto agrupado (plegable).
+const allNav: NavEntry[] = [
   { label: 'Dashboard', to: '/dashboard', icon: 'i-lucide-layout-dashboard' },
-  { label: 'Catálogo', to: '/productos', icon: 'i-lucide-package' },
   {
-    label: 'Nuevo producto',
-    to: '/productos/nuevo',
-    icon: 'i-lucide-package-plus',
-    roles: ['admin']
+    section: 'Productos',
+    icon: 'i-lucide-package',
+    children: [
+      { label: 'Catálogo', to: '/productos', icon: 'i-lucide-package' },
+      {
+        label: 'Nuevo producto',
+        to: '/productos/nuevo',
+        icon: 'i-lucide-package-plus',
+        roles: ['admin']
+      },
+      { label: 'Categorías', to: '/categorias', icon: 'i-lucide-tags', roles: ['admin'] }
+    ]
   },
   {
-    label: 'Categorías',
-    to: '/categorias',
-    icon: 'i-lucide-tags',
-    roles: ['admin']
-  },
-  {
-    label: 'Sucursales',
-    to: '/tiendas',
-    icon: 'i-lucide-store',
-    roles: ['admin']
-  },
-  {
-    label: 'Empleados',
-    to: '/empleados',
-    icon: 'i-lucide-users',
-    roles: ['admin']
-  },
-  {
-    label: 'Entrada de stock',
-    to: '/movimientos/entrada',
+    section: 'Entradas de stock',
     icon: 'i-lucide-arrow-down-to-line',
-    roles: ['admin', 'empleado']
+    children: [
+      {
+        label: 'Entrada',
+        to: '/movimientos/entrada',
+        icon: 'i-lucide-arrow-down-to-line',
+        roles: ['admin', 'empleado']
+      },
+      {
+        label: 'Historial',
+        to: '/movimientos',
+        icon: 'i-lucide-history',
+        roles: ['admin', 'empleado']
+      }
+    ]
   },
   {
-    label: 'Entradas (historial)',
-    to: '/movimientos',
-    icon: 'i-lucide-history',
-    roles: ['admin', 'empleado']
-  },
-  {
-    label: 'Venta',
-    to: '/ventas/nueva',
+    section: 'Ventas',
     icon: 'i-lucide-receipt-text',
-    roles: ['admin', 'empleado']
+    children: [
+      {
+        label: 'Nueva venta',
+        to: '/ventas/nueva',
+        icon: 'i-lucide-receipt-text',
+        roles: ['admin', 'empleado']
+      },
+      {
+        label: 'Historial',
+        to: '/ventas',
+        icon: 'i-lucide-scroll-text',
+        roles: ['admin', 'empleado']
+      },
+      {
+        label: 'Correcciones',
+        to: '/tickets',
+        icon: 'i-lucide-ticket',
+        roles: ['admin', 'empleado']
+      }
+    ]
   },
   {
-    label: 'Ventas (historial)',
-    to: '/ventas',
-    icon: 'i-lucide-scroll-text',
-    roles: ['admin', 'empleado']
-  },
-  {
-    label: 'Correcciones',
-    to: '/tickets',
-    icon: 'i-lucide-ticket',
-    roles: ['admin', 'empleado']
-  },
-  {
-    label: 'Cortes de caja',
-    to: '/cortes',
+    section: 'Caja',
     icon: 'i-lucide-scissors',
-    roles: ['admin', 'empleado']
+    children: [
+      {
+        label: 'Cortes de caja',
+        to: '/cortes',
+        icon: 'i-lucide-scissors',
+        roles: ['admin', 'empleado']
+      }
+    ]
+  },
+  {
+    section: 'Administración',
+    icon: 'i-lucide-shield',
+    children: [
+      { label: 'Sucursales', to: '/tiendas', icon: 'i-lucide-store', roles: ['admin'] },
+      { label: 'Empleados', to: '/empleados', icon: 'i-lucide-users', roles: ['admin'] }
+    ]
   }
 ]
 
-// Filtra por rol: ítems sin `roles` son públicos; el resto requiere el rol actual.
-const nav = computed(() =>
-  allNav.filter((item) => !item.roles || (me.value && item.roles.includes(me.value.role)))
+// Un ítem es visible si no exige rol o el rol actual coincide.
+const allowed = (roles?: UserRole[]) =>
+  !roles || (!!me.value && roles.includes(me.value.role))
+
+// Filtra por rol: dentro de cada sección se filtran los hijos; si queda vacía, se omite.
+const nav = computed<NavEntry[]>(() => {
+  const out: NavEntry[] = []
+  for (const entry of allNav) {
+    if (isSection(entry)) {
+      const children = entry.children.filter((c) => allowed(c.roles))
+      if (children.length) out.push({ ...entry, children })
+    } else if (allowed(entry.roles)) {
+      out.push(entry)
+    }
+  }
+  return out
+})
+
+// Todos los enlaces (planos) para detectar el ítem activo.
+const allLinks = computed<NavLink[]>(() =>
+  nav.value.flatMap((e) => (isSection(e) ? e.children : [e]))
 )
 
 // Ítem activo: el de prefijo más largo que coincide con la ruta.
 const activeTo = computed(() => {
-  const matches = nav.value
+  const matches = allLinks.value
     .filter((i) => route.path === i.to || route.path.startsWith(`${i.to}/`))
     .sort((a, b) => b.to.length - a.to.length)
   return matches[0]?.to
 })
+
+// Sección que contiene la ruta activa (para auto-abrirla).
+const activeSection = computed(() => {
+  const at = activeTo.value
+  if (!at) return undefined
+  const found = nav.value.find((e) => isSection(e) && e.children.some((c) => c.to === at))
+  return found && isSection(found) ? found.section : undefined
+})
+
+// Acordeón estricto: solo una sección abierta a la vez. Se auto-abre la de la página actual.
+const openSection = ref<string | null>(null)
+const isOpen = (name: string) => openSection.value === name
+const toggleSection = (name: string) => {
+  openSection.value = isOpen(name) ? null : name
+}
+watch(
+  activeSection,
+  (s) => {
+    if (s) openSection.value = s
+  },
+  { immediate: true }
+)
 
 const roleLabel = computed(() =>
   me.value?.role === 'admin'
@@ -152,19 +212,59 @@ async function logout() {
       </div>
 
       <nav class="flex-1 space-y-1 overflow-y-auto p-2">
-        <UButton
-          v-for="item in nav"
-          :key="item.to"
-          :to="item.to"
-          :icon="item.icon"
-          :color="activeTo === item.to ? 'primary' : 'neutral'"
-          :variant="activeTo === item.to ? 'soft' : 'ghost'"
-          block
-          class="justify-start"
-          @click="sidebarOpen = false"
-        >
-          {{ item.label }}
-        </UButton>
+        <template v-for="entry in nav" :key="'section' in entry ? entry.section : entry.to">
+          <!-- Enlace suelto (Dashboard) -->
+          <UButton
+            v-if="!('section' in entry)"
+            :to="entry.to"
+            :icon="entry.icon"
+            :color="activeTo === entry.to ? 'primary' : 'neutral'"
+            :variant="activeTo === entry.to ? 'soft' : 'ghost'"
+            block
+            class="justify-start"
+            @click="sidebarOpen = false"
+          >
+            {{ entry.label }}
+          </UButton>
+
+          <!-- Sección plegable -->
+          <div v-else>
+            <UButton
+              color="neutral"
+              variant="ghost"
+              block
+              class="justify-start"
+              @click="toggleSection(entry.section)"
+            >
+              <UIcon :name="entry.icon" class="size-5 shrink-0" />
+              <span
+                class="flex-1 text-left text-xs font-semibold uppercase tracking-wide text-muted"
+              >
+                {{ entry.section }}
+              </span>
+              <UIcon
+                :name="isOpen(entry.section) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                class="size-4 shrink-0 text-muted"
+              />
+            </UButton>
+
+            <div v-show="isOpen(entry.section)" class="mt-1 space-y-1 pl-3">
+              <UButton
+                v-for="child in entry.children"
+                :key="child.to"
+                :to="child.to"
+                :icon="child.icon"
+                :color="activeTo === child.to ? 'primary' : 'neutral'"
+                :variant="activeTo === child.to ? 'soft' : 'ghost'"
+                block
+                class="justify-start"
+                @click="sidebarOpen = false"
+              >
+                {{ child.label }}
+              </UButton>
+            </div>
+          </div>
+        </template>
       </nav>
 
       <div class="shrink-0 border-t border-default p-3">
