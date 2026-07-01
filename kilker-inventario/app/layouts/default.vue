@@ -43,6 +43,12 @@ const allNav: NavItem[] = [
     roles: ['admin', 'empleado']
   },
   {
+    label: 'Entradas (historial)',
+    to: '/movimientos',
+    icon: 'i-lucide-history',
+    roles: ['admin', 'empleado']
+  },
+  {
     label: 'Venta',
     to: '/ventas/nueva',
     icon: 'i-lucide-receipt-text',

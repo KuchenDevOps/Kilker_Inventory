@@ -6,6 +6,7 @@
 import type {
   ApiCategory,
   ApiCorte,
+  ApiMovement,
   ApiProduct,
   ApiSale,
   ApiStore,
@@ -85,13 +86,16 @@ export function useMe() {
   return { me, refresh }
 }
 
-/** Historial de ventas; el backend filtra por rol. Filtros status/storeId recargan. */
+/** Historial de ventas; el backend filtra por rol. Filtros status/storeId/fecha/q recargan. */
 export function useSales() {
   const sales = useState<ApiSale[]>('sales', () => [])
   const pending = useState('sales-pending', () => false)
   const error = useState<string | null>('sales-error', () => null)
   const status = useState<'todas' | 'emitida' | 'anulada'>('sales-status', () => 'todas')
   const storeId = useState<number | undefined>('sales-store', () => undefined)
+  const from = useState<string | undefined>('sales-from', () => undefined)
+  const to = useState<string | undefined>('sales-to', () => undefined)
+  const search = useState('sales-search', () => '')
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
@@ -112,6 +116,9 @@ export function useSales() {
       const q = new URLSearchParams()
       if (status.value !== 'todas') q.set('status', status.value)
       if (storeId.value) q.set('storeId', String(storeId.value))
+      if (from.value) q.set('from', from.value)
+      if (to.value) q.set('to', to.value)
+      if (search.value.trim()) q.set('q', search.value.trim())
       const qs = q.toString()
       sales.value = await $fetch<ApiSale[]>(`/api/sales${qs ? `?${qs}` : ''}`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -127,10 +134,64 @@ export function useSales() {
   const watching = useState('sales-watching', () => false)
   if (import.meta.client && !watching.value) {
     watching.value = true
-    watch([user, status, storeId], () => void refresh(), { immediate: true })
+    watch([user, status, storeId, from, to, search], () => void refresh(), {
+      immediate: true
+    })
   }
 
-  return { sales, pending, error, status, storeId, refresh }
+  return { sales, pending, error, status, storeId, from, to, search, refresh }
+}
+
+/** Historial de entradas de stock; el backend filtra por rol. Filtros storeId/fecha/q recargan. */
+export function useMovements() {
+  const movements = useState<ApiMovement[]>('movements', () => [])
+  const pending = useState('movements-pending', () => false)
+  const error = useState<string | null>('movements-error', () => null)
+  const storeId = useState<number | undefined>('movements-store', () => undefined)
+  const from = useState<string | undefined>('movements-from', () => undefined)
+  const to = useState<string | undefined>('movements-to', () => undefined)
+  const search = useState('movements-search', () => '')
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      movements.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        movements.value = []
+        return
+      }
+      const q = new URLSearchParams()
+      if (storeId.value) q.set('storeId', String(storeId.value))
+      if (from.value) q.set('from', from.value)
+      if (to.value) q.set('to', to.value)
+      if (search.value.trim()) q.set('q', search.value.trim())
+      const qs = q.toString()
+      movements.value = await $fetch<ApiMovement[]>(`/api/movements${qs ? `?${qs}` : ''}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      movements.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('movements-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
+  }
+
+  return { movements, pending, error, storeId, from, to, search, refresh }
 }
 
 /** Tickets de corrección; filtra por rol. Llamar refresh() en onMounted. */

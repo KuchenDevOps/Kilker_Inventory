@@ -2,9 +2,9 @@
 //  PATCH /api/stores/:id — editar sucursal (admin)
 // ───────────────────────────────────────────────
 // Edita nombre/dirección/estado. El código NO es editable (se usa en folios de factura).
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { stores } from '../../db/schema'
+import { profiles, stores } from '../../db/schema'
 
 interface PatchStoreBody {
   name?: string
@@ -47,6 +47,28 @@ export default defineEventHandler(async (event) => {
   }
 
   if (Object.keys(patch).length === 0) return current
+
+  // Cambiar el estado activo de la tienda se propaga a sus empleados (cascada simétrica),
+  // SOLO cuando el estado realmente cambia (editar nombre/dirección no toca a los empleados).
+  const stateChanged = patch.isActive !== undefined && patch.isActive !== current.isActive
+  if (stateChanged) {
+    const nextActive = patch.isActive as boolean
+    return await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(stores)
+        .set(patch)
+        .where(eq(stores.id, id))
+        .returning()
+      const affected = await tx
+        .update(profiles)
+        .set({ isActive: nextActive })
+        .where(and(eq(profiles.storeId, id), eq(profiles.role, 'empleado')))
+        .returning({ id: profiles.id })
+      return nextActive
+        ? { ...updated, reactivatedEmployees: affected.length }
+        : { ...updated, deactivatedEmployees: affected.length }
+    })
+  }
 
   const [updated] = await db
     .update(stores)

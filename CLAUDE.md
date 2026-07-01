@@ -285,11 +285,67 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     la página y el cliente redirige → *hydration mismatch* + flash breve (solo afecta
     accesos sin sesión, que terminan en login igual). Se elimina si se pasa la app a
     SPA (`ssr:false`) — decisión pendiente del usuario.
+  - **Multi-sucursal (hecho, 2026-06-30):** trabajo por capas guiado/implementado con el usuario.
+    - **Catálogo — desglose por sucursal:** `GET /api/products` ahora expone `byStore`
+      (`[{storeId, quantity}]`) además del `totalStock`. En `productos/index.vue` cada fila
+      tiene un botón (ícono `store`) al final de Acciones que despliega una sub-fila con una
+      mini-tabla (Código · Sucursal · Existencia), mismo diseño que la tabla principal. La UI
+      resuelve el nombre de la tienda cruzando `byStore` con `useStores()`.
+    - **Entrada de stock por empleado:** `POST /api/movements/entrada` dejó de ser admin-only
+      (`requireProfile(event)` sin rol). El admin elige la tienda desde el body; **el empleado
+      siempre usa `profile.storeId`** (no puede falsearla). En `movimientos/entrada.vue` el
+      empleado ve su sucursal en un campo de solo lectura; el admin conserva el selector. Nav
+      "Entrada de stock" ahora visible para `['admin','empleado']`.
+    - **Badge de sucursal en el header** (`layouts/default.vue`): junto al badge de rol,
+      muestra la tienda del empleado (ícono `store`) o "Todas las sucursales" para admin
+      (ícono `globe`). Resuelto por `useStores()` cruzado con `me.storeId` (sin tocar backend).
+    - **Gestión de sucursales (CRUD admin, sin borrado físico):** `GET /api/stores` enriquecido
+      con `employeeCount`; `POST /api/stores` (name+code obligatorios, code único→409);
+      `PATCH /api/stores/:id` (edita name/address/isActive; **el `code` NO se edita**, se usa en
+      folios). Decisión del cliente: **solo desactivar** (`isActive`), no hay `DELETE`. Página
+      `tiendas/index.vue` + nav "Sucursales" (admin). Tipos `NewStoreInput`/`StoreUpdateInput`.
+    - **Gestión de empleados / cuentas (CRUD admin):** `server/utils/supabaseAdmin.ts` (cliente
+      service_role, solo servidor). `GET /api/users` (perfiles + email de Auth + sucursal),
+      `POST /api/users` (crea usuario en Auth con contraseña definida por el admin + `email_confirm`,
+      luego el `profile`; si el profile falla **revierte** el usuario de Auth; email duplicado→409),
+      `PATCH /api/users/:id` (nombre/rol/sucursal/estado/contraseña; **guardas anti-lockout**: no
+      quitarte tu propio admin ni desactivarte). Decisiones del cliente: **el admin define la
+      contraseña** (sin invitación por email) y **puede crear empleados y admins**. **Dar de baja =
+      `isActive=false`** (ya bloquea el acceso: `requireProfile`/`getOptionalProfile` lo checan; el
+      usuario de Auth no se borra). Página `empleados/index.vue` + `useUsers()` + nav "Empleados"
+      (admin). Tipos `ApiUser`/`NewUserInput`/`UserUpdateInput`.
+    - **Sucursales inactivas — filtro + bloqueo:** los selectores de tienda en `entrada.vue` y
+      `ventas/nueva.vue` filtran `isActive`. Bloqueo real en backend: `POST /api/movements/entrada`
+      y `POST /api/sales` cargan la tienda y lanzan **400 "La sucursal está inactiva"** si no está
+      activa (aplica a admin y empleado). UI: el empleado con sucursal inactiva ve alerta "Sucursal
+      inactiva" y el formulario queda bloqueado.
+    - **Cascada tienda→empleados (simétrica):** `PATCH /api/stores/:id` propaga el cambio de
+      `isActive` a los empleados de esa tienda (en transacción), en ambos sentidos: desactivar la
+      tienda desactiva sus empleados, reactivarla los reactiva. **Solo si el estado realmente
+      cambia** (editar nombre/dirección no toca a los empleados). Devuelve el nº de empleados
+      afectados; la UI lo muestra en el toast.
+    - Verificado: eslint + typecheck limpios; endpoints exigen auth (401) y el desglose/entrada
+      probados en vivo. El alta real de usuarios (crea cuenta en Auth) la prueba el usuario.
+  - **Historial de entradas de stock (hecho, 2026-06-30, el AGENTE, SIN migración):**
+    nuevo `GET /api/movements` (calcado de `sales/index.get.ts`: empleado→su tienda,
+    admin→todas con `?storeId`; solo `type='entrada'`). Filtros de fecha `?from/?to`
+    (rango sobre `created_at`, from inclusivo/to exclusivo) y búsqueda `?q` (producto
+    name/sku/barcode, nº factura proveedor, sucursal, empleado; se pre-resuelven ids en
+    tablas relacionadas y se filtra con `inArray` para no abandonar el `findMany`
+    relacional). Página `app/pages/movimientos/index.vue` + nav "Entradas (historial)" +
+    composable `useMovements()` + tipo `ApiMovement`. **La misma barra de filtros se agregó
+    al historial de ventas**: `GET /api/sales` ahora acepta `?from/?to` (sobre `issued_at`)
+    y `?q` (folio, método de pago, sucursal, empleado); `useSales()` ganó `from/to/search`.
+    Componente compartido `app/components/FiltroPeriodo.vue` (botones Todo/Día/Semana/Mes que
+    calculan el rango del periodo CONCRETO elegido — no relativo — + input date/month +
+    barra de búsqueda). Verificado en vivo: búsqueda por folio (11→1) y filtro por mes
+    (junio 2026 = 11 ventas, julio = 0) sobre ventas; typecheck + eslint limpios.
 - **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
 - **Pendiente / bloqueante:** especificaciones funcionales; movimientos de **ajuste** y
   **transferencia** entre sucursales (tablas `transfers`/`transfer_items` ya en el esquema);
-  **vista de kardex/historial de movimientos** (hoy `supplier_invoice_*` se guarda pero no se
-  muestra); tickets target `movimiento` (v1 solo `factura`); folio secuencial formal; reportes
+  **vista de kardex completo** (ya hay historial de **entradas** en `/movimientos`; falta
+  mostrar ventas/anulaciones/ajustes/transferencias en una vista unificada); tickets target
+  `movimiento` (v1 solo `factura`); folio secuencial formal; reportes
   y exportación; (opcional) corte con conteo físico de efectivo y detalle congelado;
   confirmación de planes/regiones. **Hardening:** RLS policies (solo si hay acceso directo del
   cliente; hoy todo es server-side), migrar `SUPABASE_SERVICE_KEY`→`NUXT_SUPABASE_SECRET_KEY`.
