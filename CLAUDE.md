@@ -285,6 +285,37 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     la página y el cliente redirige → *hydration mismatch* + flash breve (solo afecta
     accesos sin sesión, que terminan en login igual). Se elimina si se pasa la app a
     SPA (`ssr:false`) — decisión pendiente del usuario.
+  - **Multi-sucursal (hecho, 2026-06-30):** trabajo por capas guiado/implementado con el usuario.
+    - **Catálogo — desglose por sucursal:** `GET /api/products` ahora expone `byStore`
+      (`[{storeId, quantity}]`) además del `totalStock`. En `productos/index.vue` cada fila
+      tiene un botón (ícono `store`) al final de Acciones que despliega una sub-fila con una
+      mini-tabla (Código · Sucursal · Existencia), mismo diseño que la tabla principal. La UI
+      resuelve el nombre de la tienda cruzando `byStore` con `useStores()`.
+    - **Entrada de stock por empleado:** `POST /api/movements/entrada` dejó de ser admin-only
+      (`requireProfile(event)` sin rol). El admin elige la tienda desde el body; **el empleado
+      siempre usa `profile.storeId`** (no puede falsearla). En `movimientos/entrada.vue` el
+      empleado ve su sucursal en un campo de solo lectura; el admin conserva el selector. Nav
+      "Entrada de stock" ahora visible para `['admin','empleado']`.
+    - **Badge de sucursal en el header** (`layouts/default.vue`): junto al badge de rol,
+      muestra la tienda del empleado (ícono `store`) o "Todas las sucursales" para admin
+      (ícono `globe`). Resuelto por `useStores()` cruzado con `me.storeId` (sin tocar backend).
+    - **Gestión de sucursales (CRUD admin, sin borrado físico):** `GET /api/stores` enriquecido
+      con `employeeCount`; `POST /api/stores` (name+code obligatorios, code único→409);
+      `PATCH /api/stores/:id` (edita name/address/isActive; **el `code` NO se edita**, se usa en
+      folios). Decisión del cliente: **solo desactivar** (`isActive`), no hay `DELETE`. Página
+      `tiendas/index.vue` + nav "Sucursales" (admin). Tipos `NewStoreInput`/`StoreUpdateInput`.
+    - **Gestión de empleados / cuentas (CRUD admin):** `server/utils/supabaseAdmin.ts` (cliente
+      service_role, solo servidor). `GET /api/users` (perfiles + email de Auth + sucursal),
+      `POST /api/users` (crea usuario en Auth con contraseña definida por el admin + `email_confirm`,
+      luego el `profile`; si el profile falla **revierte** el usuario de Auth; email duplicado→409),
+      `PATCH /api/users/:id` (nombre/rol/sucursal/estado/contraseña; **guardas anti-lockout**: no
+      quitarte tu propio admin ni desactivarte). Decisiones del cliente: **el admin define la
+      contraseña** (sin invitación por email) y **puede crear empleados y admins**. **Dar de baja =
+      `isActive=false`** (ya bloquea el acceso: `requireProfile`/`getOptionalProfile` lo checan; el
+      usuario de Auth no se borra). Página `empleados/index.vue` + `useUsers()` + nav "Empleados"
+      (admin). Tipos `ApiUser`/`NewUserInput`/`UserUpdateInput`.
+    - Verificado: eslint + typecheck limpios; endpoints exigen auth (401) y el desglose/entrada
+      probados en vivo. El alta real de usuarios (crea cuenta en Auth) la prueba el usuario.
 - **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
 - **Pendiente / bloqueante:** especificaciones funcionales; movimientos de **ajuste** y
   **transferencia** entre sucursales (tablas `transfers`/`transfer_items` ya en el esquema);
