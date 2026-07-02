@@ -168,6 +168,7 @@ export interface EntradaInput {
   productId: number
   storeId: number
   quantity: number
+  unitValue?: number
   reason?: string
   supplierInvoiceNumber?: string
   supplierInvoiceDate?: string
