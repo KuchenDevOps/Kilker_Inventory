@@ -84,11 +84,6 @@ watchEffect(() => {
 
     <UInput v-else-if="period === 'mes'" v-model="month" type="month" class="w-44" />
 
-    <UInput
-      v-model="search"
-      icon="i-lucide-search"
-      :placeholder="props.searchPlaceholder"
-      class="w-72 max-w-full"
-    />
+    
   </div>
 </template>

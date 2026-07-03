@@ -13,31 +13,52 @@ const currency = new Intl.NumberFormat('es-MX', {
 })
 const number = new Intl.NumberFormat('es-MX')
 
+// Selector de sucursal: 0 = todas.
+const storeFilterItems = computed(() => [
+  { label: 'Todas las sucursales', value: 0 },
+  ...stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
+])
+const selectedStoreId = ref(0)
+
+/** Existencia de un producto: en la sucursal elegida, o el total si es "todas". */
+function stockFor(p: (typeof products.value)[number]) {
+  if (!selectedStoreId.value) return p.totalStock
+  return p.byStore.find((b) => b.storeId === selectedStoreId.value)?.quantity ?? 0
+}
+
 const totalProducts = computed(() => products.value.length)
 const activeProducts = computed(() => products.value.filter((p) => p.isActive).length)
-const totalUnits = computed(() =>
-  products.value.reduce((sum, p) => sum + p.totalStock, 0)
-)
-/** Valor del inventario a precio de venta: Σ (precio × existencias). */
+const totalUnits = computed(() => products.value.reduce((sum, p) => sum + stockFor(p), 0))
+
+/** Valor del inventario a precio de venta: Σ (precio × existencias), en la sucursal elegida. */
 const inventoryValue = computed(() =>
-  products.value.reduce((sum, p) => sum + Number(p.price) * p.totalStock, 0)
+  products.value.reduce((sum, p) => sum + Number(p.price) * stockFor(p), 0)
 )
 const activeStores = computed(() => stores.value.filter((s) => s.isActive).length)
 const totalCategories = computed(
   () => new Set(products.value.map((p) => p.categoryId).filter((id) => id != null)).size
 )
 
-/** Productos activos cuya existencia total está bajo el mínimo definido. */
+/**
+ * Productos activos cuya existencia está bajo el mínimo, en la sucursal elegida
+ * (o la suma total si es "todas"). El mínimo (`minQuantity`) es global del producto,
+ * no por sucursal — no tenemos un mínimo por tienda en el modelo actual.
+ */
 const lowStock = computed(() =>
   products.value
     .filter((p) => p.isActive && p.minQuantity != null)
-    .map((p) => ({ product: p, stock: p.totalStock, min: Number(p.minQuantity) }))
+    .map((p) => ({ product: p, stock: stockFor(p), min: Number(p.minQuantity) }))
     .filter((row) => row.stock < row.min)
     .sort((a, b) => a.stock - b.stock)
 )
 
-/** El endpoint ya ordena por fecha de alta desc; tomamos los primeros. */
-const recentProducts = computed(() => products.value.slice(0, 6))
+/** Productos recientes con existencia en la sucursal elegida (si aplica). */
+const recentProducts = computed(() => {
+  const list = selectedStoreId.value
+    ? products.value.filter((p) => p.byStore.some((b) => b.storeId === selectedStoreId.value))
+    : products.value
+  return list.slice(0, 6)
+})
 
 const metrics = computed(() => [
   {
@@ -82,6 +103,8 @@ const metrics = computed(() => [
         Nuevo producto
       </UButton>
     </header>
+
+    <USelect v-model="selectedStoreId" :items="storeFilterItems" class="w-64" />
 
     <UAlert
       v-if="productsError"
@@ -196,7 +219,7 @@ const metrics = computed(() => [
                 :color="p.isActive ? 'success' : 'neutral'"
                 variant="subtle"
               />
-              <span class="text-sm text-muted tabular-nums">{{ p.totalStock }} u.</span>
+              <span class="text-sm text-muted tabular-nums">{{ stockFor(p) }} u.</span>
             </div>
           </li>
         </ul>
