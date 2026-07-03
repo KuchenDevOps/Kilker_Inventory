@@ -21,7 +21,6 @@ import {
   uuid,
   type AnyPgColumn
 } from 'drizzle-orm/pg-core'
-import { primaryKey } from 'drizzle-orm/sqlite-core'
 
 // auth.users la gestiona Supabase; no se modela aquí. FK a profiles vía migración SQL.
 

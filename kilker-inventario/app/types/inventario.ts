@@ -257,6 +257,7 @@ export interface ApiMovement {
   totalValue: string
   supplierInvoiceNumber: string | null
   supplierInvoiceDate: string | null
+  folio: string | null
   createdByName: string | null
   createdAt: string
 }
