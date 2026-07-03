@@ -50,6 +50,13 @@
       "when": 1782525651772,
       "tag": "0006_condemned_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783048915280,
+      "tag": "0007_giant_network",
+      "breakpoints": true
     }
   ]
 }
