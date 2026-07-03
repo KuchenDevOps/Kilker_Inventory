@@ -242,11 +242,15 @@ export function useTickets() {
 }
 
 /** Cortes de caja; empleado→su tienda, admin→todas. Llamar refresh() en onMounted. */
+/** Cortes de caja; empleado→su tienda, admin→todas. Filtros storeId/fecha/q recargan. */
 export function useCortes() {
   const cortes = useState<ApiCorte[]>('cortes', () => [])
   const pending = useState('cortes-pending', () => false)
   const error = useState<string | null>('cortes-error', () => null)
   const storeId = useState<number | undefined>('cortes-store', () => undefined)
+  const from = useState<string | undefined>('cortes-from', () => undefined)
+  const to = useState<string | undefined>('cortes-to', () => undefined)
+  const search = useState('cortes-search', () => '')
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
@@ -264,8 +268,13 @@ export function useCortes() {
         cortes.value = []
         return
       }
-      const qs = storeId.value ? `?storeId=${storeId.value}` : ''
-      cortes.value = await $fetch<ApiCorte[]>(`/api/cortes${qs}`, {
+      const q = new URLSearchParams()
+      if (storeId.value) q.set('storeId', String(storeId.value))
+      if (from.value) q.set('from', from.value)
+      if (to.value) q.set('to', to.value)
+      if (search.value.trim()) q.set('q', search.value.trim())
+      const qs = q.toString()
+      cortes.value = await $fetch<ApiCorte[]>(`/api/cortes${qs ? `?${qs}` : ''}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
     } catch (e) {
@@ -279,10 +288,10 @@ export function useCortes() {
   const watching = useState('cortes-watching', () => false)
   if (import.meta.client && !watching.value) {
     watching.value = true
-    watch([user, storeId], () => void refresh(), { immediate: true })
+    watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
   }
 
-  return { cortes, pending, error, storeId, refresh }
+  return { cortes, pending, error, storeId, from, to, search, refresh }
 }
 
 /** Usuarios/empleados (admin). Llamar refresh() en onMounted. */
