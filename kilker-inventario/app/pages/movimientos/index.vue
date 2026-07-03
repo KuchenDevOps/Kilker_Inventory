@@ -78,6 +78,7 @@ function fmtDay(s: string | null) {
               <th class="px-4 py-3 font-medium">Producto</th>
               <th class="px-4 py-3 font-medium">Sucursal</th>
               <th class="px-4 py-3 font-medium text-right">Cantidad</th>
+              <th class="px-4 py-3 font-medium text-right">Total</th>
               <th class="px-4 py-3 font-medium">Factura prov.</th>
               <th class="px-4 py-3 font-medium">Fecha factura</th>
               <th class="px-4 py-3 font-medium">Registró</th>
@@ -102,6 +103,9 @@ function fmtDay(s: string | null) {
               <td class="px-4 py-3 text-right tabular-nums">
                 {{ qtyFmt.format(Number(m.quantity)) }}
                 <span class="text-muted">{{ m.unit ?? '' }}</span>
+              </td>
+              <td class="px-4 py-3 text-right tabular-nums">
+                {{ qtyFmt.format(Number(m.totalValue)) }}
               </td>
               <td class="px-4 py-3 text-muted">{{ m.supplierInvoiceNumber ?? '—' }}</td>
               <td class="px-4 py-3 text-muted whitespace-nowrap">
