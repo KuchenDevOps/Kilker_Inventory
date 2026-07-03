@@ -4,7 +4,7 @@
 // En transacción: inserta el movimiento y sube inventory por (producto × tienda).
 import { eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { inventory, products, stockMovements, stores } from '../../db/schema'
+import { entryFolioCounters ,inventory, products, stockMovements, stores } from '../../db/schema'
 
 interface EntradaBody {
   productId: number
@@ -60,12 +60,25 @@ export default defineEventHandler(async (event) => {
    const unitValue = body.unitValue != null ? Number(body.unitValue) : Number(product.cost ?? 0)    
    const totalValue = quantity * unitValue
 
+   //folio secuencial de entrada por tienda (upsert para no tener duplicados).
+    const [counter] = await tx
+      .insert(entryFolioCounters)
+      .values({storeId, lastSeq: 1})
+      .onConflictDoUpdate({
+        target: entryFolioCounters.storeId,
+        set: {lastSeq: sql`${entryFolioCounters.lastSeq} + 1`}
+      })
+      .returning({lastSeq: entryFolioCounters.lastSeq})
+
+    const folio = `${store.code}-E-${String(counter!.lastSeq).padStart(4, '0')}`
+
     const [movement] = await tx
       .insert(stockMovements)
       .values({
         productId,
         storeId,
         type: 'entrada',
+        inventoryEntryInvoiceNumber: folio,
         quantity: String(quantity),
         unitValue: String(unitValue),
         totalValue: String(totalValue),
