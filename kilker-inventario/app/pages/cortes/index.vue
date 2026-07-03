@@ -7,7 +7,7 @@ const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { cortes, pending, error, storeId, refresh } = useCortes()
+const { cortes, pending, error, storeId, refresh, from, to, search } = useCortes()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
@@ -119,6 +119,17 @@ async function toggleDetail(c: ApiCorte) {
       </UButton>
     </header>
 
+     <div class="space-y-3">
+      <FiltroCortePeriodo
+        v-model:search="search"
+        v-model:from="from"
+        v-model:to="to"
+        search-placeholder="Buscar producto, SKU, factura, sucursal…"
+      />
+      
+      <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+    </div>
+
     <!-- Panel: hacer corte -->
     <UCard v-if="makingCorte">
       <template #header>
@@ -157,8 +168,7 @@ async function toggleDetail(c: ApiCorte) {
       </div>
     </UCard>
 
-    <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
-
+   
     <UAlert
       v-if="error"
       color="error"

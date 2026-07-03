@@ -1,8 +1,4 @@
-// ───────────────────────────────────────────────
-//  GET /api/cortes — historial de cortes de caja
-// ───────────────────────────────────────────────
-// Empleado: su tienda. Admin: todos (filtro ?storeId).
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, gte, ilike, lt } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { cashCloseouts } from '../../db/schema'
 
@@ -20,6 +16,10 @@ export default defineEventHandler(async (event) => {
     const storeId = Number(query.storeId)
     if (storeId) filters.push(eq(cashCloseouts.storeId, storeId))
   }
+
+  if (query.from) filters.push(gte(cashCloseouts.createdAt, new Date(String(query.from))))
+  if (query.to) filters.push(lt(cashCloseouts.createdAt, new Date(String(query.to))))
+  if (query.q) filters.push(ilike(cashCloseouts.note, `%${String(query.q)}%`))
 
   const rows = await db.query.cashCloseouts.findMany({
     where: filters.length ? and(...filters) : undefined,
