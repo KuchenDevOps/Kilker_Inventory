@@ -64,6 +64,9 @@ export default defineEventHandler(async (event) => {
     if (profIds.length) {
       orParts.push(inArray(stockMovements.createdBy, profIds.map((r) => r.id)))
     }
+    if (q) {
+      orParts.push(ilike(stockMovements.inventoryEntryInvoiceNumber, like))
+    }    
     filters.push(or(...orParts)!)
   }
 
@@ -92,6 +95,7 @@ export default defineEventHandler(async (event) => {
     totalValue: m.totalValue,
     supplierInvoiceNumber: m.supplierInvoiceNumber,
     supplierInvoiceDate: m.supplierInvoiceDate,
+    folio: m.inventoryEntryInvoiceNumber,
     createdByName: m.createdBy?.fullName ?? null,
     createdAt: m.createdAt
   }))

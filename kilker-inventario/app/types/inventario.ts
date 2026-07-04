@@ -257,6 +257,7 @@ export interface ApiMovement {
   totalValue: string
   supplierInvoiceNumber: string | null
   supplierInvoiceDate: string | null
+  folio: string | null
   createdByName: string | null
   createdAt: string
 }
@@ -292,4 +293,12 @@ export interface ApiCorteDetail extends ApiCorte {
     createdByName: string | null
     issuedAt: string
   }[]
+}
+
+export interface ApiAverageCost {
+  productId: number
+  storeId: number
+  avgCost: number
+  availableQty: number
+  totalCost: number
 }

@@ -253,6 +253,7 @@ export const stockMovements = pgTable(
     reason: text('reason'),
     supplierInvoiceNumber: text('supplier_invoice_number'),
     supplierInvoiceDate: date('supplier_invoice_date'),
+    inventoryEntryInvoiceNumber: text('Folio'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => profiles.id),
@@ -262,9 +263,18 @@ export const stockMovements = pgTable(
   },
   (t) => [
     index('stock_movements_store_created_idx').on(t.storeId, t.createdAt),
-    index('stock_movements_product_idx').on(t.productId)
+    index('stock_movements_product_idx').on(t.productId),
+    unique('stock_movements_store_folio_unique').on(t.storeId, t.inventoryEntryInvoiceNumber)
   ]
 ).enableRLS()
+
+export const entryFolioCounters = pgTable('entry_folio_counters', {
+  storeId: bigint('store_id', { mode: 'number' })
+    .primaryKey()
+    .references(() => stores.id),
+  lastSeq: integer('last_seq').notNull().default(0)
+}).enableRLS()
+
 
 /** Cabecera de transferencia entre tiendas. */
 export const transfers = pgTable('transfers', {
