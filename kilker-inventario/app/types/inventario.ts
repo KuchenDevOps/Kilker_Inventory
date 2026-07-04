@@ -293,3 +293,11 @@ export interface ApiCorteDetail extends ApiCorte {
     issuedAt: string
   }[]
 }
+
+export interface ApiAverageCost {
+  productId: number
+  storeId: number
+  avgCost: number
+  availableQty: number
+  totalCost: number
+}

@@ -6,8 +6,13 @@ useHead({ title: 'Dashboard · Inventario Kilker' })
 
 const { data: products, pending: loadingProducts, error: productsError, refresh: refreshProducts } = useProducts()
 const { data: stores, refresh: refreshStores } = useStores()
-const { data: averageCosts, refresh: refreshAverageCosts } = useAverageCosts()
-
+const {
+  averageCosts,
+  pending: loadingAverageCosts,
+  storeId: averageCostsStoreId,
+  refresh: refreshAverageCosts,
+  getAverageCost
+} = useAverageCosts()
 
 const {
   movements,
@@ -48,36 +53,35 @@ const selectedStoreId = ref(0)
 // --- FUNCIÓN CENTRAL DE REFRESH ---
 const refreshAllData = async () => {
   try {
-    await Promise.all([
-      refreshProducts(),
-      refreshStores(),
-      refreshAverageCosts() // ← nuevo, independiente del periodo/sucursal
-    ])
+    await Promise.all([refreshProducts(), refreshStores()])
 
     const storeId = selectedStoreId.value || undefined
     movementsStoreId.value = storeId
     salesStoreId.value = storeId
+    averageCostsStoreId.value = storeId
 
     movementsFrom.value = periodFrom.value
     movementsTo.value = periodTo.value
     salesFrom.value = periodFrom.value
     salesTo.value = periodTo.value
 
-    await Promise.all([refreshMovements(), refreshSales()])
+    await Promise.all([refreshMovements(), refreshSales(), refreshAverageCosts()])
   } catch (error) {
-    console.error('❌ Error al refrescar datos:', error)
+    console.error(' Error al refrescar datos:', error)
   }
 }
 
 
+
+
 // --- WATCH EFECTIVO PARA CAMBIOS DE FILTRO ---
 watch(selectedStoreId, () => {
-  console.log('🔄 Cambio de sucursal detectado')
+  console.log(' Cambio de sucursal detectado')
   refreshAllData()
 })
 
 watch([periodFrom, periodTo], () => {
-  console.log('🔄 Cambio de periodo detectado')
+  console.log(' Cambio de periodo detectado')
   refreshAllData()
 })
 
@@ -125,7 +129,7 @@ const startPeriodicRefresh = () => {
 
 // --- CICLO DE VIDA ---
 onMounted(async () => {
-  console.log('🚀 Dashboard montado - cargando datos iniciales')
+  console.log(' Dashboard montado - cargando datos iniciales')
   await refreshAllData()
   lastRefreshTime.value = Date.now()
   document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -155,53 +159,32 @@ function stockFor(p: (typeof products.value)[number]) {
 
 // Mapa producto×sucursal → costo promedio, construido desde el histórico
 // completo (no depende del periodo ni de selectedStoreId).
-const averageCostMap = computed(() => {
-  const map = new Map<string, number>()
-  averageCosts.value.forEach((r) => {
-    map.set(`${r.productId}-${r.storeId}`, r.avgCost)
-  })
-  return map
-})
-
-const getAverageCostByStore = (productId: number, storeId: number): number => {
-  const key = `${productId}-${storeId}`
-  const cost = averageCostMap.value.get(key)
-  if (cost != null) return cost
-
-  // Sin entradas históricas para esta sucursal: fallback al costo del producto.
-  const product = products.value.find((p) => p.id === productId)
-  return Number(product?.cost ?? 0)
-}
 
 
+// --- Obtener costo promedio por producto/sucursal ---
 
-// --- NUEVO: Valor de inventario con costo por sucursal ---
 const inventoryValue = computed(() => {
   let total = 0
 
-  products.value.forEach(p => {
+  products.value.forEach((p) => {
     const stock = stockFor(p)
     if (stock === 0) return
 
     let avgCost = 0
 
     if (selectedStoreId.value) {
-      // Sucursal específica: costo promedio ponderado de ESA sucursal
-      avgCost = getAverageCostByStore(p.id, selectedStoreId.value)
+      avgCost = getAverageCost(p.id, selectedStoreId.value)
     } else {
-      // Todas las sucursales: promedio ponderado por cantidad en stock,
-      // combinando el costo promedio de cada sucursal donde hay existencia
-      const storesWithStock = p.byStore.filter(b => b.quantity > 0)
-
+      const storesWithStock = p.byStore.filter((b) => b.quantity > 0)
       if (storesWithStock.length > 0) {
         let totalCost = 0
         let totalQty = 0
-        storesWithStock.forEach(b => {
-          const cost = getAverageCostByStore(p.id, b.storeId)
+        storesWithStock.forEach((b) => {
+          const cost = getAverageCost(p.id, b.storeId)
           totalCost += cost * Number(b.quantity)
           totalQty += Number(b.quantity)
         })
-        avgCost = totalQty > 0 ? totalCost / totalQty : Number(p.cost ?? 0)
+        avgCost = totalQty > 0 ? totalCost / totalQty : 0
       } else {
         avgCost = Number(p.cost ?? 0)
       }
@@ -212,6 +195,11 @@ const inventoryValue = computed(() => {
 
   return total
 })
+
+
+
+
+
 
 // --- VALOR DE ENTRADAS Y SALIDAS ---
 const entryValue = computed(() =>
@@ -271,17 +259,17 @@ const metrics = computed(() => {
       loading: loadingProducts.value,
       globalOnly: false
     },
-    {
-      label: 'Valor de inventario (costo por sucursal)',
-      value: currency.format(inventoryValue.value),
-      hint: selectedStoreId.value 
-        ? `costo promedio de ${stores.value.find(s => s.id === selectedStoreId.value)?.code ?? 'sucursal'}`
-        : 'costo promedio por sucursal',
-      icon: 'i-lucide-banknote',
-      color: 'text-success',
-      loading: loadingProducts.value || loadingMovements.value,
-      globalOnly: false
-    },
+{
+  label: 'Valor de inventario (costo por sucursal)',
+  value: currency.format(inventoryValue.value),
+  hint: selectedStoreId.value
+    ? `costo promedio de ${stores.value.find((s) => s.id === selectedStoreId.value)?.code ?? 'sucursal'}`
+    : 'costo promedio por sucursal',
+  icon: 'i-lucide-banknote',
+  color: 'text-success',
+  loading: loadingProducts.value || loadingAverageCosts.value,
+  globalOnly: false
+},
     {
       label: 'Sucursales',
       value: number.format(activeStores.value),
@@ -336,8 +324,13 @@ const metrics = computed(() => {
   return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 })
 
-const isLoading = computed(() => loadingProducts.value || loadingMovements.value || loadingSales.value)
-
+const isLoading = computed(
+  () =>
+    loadingProducts.value ||
+    loadingMovements.value ||
+    loadingSales.value ||
+    loadingAverageCosts.value
+)
 </script>
 
 <template>
