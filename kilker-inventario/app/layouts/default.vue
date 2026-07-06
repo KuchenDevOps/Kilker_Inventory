@@ -85,6 +85,19 @@ const allNav: NavEntry[] = [
     ]
   },
   {
+      section: 'Clientes',
+      icon: 'i-lucide-users',
+      children: [
+        {
+          label: 'Lista de clientes',
+          to: '/clientes',
+          icon: 'i-lucide-users',
+          roles: ['admin', 'empleado']
+        },
+        
+      ]
+  },
+  {
     section: 'Administración',
     icon: 'i-lucide-shield',
     children: [
