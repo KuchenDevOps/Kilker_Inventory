@@ -198,7 +198,7 @@ async function logout() {
       <div
         v-if="sidebarOpen"
         class="fixed inset-0 z-20 bg-black/50 md:hidden"
-        @click="sidebarOpen = false"
+        @click="() => { sidebarOpen = false }"
       />
     </Transition>
 
@@ -220,7 +220,7 @@ async function logout() {
           variant="ghost"
           icon="i-lucide-x"
           square
-          @click="sidebarOpen = false"
+          @click="() => { sidebarOpen = false }"
         />
       </div>
 

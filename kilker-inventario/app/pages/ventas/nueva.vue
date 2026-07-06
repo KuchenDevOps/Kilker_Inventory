@@ -173,19 +173,6 @@ const customerItems = computed(() => [
   ...customers.value.map((c) => ({ label: c.name, value: c.id }))
 ])
 
-// Adapter between simple customerId (number | undefined) and the select menu's
-// expected item object. USelectMenu's v-model binds to the selected item, so
-// expose `selectedCustomer` for the template and keep customerId in sync.
-const selectedCustomer = computed({
-  get(): { label: string; value: number | undefined } | undefined {
-    const id = customerId.value
-    return customerItems.value.find((it) => it.value === id as any)
-  },
-  set(v: { label: string; value: number | undefined } | undefined) {
-    customerId.value = v?.value
-  },
-})
-
 const creatingCustomer = ref(false)
 const newCustomerName = ref('')
 const newCustomerPhone = ref('')
@@ -295,6 +282,7 @@ async function quickCreateCustomer() {
     <USelectMenu
       v-model="customerId"
       :items="customerItems"
+      value-key="value"
       :disabled="!canOperate"
       searchable
       placeholder="Buscar cliente por nombre…"
@@ -311,21 +299,21 @@ async function quickCreateCustomer() {
 </UFormField>
 </div>
 
-<!-- Panel inline de alta rápida de cliente -->
-<UCard v-if="creatingCustomer" class="bg-elevated/30">
-  <div class="flex flex-wrap items-end gap-3">
-    <UFormField label="Nombre" class="flex-1 min-w-48">
-      <UInput v-model="newCustomerName" placeholder="Nombre del cliente" class="w-full" />
-    </UFormField>
-    <UFormField label="Teléfono (opcional)" class="flex-1 min-w-40">
-      <UInput v-model="newCustomerPhone" placeholder="55..." class="w-full" />
-    </UFormField>
-    <UButton :loading="savingCustomer" :disabled="!newCustomerName.trim()" @click="quickCreateCustomer">
-      Guardar
-    </UButton>
-    <UButton variant="ghost" color="neutral" @click="creatingCustomer = false">Cancelar</UButton>
-  </div>
-</UCard>
+      <!-- Panel inline de alta rápida de cliente -->
+      <UCard v-if="creatingCustomer" class="bg-elevated/30">
+        <div class="flex flex-wrap items-end gap-3">
+          <UFormField label="Nombre" class="flex-1 min-w-48">
+            <UInput v-model="newCustomerName" placeholder="Nombre del cliente" class="w-full" />
+          </UFormField>
+          <UFormField label="Teléfono (opcional)" class="flex-1 min-w-40">
+            <UInput v-model="newCustomerPhone" placeholder="55..." class="w-full" />
+          </UFormField>
+          <UButton :loading="savingCustomer" :disabled="!newCustomerName.trim()" @click="quickCreateCustomer">
+            Guardar
+          </UButton>
+          <UButton variant="ghost" color="neutral" @click="creatingCustomer = false">Cancelar</UButton>
+        </div>
+      </UCard>
 
         <UFormField label="Nota" name="note">
           <UInput

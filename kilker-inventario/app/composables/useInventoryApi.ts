@@ -87,6 +87,7 @@ export function useMe() {
 }
 
 /** Historial de ventas; el backend filtra por rol. Filtros status/storeId/fecha/q recargan. */
+// composables/useSales.ts
 export function useSales() {
   const sales = useState<ApiSale[]>('sales', () => [])
   const pending = useState('sales-pending', () => false)
@@ -131,11 +132,25 @@ export function useSales() {
     }
   }
 
-  const watching = useState('sales-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
-    watch([user, status, storeId, from, to, search], () => void refresh(), {
-      immediate: true
+  // ✅ Mejor: Usar un solo watcher que se ejecuta siempre
+  if (import.meta.client) {
+    // Watcher para cambios en los filtros
+    watch([user, status, storeId, from, to, search], () => {
+      refresh()
+    }, { immediate: true })
+    
+    // Watcher para cuando la pestaña se vuelve visible
+    const visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        refresh()
+      }
+    }
+    document.addEventListener('visibilitychange', visibilityHandler)
+    
+    // Cleanup cuando la app se cierra
+    const nuxtApp = useNuxtApp()
+    nuxtApp.hook('app:beforeUnmount', () => {
+      document.removeEventListener('visibilitychange', visibilityHandler)
     })
   }
 
@@ -144,7 +159,7 @@ export function useSales() {
 
 /** Historial de entradas de stock; el backend filtra por rol. Filtros storeId/fecha/q recargan. */
 export function useMovements() {
-  const movements = useState<ApiMovement[]>('movements', () => [])
+   const movements = useState<ApiMovement[]>('movements', () => [])
   const pending = useState('movements-pending', () => false)
   const error = useState<string | null>('movements-error', () => null)
   const storeId = useState<number | undefined>('movements-store', () => undefined)
@@ -185,10 +200,12 @@ export function useMovements() {
     }
   }
 
-  const watching = useState('movements-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
-    watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
+  if (import.meta.client && !useNuxtApp()._movementsWatchScope) {
+    const scope = effectScope(true) // detached: no se ata al componente actual
+    useNuxtApp()._movementsWatchScope = scope
+    scope.run(() => {
+      watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
+    })
   }
 
   return { movements, pending, error, storeId, from, to, search, refresh }
