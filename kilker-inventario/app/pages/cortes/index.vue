@@ -1,3 +1,4 @@
+<!-- pages/cortes/index.vue -->
 <script setup lang="ts">
 import { PAYMENT_LABELS, type ApiCorte, type ApiCorteDetail } from '~/types/inventario'
 
@@ -11,9 +12,8 @@ const { cortes, pending, error, storeId, refresh, from, to, search } = useCortes
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
-onMounted(() => {
-  refresh()
-})
+// ✅ Ya no necesitamos onMounted ni visibilitychange aquí
+// porque el composable ya lo maneja
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
@@ -119,7 +119,8 @@ async function toggleDetail(c: ApiCorte) {
       </UButton>
     </header>
 
-     <div class="space-y-3">
+    <div class="space-y-3">
+      <!-- ✅ El filtro ahora sincroniza con la URL automáticamente -->
       <FiltroCortePeriodo
         v-model:search="search"
         v-model:from="from"
@@ -129,8 +130,7 @@ async function toggleDetail(c: ApiCorte) {
       
       <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
     </div>
-
-    <!-- Panel: hacer corte -->
+ <!-- Panel: hacer corte -->
     <UCard v-if="makingCorte">
       <template #header>
         <h2 class="font-semibold">Nuevo corte de caja</h2>
