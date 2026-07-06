@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { PAYMENT_LABELS, UNIT_LABELS, type PaymentMethod } from '~/types/inventario'
+import { CHANNEL_LABELS, type SaleChannel } from '~/types/inventario'
+
 // Forma mínima de la respuesta de /api/sales que consume la UI.
 interface SaleResult {
   invoice: { folio: string; totalAmount: string }
@@ -11,6 +13,8 @@ const toast = useToast()
 const { me } = useMe()
 const { data: products } = useProducts()
 const { data: stores } = useStores()
+const { data: customers, refresh: refreshCustomers } = useCustomers()
+
 const apiFetch = useApiFetch()
 
 const isEmployee = computed(() => me.value?.role === 'empleado')
@@ -114,6 +118,8 @@ async function onSubmit() {
       method: 'POST',
       body: {
         storeId: storeId.value,
+        customerId: customerId.value ?? undefined,
+        channel: channel.value,
         note: note.value.trim() || undefined,
         paymentMethod: paymentMethod.value,
         discount: discount.value || undefined,
@@ -136,6 +142,8 @@ async function onSubmit() {
     // Reiniciar líneas (la tienda del empleado se mantiene).
     note.value = ''
     discount.value = 0
+    customerId.value = undefined,
+
     lines.splice(0, lines.length, {
       productId: undefined,
       quantity: undefined,
@@ -150,6 +158,56 @@ async function onSubmit() {
     })
   } finally {
     submitting.value = false
+  }
+}
+
+//customers
+const customerId = ref<number | undefined>(undefined)
+const channel = ref<SaleChannel>('mostrador')
+const channelItems = (Object.keys(CHANNEL_LABELS) as SaleChannel[]).map((v) => ({
+  label: CHANNEL_LABELS[v],
+  value: v
+}))
+const customerItems = computed(() => [
+  { label: 'Sin cliente (venta anónima)', value: undefined },
+  ...customers.value.map((c) => ({ label: c.name, value: c.id }))
+])
+
+// Adapter between simple customerId (number | undefined) and the select menu's
+// expected item object. USelectMenu's v-model binds to the selected item, so
+// expose `selectedCustomer` for the template and keep customerId in sync.
+const selectedCustomer = computed({
+  get(): { label: string; value: number | undefined } | undefined {
+    const id = customerId.value
+    return customerItems.value.find((it) => it.value === id as any)
+  },
+  set(v: { label: string; value: number | undefined } | undefined) {
+    customerId.value = v?.value
+  },
+})
+
+const creatingCustomer = ref(false)
+const newCustomerName = ref('')
+const newCustomerPhone = ref('')
+const savingCustomer = ref(false)
+
+async function quickCreateCustomer() {
+  if (!newCustomerName.value.trim()) return
+  savingCustomer.value = true
+  try {
+    const created = await apiFetch<{ id: number }>('/api/customers', {
+      method: 'POST',
+      body: { name: newCustomerName.value.trim(), phone: newCustomerPhone.value.trim() || undefined }
+    })
+    await refreshCustomers()
+    customerId.value = created.id
+    creatingCustomer.value = false
+    newCustomerName.value = ''
+    newCustomerPhone.value = ''
+  } catch (e) {
+    toast.add({ title: 'No se pudo crear el cliente', description: apiErrorMessage(e), color: 'error' })
+  } finally {
+    savingCustomer.value = false
   }
 }
 </script>
@@ -224,6 +282,50 @@ async function onSubmit() {
             />
           </UFormField>
         </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+
+
+  <UFormField label="Canal de venta" name="channel" required>
+    <USelect v-model="channel" :items="channelItems" :disabled="!canOperate" class="w-full" />
+  </UFormField>
+
+ <UFormField label="Cliente" name="customerId">
+  <div class="flex gap-2">
+    <USelectMenu
+      v-model="customerId"
+      :items="customerItems"
+      :disabled="!canOperate"
+      searchable
+      placeholder="Buscar cliente por nombre…"
+      class="w-full"
+    />
+    <UButton
+      type="button"
+      icon="i-lucide-user-plus"
+      variant="soft"
+      :disabled="!canOperate"
+      @click="creatingCustomer = true"
+    />
+  </div>
+</UFormField>
+</div>
+
+<!-- Panel inline de alta rápida de cliente -->
+<UCard v-if="creatingCustomer" class="bg-elevated/30">
+  <div class="flex flex-wrap items-end gap-3">
+    <UFormField label="Nombre" class="flex-1 min-w-48">
+      <UInput v-model="newCustomerName" placeholder="Nombre del cliente" class="w-full" />
+    </UFormField>
+    <UFormField label="Teléfono (opcional)" class="flex-1 min-w-40">
+      <UInput v-model="newCustomerPhone" placeholder="55..." class="w-full" />
+    </UFormField>
+    <UButton :loading="savingCustomer" :disabled="!newCustomerName.trim()" @click="quickCreateCustomer">
+      Guardar
+    </UButton>
+    <UButton variant="ghost" color="neutral" @click="creatingCustomer = false">Cancelar</UButton>
+  </div>
+</UCard>
 
         <UFormField label="Nota" name="note">
           <UInput

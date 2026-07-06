@@ -15,6 +15,7 @@
     "db:seed:auth": "tsx server/db/seed-auth.ts"
   },
   "dependencies": {
+    "@canvasjs/charts": "^3.16.1",
     "@iconify-json/lucide": "^1.2.68",
     "@nuxt/eslint": "^1.16.0",
     "@nuxt/ui": "^4.9.0",

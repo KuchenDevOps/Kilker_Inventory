@@ -4,7 +4,15 @@
 // En transacción: crea factura + líneas, movimientos de venta y baja inventario.
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { inventory, invoiceItems, invoices, products, stockMovements, stores } from '../../db/schema'
+import {
+  customers,
+  inventory,
+  invoiceItems,
+  invoices,
+  products,
+  stockMovements,
+  stores
+} from '../../db/schema'
 
 interface SaleItem {
   productId: number
@@ -13,10 +21,12 @@ interface SaleItem {
 }
 interface SaleBody {
   storeId: number
+  customerId?: number | null
+  channel?: string
   note?: string
   paymentMethod?: string
   items: SaleItem[]
-  discount?: number 
+  discount?: number
 }
 
 export default defineEventHandler(async (event) => {
@@ -38,10 +48,25 @@ export default defineEventHandler(async (event) => {
   }
 
   // Método de pago (corte de caja). Default efectivo.
-  const allowed = ['efectivo', 'tarjeta', 'transferencia'] as const
-  const paymentMethod = allowed.includes(body?.paymentMethod as never)
-    ? (body?.paymentMethod as (typeof allowed)[number])
+  const allowedPayments = ['efectivo', 'tarjeta', 'transferencia'] as const
+  const paymentMethod = allowedPayments.includes(body?.paymentMethod as never)
+    ? (body?.paymentMethod as (typeof allowedPayments)[number])
     : 'efectivo'
+
+  // Canal de venta. Default mostrador.
+  const allowedChannels = ['mostrador', 'en_linea'] as const
+  const channel = allowedChannels.includes(body?.channel as never)
+    ? (body?.channel as (typeof allowedChannels)[number])
+    : 'mostrador'
+
+  // Cliente opcional.
+  let customerId: number | null = null
+  if (body?.customerId != null) {
+    customerId = Number(body.customerId)
+    if (!customerId) {
+      throw createError({ statusCode: 400, statusMessage: 'customerId inválido' })
+    }
+  }
 
   // El empleado solo vende en su tienda.
   if (profile.role === 'empleado' && profile.storeId !== storeId) {
@@ -58,6 +83,16 @@ export default defineEventHandler(async (event) => {
     if (!store) throw createError({ statusCode: 404, statusMessage: 'Tienda no existe' })
     if (!store.isActive) {
       throw createError({ statusCode: 400, statusMessage: 'La sucursal está inactiva' })
+    }
+
+    // Validar cliente si viene.
+    if (customerId != null) {
+      const customer = await tx.query.customers.findFirst({
+        where: eq(customers.id, customerId)
+      })
+      if (!customer) {
+        throw createError({ statusCode: 400, statusMessage: 'El cliente no existe' })
+      }
     }
 
     // Resolver precios (snapshot) y validar existencias antes de escribir.
@@ -84,11 +119,8 @@ export default defineEventHandler(async (event) => {
     }
 
     const subTotal = lines.reduce((sum, l) => sum + l.lineTotal, 0)
-
     const discountPct = Math.min(Math.max(Number(body?.discount ?? 0), 0), 100)
-
     const discountAmount = subTotal * (discountPct / 100)
-
     const totalAmount = subTotal - discountAmount
 
     // Folio provisional por tienda (secuencia formal pendiente).
@@ -103,6 +135,8 @@ export default defineEventHandler(async (event) => {
       .values({
         folio,
         storeId,
+        customerId,
+        channel,
         createdBy: profile.id,
         status: 'emitida',
         paymentMethod,

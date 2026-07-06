@@ -167,6 +167,9 @@ export const inventory = pgTable(
   ]
 ).enableRLS()
 
+export const saleChannel = pgEnum('sale_channel', ['mostrador', 'en_linea'])
+
+
 /** Cabecera de venta (comprobante interno; sin CFDI/SAT en v1). */
 export const invoices = pgTable(
   'invoices',
@@ -179,12 +182,20 @@ export const invoices = pgTable(
     storeId: bigint('store_id', { mode: 'number' })
       .notNull()
       .references(() => stores.id),
+     customerId: bigint('customer_id', { mode: 'number' }).references(() => customers.id, {
+      onDelete: 'set null'
+    }),
+    
     createdBy: uuid('created_by')
       .notNull()
       .references(() => profiles.id),
     status: invoiceStatus('status').notNull().default('emitida'),
+    
     // Método de pago (corte de caja separa efectivo/tarjeta).
     paymentMethod: paymentMethod('payment_method').notNull().default('efectivo'),
+    
+    channel: saleChannel('channel').notNull().default('mostrador'),
+
     note: text('note'),
     totalAmount: numeric('total_amount', { precision: 14, scale: 2 })
       .notNull()
@@ -380,6 +391,26 @@ export const cashCloseouts = pgTable(
   (t) => [index('cash_closeouts_store_created_idx').on(t.storeId, t.createdAt)]
 ).enableRLS()
 
+/** Clientes del negocio. */
+export const customers = pgTable(
+  'customers',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    name: text('name').notNull(),
+    rfc: text('rfc'),
+    address: text('address'),
+    email: text('email'),
+    phone: text('phone'),
+    isActive: boolean('is_active').notNull().default(true),
+    ...timestamps()
+  },
+  (t) => [unique('customers_rfc_uniq').on(t.rfc)]
+).enableRLS()
+
+
+
 // ───────────────────────────────────────────────
 //  RELACIONES
 // ───────────────────────────────────────────────
@@ -429,6 +460,10 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   transferItems: many(transferItems)
 }))
 
+export const customersRelations = relations(customers, ({ many }) => ({
+  invoices: many(invoices)
+}))
+
 export const inventoryRelations = relations(inventory, ({ one }) => ({
   product: one(products, {
     fields: [inventory.productId],
@@ -444,6 +479,10 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   store: one(stores, {
     fields: [invoices.storeId],
     references: [stores.id]
+  }),
+  customer: one(customers, {
+    fields: [invoices.customerId],
+    references: [customers.id]
   }),
   createdBy: one(profiles, {
     fields: [invoices.createdBy],
@@ -592,3 +631,5 @@ export type Ticket = typeof tickets.$inferSelect
 export type NewTicket = typeof tickets.$inferInsert
 export type CashCloseout = typeof cashCloseouts.$inferSelect
 export type NewCashCloseout = typeof cashCloseouts.$inferInsert
+export type Customer = typeof customers.$inferSelect
+export type NewCustomer = typeof customers.$inferInsert
