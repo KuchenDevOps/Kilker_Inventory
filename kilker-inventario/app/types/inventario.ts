@@ -187,6 +187,8 @@ export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
 /** Cuerpo para registrar una venta (`POST /api/sales`). */
 export interface SaleInput {
   storeId: number
+  customerId?: number | null
+  channel?: SaleChannel
   note?: string
   paymentMethod?: PaymentMethod
   items: { productId: number; quantity: number; unitPrice?: number }[]
@@ -228,6 +230,9 @@ export interface ApiSale {
   storeId: number
   storeCode: string | null
   storeName: string | null
+   customerId: number | null
+  customerName: string | null
+  channel: SaleChannel
   status: InvoiceStatus
   paymentMethod: PaymentMethod
   /** numeric → string. Usar Number() para operar. */
@@ -301,4 +306,41 @@ export interface ApiAverageCost {
   avgCost: number
   availableQty: number
   totalCost: number
+}
+
+export interface ApiTopProduct {
+  productId: number
+  productName: string
+  productSku: string
+  unit: ProductUnit
+  totalQuantity: number
+  totalRevenue: number
+}
+
+/** Canal de la venta (enum sale_channel). */
+export type SaleChannel = 'mostrador' | 'en_linea'
+
+export const CHANNEL_LABELS: Record<SaleChannel, string> = {
+  mostrador: 'Mostrador',
+  en_linea: 'En línea'
+}
+
+/** Cliente tal como lo devuelve `GET /api/customers`. */
+export interface ApiCustomer {
+  id: number
+  name: string
+  rfc: string | null
+  address: string | null
+  email: string | null
+  phone: string | null
+  isActive: boolean
+}
+
+/** Cuerpo para crear/editar un cliente. */
+export interface CustomerInput {
+  name: string
+  rfc?: string | null
+  address?: string | null
+  email?: string | null
+  phone?: string | null
 }

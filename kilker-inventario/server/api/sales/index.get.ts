@@ -4,7 +4,7 @@
 // Empleado: su tienda. Admin: todas (filtros ?storeId/?status).
 import { and, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { invoices, profiles, stores, tickets } from '../../db/schema'
+import { customers, invoices, profiles, stores, tickets } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -29,16 +29,17 @@ export default defineEventHandler(async (event) => {
   if (query.from) filters.push(gte(invoices.issuedAt, new Date(String(query.from))))
   if (query.to) filters.push(lt(invoices.issuedAt, new Date(String(query.to))))
 
-  // Búsqueda ?q: folio, método de pago, sucursal (name/code), empleado que emitió.
+  // Búsqueda ?q: folio, método de pago, sucursal (name/code), empleado que emitió, cliente.
   const q = String(query.q ?? '').trim()
   if (q) {
     const like = `%${q}%`
-    const [storeIds, profIds] = await Promise.all([
+    const [storeIds, profIds, customerIds] = await Promise.all([
       db
         .select({ id: stores.id })
         .from(stores)
         .where(or(ilike(stores.name, like), ilike(stores.code, like))),
-      db.select({ id: profiles.id }).from(profiles).where(ilike(profiles.fullName, like))
+      db.select({ id: profiles.id }).from(profiles).where(ilike(profiles.fullName, like)),
+      db.select({ id: customers.id }).from(customers).where(ilike(customers.name, like))
     ])
 
     const orParts = [ilike(invoices.folio, like)]
@@ -52,6 +53,9 @@ export default defineEventHandler(async (event) => {
     if (profIds.length) {
       orParts.push(inArray(invoices.createdBy, profIds.map((r) => r.id)))
     }
+    if (customerIds.length) {
+      orParts.push(inArray(invoices.customerId, customerIds.map((r) => r.id)))
+    }
     filters.push(or(...orParts)!)
   }
 
@@ -61,6 +65,7 @@ export default defineEventHandler(async (event) => {
     limit: 200,
     with: {
       store: { columns: { code: true, name: true } },
+      customer: { columns: { name: true } },
       createdBy: { columns: { fullName: true } },
       items: { columns: { id: true } }
     }
@@ -83,6 +88,9 @@ export default defineEventHandler(async (event) => {
     storeId: inv.storeId,
     storeCode: inv.store?.code ?? null,
     storeName: inv.store?.name ?? null,
+    customerId: inv.customerId,
+    customerName: inv.customer?.name ?? null,
+    channel: inv.channel,
     status: inv.status,
     paymentMethod: inv.paymentMethod,
     totalAmount: inv.totalAmount,

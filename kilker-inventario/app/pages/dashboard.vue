@@ -2,6 +2,9 @@
 import { UNIT_LABELS } from '~/types/inventario'
 import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
 
+import { createApp } from 'vue'   
+
+
 useHead({ title: 'Dashboard · Inventario Kilker' })
 
 const { data: products, pending: loadingProducts, error: productsError, refresh: refreshProducts } = useProducts()
@@ -39,6 +42,16 @@ const currency = new Intl.NumberFormat('es-MX', {
 })
 const number = new Intl.NumberFormat('es-MX')
 
+const {
+  topProducts,
+  pending: loadingTopProducts,
+  storeId: topProductsStoreId,
+  from: topProductsFrom,
+  to: topProductsTo,
+  limit: topProductsLimit,
+  refresh: refreshTopProducts
+} = useTopProducts()
+
 // --- DEFINIR PERIODFROM Y PERIODTO ---
 const periodFrom = ref<string | undefined>(undefined)
 const periodTo = ref<string | undefined>(undefined)
@@ -59,15 +72,23 @@ const refreshAllData = async () => {
     movementsStoreId.value = storeId
     salesStoreId.value = storeId
     averageCostsStoreId.value = storeId
+    topProductsStoreId.value = storeId
 
     movementsFrom.value = periodFrom.value
     movementsTo.value = periodTo.value
     salesFrom.value = periodFrom.value
     salesTo.value = periodTo.value
+    topProductsFrom.value = periodFrom.value
+    topProductsTo.value = periodTo.value
 
-    await Promise.all([refreshMovements(), refreshSales(), refreshAverageCosts()])
+    await Promise.all([
+      refreshMovements(),
+      refreshSales(),
+      refreshAverageCosts(),
+      refreshTopProducts()
+    ])
   } catch (error) {
-    console.error(' Error al refrescar datos:', error)
+    console.error('Error al refrescar datos:', error)
   }
 }
 
@@ -195,6 +216,10 @@ const inventoryValue = computed(() => {
 
   return total
 })
+
+const topProductsMax = computed(() =>
+  topProducts.value.reduce((max, p) => Math.max(max, p.totalQuantity), 0)
+)
 
 
 
@@ -329,7 +354,8 @@ const isLoading = computed(
     loadingProducts.value ||
     loadingMovements.value ||
     loadingSales.value ||
-    loadingAverageCosts.value
+    loadingAverageCosts.value ||
+    loadingTopProducts.value
 )
 </script>
 
@@ -341,16 +367,7 @@ const isLoading = computed(
         <p class="text-sm text-muted">Resumen del inventario · datos reales</p>
       </div>
       <div class="flex gap-2">
-        <UButton
-          @click="refreshAllData"
-          :loading="isLoading"
-          icon="i-lucide-refresh-cw"
-          color="neutral"
-          variant="ghost"
-          size="sm"
-        >
-          Actualizar
-        </UButton>
+      
         <UButton to="/productos/nuevo" icon="i-lucide-plus" color="primary">
           Nuevo producto
         </UButton>
@@ -394,6 +411,49 @@ const isLoading = computed(
         </div>
       </UCard>
     </section>
+
+    <UCard>
+  <template #header>
+    <div class="flex items-center gap-2">
+      <UIcon name="i-lucide-bar-chart-3" class="size-5 text-primary" />
+      <h2 class="font-semibold">Productos más vendidos</h2>
+      <USelect
+        v-model="topProductsLimit"
+        :items="[
+          { label: 'Top 5', value: 5 },
+          { label: 'Top 10', value: 10 },
+          { label: 'Todos', value: 0 }
+        ]"
+        class="ml-auto w-32"
+        @update:model-value="refreshTopProducts"
+      />
+    </div>
+  </template>
+
+  <p v-if="loadingTopProducts" class="text-sm text-muted py-6 text-center">
+    Cargando…
+  </p>
+  <p v-else-if="!topProducts.length" class="text-sm text-muted py-6 text-center">
+    Sin ventas registradas en el periodo.
+  </p>
+  <ul v-else class="space-y-3">
+    <li v-for="p in topProducts" :key="p.productId">
+      <div class="flex items-center justify-between gap-3 mb-1">
+        <p class="text-sm font-medium truncate">{{ p.productName }}</p>
+        <p class="text-xs text-muted shrink-0">
+          {{ number.format(p.totalQuantity) }} {{ UNIT_LABELS[p.unit] }}(s) ·
+          {{ currency.format(p.totalRevenue) }}
+        </p>
+      </div>
+      <div class="h-2 rounded-full bg-elevated overflow-hidden">
+        <div
+          class="h-full rounded-full bg-primary transition-all"
+          :style="{ width: `${topProductsMax ? (p.totalQuantity / topProductsMax) * 100 : 0}%` }"
+        />
+      </div>
+    </li>
+  </ul>
+</UCard>
 
 
     <div class="grid gap-6 lg:grid-cols-2">
