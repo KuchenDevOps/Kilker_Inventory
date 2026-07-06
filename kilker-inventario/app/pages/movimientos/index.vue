@@ -5,12 +5,23 @@ const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const { movements, pending, error, storeId, from, to, search, refresh } = useMovements()
+watch([from, to, search], (v) => console.log('🔎 filtros cambiaron:', v))
+watch(() => useSupabaseUser().value, (u) => console.log('👤 user cambió:', u?.id))
+
 const { data: stores } = useStores()
 
 // Estado compartido: refrescamos al entrar para no mostrar datos viejos.
 onMounted(() => {
   refresh()
 })
+
+if (import.meta.client) {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refresh()
+    }
+  })
+}
 
 const storeItems = computed(() => [
   { label: 'Todas las sucursales', value: 0 },

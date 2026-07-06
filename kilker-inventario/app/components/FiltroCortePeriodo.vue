@@ -30,12 +30,14 @@ const periods: { label: string; value: Period }[] = [
   { label: 'Mes', value: 'mes' }
 ]
 
-watchEffect(() => {
+// Función para actualizar los filtros
+function updateFilters() {
   if (period.value === 'todo') {
     from.value = undefined
     to.value = undefined
     return
   }
+  
   if (period.value === 'mes') {
     const start = new Date(`${month.value}-01T00:00:00`)
     const end = new Date(start)
@@ -44,6 +46,7 @@ watchEffect(() => {
     to.value = end.toISOString()
     return
   }
+  
   if (period.value === 'dia') {
     const d = new Date(`${anchor.value}T00:00:00`)
     const end = new Date(d)
@@ -52,13 +55,29 @@ watchEffect(() => {
     to.value = end.toISOString()
     return
   }
+  
   // semana: rango libre [weekStart, weekEnd] inclusive
   const start = new Date(`${weekStart.value}T00:00:00`)
   const end = new Date(`${weekEnd.value}T00:00:00`)
   end.setDate(end.getDate() + 1)
   from.value = start.toISOString()
   to.value = end.toISOString()
-})
+}
+
+// Observamos todos los cambios que afectan los filtros
+watch(
+  [period, anchor, month, weekStart, weekEnd],
+  () => {
+    updateFilters()
+  },
+  { immediate: true } // Se ejecuta inmediatamente al montar
+)
+
+// También observamos cambios en from/to por si se modifican externamente
+watch([from, to], () => {
+  // Si cambian externamente, actualizamos el período correspondiente
+  // Esto es opcional pero ayuda a mantener sincronización
+}, { deep: true })
 </script>
 
 <template>

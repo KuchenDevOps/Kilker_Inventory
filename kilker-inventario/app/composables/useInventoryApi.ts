@@ -87,6 +87,7 @@ export function useMe() {
 }
 
 /** Historial de ventas; el backend filtra por rol. Filtros status/storeId/fecha/q recargan. */
+// composables/useSales.ts
 export function useSales() {
   const sales = useState<ApiSale[]>('sales', () => [])
   const pending = useState('sales-pending', () => false)
@@ -131,11 +132,25 @@ export function useSales() {
     }
   }
 
-  const watching = useState('sales-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
-    watch([user, status, storeId, from, to, search], () => void refresh(), {
-      immediate: true
+  // ✅ Mejor: Usar un solo watcher que se ejecuta siempre
+  if (import.meta.client) {
+    // Watcher para cambios en los filtros
+    watch([user, status, storeId, from, to, search], () => {
+      refresh()
+    }, { immediate: true })
+    
+    // Watcher para cuando la pestaña se vuelve visible
+    const visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        refresh()
+      }
+    }
+    document.addEventListener('visibilitychange', visibilityHandler)
+    
+    // Cleanup cuando la app se cierra
+    const nuxtApp = useNuxtApp()
+    nuxtApp.hook('app:beforeUnmount', () => {
+      document.removeEventListener('visibilitychange', visibilityHandler)
     })
   }
 
@@ -144,7 +159,7 @@ export function useSales() {
 
 /** Historial de entradas de stock; el backend filtra por rol. Filtros storeId/fecha/q recargan. */
 export function useMovements() {
-  const movements = useState<ApiMovement[]>('movements', () => [])
+   const movements = useState<ApiMovement[]>('movements', () => [])
   const pending = useState('movements-pending', () => false)
   const error = useState<string | null>('movements-error', () => null)
   const storeId = useState<number | undefined>('movements-store', () => undefined)
@@ -185,10 +200,12 @@ export function useMovements() {
     }
   }
 
-  const watching = useState('movements-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
-    watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
+  if (import.meta.client && !useNuxtApp()._movementsWatchScope) {
+    const scope = effectScope(true) // detached: no se ata al componente actual
+    useNuxtApp()._movementsWatchScope = scope
+    scope.run(() => {
+      watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
+    })
   }
 
   return { movements, pending, error, storeId, from, to, search, refresh }
@@ -243,37 +260,66 @@ export function useTickets() {
 
 /** Cortes de caja; empleado→su tienda, admin→todas. Llamar refresh() en onMounted. */
 /** Cortes de caja; empleado→su tienda, admin→todas. Filtros storeId/fecha/q recargan. */
+// composables/useSales.ts - Actualizar useCortes
 export function useCortes() {
+  const route = useRoute()
+  const router = useRouter()
+  
   const cortes = useState<ApiCorte[]>('cortes', () => [])
   const pending = useState('cortes-pending', () => false)
   const error = useState<string | null>('cortes-error', () => null)
-  const storeId = useState<number | undefined>('cortes-store', () => undefined)
-  const from = useState<string | undefined>('cortes-from', () => undefined)
-  const to = useState<string | undefined>('cortes-to', () => undefined)
-  const search = useState('cortes-search', () => '')
+  
+  const storeId = useState<number | undefined>('cortes-store', () => {
+    return route.query.storeId ? Number(route.query.storeId) : undefined
+  })
+  
+  const from = useState<string | undefined>('cortes-from', () => {
+    return route.query.from as string || undefined
+  })
+  
+  const to = useState<string | undefined>('cortes-to', () => {
+    return route.query.to as string || undefined
+  })
+  
+  const search = useState('cortes-search', () => {
+    return route.query.search as string || ''
+  })
+  
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
+  
+  let refreshing = false
+  let visibilityHandler: (() => void) | null = null
 
   async function refresh() {
+    if (refreshing) return
+    refreshing = true
+    
     if (!user.value) {
       cortes.value = []
+      refreshing = false
       return
     }
+    
     pending.value = true
     error.value = null
+    
     try {
       const { data } = await supabase.auth.getSession()
       const token = data.session?.access_token
       if (!token) {
         cortes.value = []
+        refreshing = false
         return
       }
+      
       const q = new URLSearchParams()
       if (storeId.value) q.set('storeId', String(storeId.value))
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       if (search.value.trim()) q.set('q', search.value.trim())
       const qs = q.toString()
+      
       cortes.value = await $fetch<ApiCorte[]>(`/api/cortes${qs ? `?${qs}` : ''}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -282,14 +328,84 @@ export function useCortes() {
       cortes.value = []
     } finally {
       pending.value = false
+      refreshing = false
     }
   }
 
-  const watching = useState('cortes-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
-    watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
+  function updateUrl() {
+    const query: any = {}
+    if (storeId.value) query.storeId = storeId.value
+    if (from.value) query.from = from.value
+    if (to.value) query.to = to.value
+    if (search.value) query.search = search.value
+    
+    const currentQuery = { ...route.query }
+    delete currentQuery.storeId
+    delete currentQuery.from
+    delete currentQuery.to
+    delete currentQuery.search
+    
+    router.replace({ 
+      query: { 
+        ...currentQuery,
+        ...query 
+      } 
+    })
   }
+
+  // Configurar watchers y listeners solo en el cliente
+  if (import.meta.client) {
+    // Watcher para cambios en los filtros
+    watch([user, storeId, from, to, search], () => {
+      updateUrl()
+      refresh()
+    }, { immediate: true })
+    
+    // Watcher para cambios en la URL
+    watch(() => route.query, (newQuery) => {
+      const newStoreId = newQuery.storeId ? Number(newQuery.storeId) : undefined
+      const newFrom = newQuery.from as string || undefined
+      const newTo = newQuery.to as string || undefined
+      const newSearch = newQuery.search as string || ''
+      
+      let needsRefresh = false
+      
+      if (newStoreId !== storeId.value) {
+        storeId.value = newStoreId
+        needsRefresh = true
+      }
+      if (newFrom !== from.value) {
+        from.value = newFrom
+        needsRefresh = true
+      }
+      if (newTo !== to.value) {
+        to.value = newTo
+        needsRefresh = true
+      }
+      if (newSearch !== search.value) {
+        search.value = newSearch
+        needsRefresh = true
+      }
+      
+      if (needsRefresh) {
+        refresh()
+      }
+    }, { deep: true })
+    
+    // Listener para visibilitychange
+    visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        refresh()
+      }
+    }
+    document.addEventListener('visibilitychange', visibilityHandler)
+  }
+
+  onBeforeUnmount(() => {
+    if (visibilityHandler) {
+      document.removeEventListener('visibilitychange', visibilityHandler)
+    }
+  })
 
   return { cortes, pending, error, storeId, from, to, search, refresh }
 }

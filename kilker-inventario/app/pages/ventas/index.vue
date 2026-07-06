@@ -1,5 +1,8 @@
+<!-- pages/ventas/index.vue -->
 <script setup lang="ts">
 import type { ApiSale } from '~/types/inventario'
+// Asegúrate de que la importación sea correcta
+import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
 
 useHead({ title: 'Historial de ventas · Inventario Kilker' })
 
@@ -15,6 +18,14 @@ const apiFetch = useApiFetch()
 onMounted(() => {
   refresh()
 })
+
+if (import.meta.client) {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refresh()
+    }
+  })
+}
 
 const statusItems = [
   { label: 'Todas', value: 'todas' },
@@ -43,7 +54,7 @@ function fmtDate(s: string | null) {
 }
 
 // Anulación (solo admin): confirmación inline con motivo.
-const voidingId = ref<number | null>(null) // fila con el panel de confirmación abierto
+const voidingId = ref<number | null>(null)
 const voidReason = ref('')
 const submittingVoid = ref(false)
 
@@ -144,11 +155,12 @@ async function confirmRequest(sale: ApiSale) {
     </header>
 
     <div class="space-y-3">
+      <!-- Asegúrate de que el nombre del componente coincida -->
       <FiltroPeriodo
         v-model:search="search"
         v-model:from="from"
         v-model:to="to"
-        search-placeholder="Buscar folio, sucursal, empleado, método de pago…"
+        :search-placeholder="'Buscar folio, sucursal, empleado, método de pago…'"
       />
       <div class="flex flex-wrap gap-3">
         <USelect v-model="status" :items="statusItems" class="w-44" />
@@ -168,7 +180,7 @@ async function confirmRequest(sale: ApiSale) {
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
-         <thead class="text-muted border-b border-default">
+          <thead class="text-muted border-b border-default">
             <tr class="text-left">
               <th class="px-4 py-3 font-medium">Folio</th>
               <th class="px-4 py-3 font-medium">Sucursal</th>
@@ -253,13 +265,73 @@ async function confirmRequest(sale: ApiSale) {
               <!-- Panel: empleado solicita anulación (abre ticket) -->
               <tr v-if="!isAdmin && requestingId === s.id" class="bg-elevated/40">
                 <td :colspan="10" class="px-4 py-3">
-                  <!-- ...contenido sin cambios... -->
+                  <div class="flex flex-wrap items-start gap-3">
+                    <div class="flex-1">
+                      <p class="text-xs text-muted mb-1">
+                        Solicitar anulación para <strong>{{ s.folio }}</strong>
+                      </p>
+                      <UInput
+                        v-model="requestReason"
+                        placeholder="Motivo de la anulación…"
+                        class="max-w-md"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <UButton
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        :disabled="submittingRequest"
+                        @click="cancelRequest"
+                      >
+                        Cancelar
+                      </UButton>
+                      <UButton
+                        size="xs"
+                        color="warning"
+                        :loading="submittingRequest"
+                        @click="confirmRequest(s)"
+                      >
+                        Enviar solicitud
+                      </UButton>
+                    </div>
+                  </div>
                 </td>
               </tr>
               <!-- Panel de confirmación de anulación (admin) -->
               <tr v-if="isAdmin && voidingId === s.id" class="bg-elevated/40">
                 <td :colspan="10" class="px-4 py-3">
-                  <!-- ...contenido sin cambios... -->
+                  <div class="flex flex-wrap items-start gap-3">
+                    <div class="flex-1">
+                      <p class="text-xs text-muted mb-1">
+                        Anular <strong>{{ s.folio }}</strong>
+                      </p>
+                      <UInput
+                        v-model="voidReason"
+                        placeholder="Motivo (opcional)…"
+                        class="max-w-md"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <UButton
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        :disabled="submittingVoid"
+                        @click="cancelVoid"
+                      >
+                        Cancelar
+                      </UButton>
+                      <UButton
+                        size="xs"
+                        color="error"
+                        :loading="submittingVoid"
+                        @click="confirmVoid(s)"
+                      >
+                        Confirmar anulación
+                      </UButton>
+                    </div>
+                  </div>
                 </td>
               </tr>
             </template>
