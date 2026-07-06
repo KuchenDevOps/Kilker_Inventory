@@ -94,12 +94,7 @@ const allNav: NavEntry[] = [
           icon: 'i-lucide-users',
           roles: ['admin', 'empleado']
         },
-        {
-          label: 'Nuevo cliente',
-          to: '/clientes/nuevo',
-          icon: 'i-lucide-user-plus',
-          roles: ['admin', 'empleado']
-        }
+        
       ]
   },
   {
