@@ -69,7 +69,7 @@ export const ticketStatus = pgEnum('ticket_status', [
 
 export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
 
-export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta', 'pieza'])
+export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'])
 
 export const paymentMethod = pgEnum('payment_method', ['efectivo', 'tarjeta', 'transferencia'])
 
@@ -118,7 +118,7 @@ export const categories = pgTable('categories', {
   ...timestamps()
 }).enableRLS()
 
-/** Catálogo. En v1 solo `color` (texto libre) y `unit` (litro/galon/cubeta/pieza). */
+/** Catálogo. En v1 solo `color` (texto libre) y `unit` (litro/galon/cubeta/pieza,cuarto/tambo). */
 export const products = pgTable('products', {
   id: bigint('id', { mode: 'number' })
     .primaryKey()

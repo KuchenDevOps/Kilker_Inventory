@@ -7,7 +7,7 @@
 export type UserRole = 'admin' | 'empleado'
 
 /** Unidades de medida del catálogo (enum `product_unit`). */
-export const PRODUCT_UNITS = ['litro', 'galon', 'cubeta', 'pieza'] as const
+export const PRODUCT_UNITS = ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'] as const
 export type ProductUnit = (typeof PRODUCT_UNITS)[number]
 
 /** Etiquetas en español para cada unidad. */
@@ -15,7 +15,9 @@ export const UNIT_LABELS: Record<ProductUnit, string> = {
   litro: 'Litro',
   galon: 'Galón',
   cubeta: 'Cubeta',
-  pieza: 'Pieza'
+  pieza: 'Pieza',
+  cuarto: 'Cuarto',
+  tambo: 'Tambo'
 }
 
 /** Producto tal como lo devuelve `GET /api/products`. */
