@@ -131,6 +131,31 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
 function onReset() {
   Object.assign(state, emptyState())
 }
+
+const file = ref<File | null>(null)
+
+const handleFileUpload = (event: Event) => {
+  const target = event.target as HTMLInputElement | null
+  file.value = target?.files?.[0] ?? null
+}
+
+const submitCsv = async () => {
+  if (!file.value) return alert('Please select a file');
+
+  const formData = new FormData();
+  formData.append('csvFile', file.value);
+
+  try {
+    // $fetch automatically sets the multipart/form-data headers
+    const response = await $fetch('/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+    console.log('Success:', response);
+  } catch (error) {
+    console.error('Upload failed:', error);
+  }
+};
 </script>
 
 <template>
@@ -289,6 +314,10 @@ function onReset() {
             description="Los productos inactivos no cuentan para las métricas del dashboard."
           />
         </UFormField>
+            <div>
+    <input type="file" accept=".csv" @change="handleFileUpload" />
+        <UButton  type="submit" @click="submitCsv">Upload CSV</Ubutton>
+    </div>
       </UCard>
 
       <div class="flex flex-wrap justify-end gap-3">

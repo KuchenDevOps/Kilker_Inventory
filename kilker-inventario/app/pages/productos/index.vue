@@ -55,6 +55,31 @@ const filtered = computed(() => {
       (p.color ?? '').toLowerCase().includes(q)
   )
 })
+
+const file = ref<File | null>(null)
+
+const handleFileUpload = (event: Event) => {
+  const target = event.target as HTMLInputElement | null
+  file.value = target?.files?.[0] ?? null
+}
+
+const submitCsv = async () => {
+  if (!file.value) return alert('Please select a file');
+
+  const formData = new FormData();
+  formData.append('csvFile', file.value);
+
+  try {
+    // $fetch automatically sets the multipart/form-data headers
+    const response = await $fetch('/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+    console.log('Success:', response);
+  } catch (error) {
+    console.error('Upload failed:', error);
+  }
+};
 </script>
 
 <template>
@@ -209,11 +234,16 @@ const filtered = computed(() => {
                     </table>
                   </td>
                 </tr>
+                    <div>
+    <input type="file" accept=".csv" @change="handleFileUpload" />
+    <button @click="submitCsv">Upload CSV</button>
+  </div>
               </template>
             </template>
           </tbody>
         </table>
       </div>
+    
     </UCard>
   </UContainer>
 </template>
