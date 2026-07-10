@@ -55,6 +55,8 @@ const filtered = computed(() => {
       (p.color ?? '').toLowerCase().includes(q)
   )
 })
+
+
 </script>
 
 <template>
@@ -209,11 +211,13 @@ const filtered = computed(() => {
                     </table>
                   </td>
                 </tr>
+                
               </template>
             </template>
           </tbody>
         </table>
       </div>
+    
     </UCard>
   </UContainer>
 </template>

@@ -147,15 +147,18 @@ async function onSubmit() {
 
     <UCard>
       <form class="space-y-5" @submit.prevent="onSubmit">
+        
         <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="Producto" name="productId" required>
-            <USelect
-              v-model="state.productId"
-              :items="productItems"
-              :disabled="!canEdit"
-              placeholder="Selecciona un producto"
-              class="w-full"
-            />
+         <UFormField label="Producto" name="productId" required>
+          <USelectMenu
+            v-model="state.productId"
+            :items="productItems"
+            value-key="value"
+            :disabled="!canEdit"
+            searchable
+            placeholder="Buscar producto por SKU o nombre…"
+            class="w-full"
+          />
           </UFormField>
 
           <UFormField label="Sucursal" name="storeId" :required="isAdmin">
