@@ -27,8 +27,14 @@ export default defineEventHandler(async (event) => {
   }
 
   // Rango de fechas (created_at): from inclusivo, to exclusivo.
-  if (query.from) filters.push(gte(stockMovements.createdAt, new Date(String(query.from))))
-  if (query.to) filters.push(lt(stockMovements.createdAt, new Date(String(query.to))))
+    if (query.from) {
+      const fromDate = new Date(String(query.from)).toISOString().slice(0, 10)
+      filters.push(gte(stockMovements.supplierInvoiceDate, fromDate))
+    }
+    if (query.to) {
+      const toDate = new Date(String(query.to)).toISOString().slice(0, 10)
+      filters.push(lt(stockMovements.supplierInvoiceDate, toDate))
+    }
 
   // Búsqueda de texto: pre-resolvemos ids que hacen match en tablas relacionadas
   // (producto/sucursal/empleado) y filtramos con inArray para no abandonar el
@@ -72,7 +78,7 @@ export default defineEventHandler(async (event) => {
 
   const rows = await db.query.stockMovements.findMany({
     where: and(...filters),
-    orderBy: [desc(stockMovements.createdAt)],
+    orderBy: [desc(stockMovements.supplierInvoiceDate), desc(stockMovements.createdAt)],
     limit: 200,
     with: {
       product: { columns: { name: true, sku: true, unit: true } },

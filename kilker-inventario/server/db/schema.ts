@@ -409,6 +409,19 @@ export const customers = pgTable(
   (t) => [unique('customers_rfc_uniq').on(t.rfc)]
 ).enableRLS()
 
+export const expenses = pgTable('expenses', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey(),
+  supplier: text('supplier').notNull(),
+  supplierInvoiceNumber: text('supplier_invoice_number').notNull(),
+  reason: text('reason').notNull(),
+  amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
+  note: text('note'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}).enableRLS()
+
 
 
 // ───────────────────────────────────────────────

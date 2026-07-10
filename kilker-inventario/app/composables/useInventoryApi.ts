@@ -132,7 +132,7 @@ export function useSales() {
     }
   }
 
-  // ✅ Mejor: Usar un solo watcher que se ejecuta siempre
+  //  Mejor: Usar un solo watcher que se ejecuta siempre
   if (import.meta.client) {
     // Watcher para cambios en los filtros
     watch([user, status, storeId, from, to, search], () => {

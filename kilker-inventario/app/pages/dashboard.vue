@@ -2,7 +2,6 @@
 import { UNIT_LABELS } from '~/types/inventario'
 import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
 
-import { createApp } from 'vue'   
 
 
 useHead({ title: 'Dashboard · Inventario Kilker' })
@@ -106,6 +105,13 @@ watch([periodFrom, periodTo], () => {
   refreshAllData()
 })
 
+watch(selectedStoreId, (id) => {
+  monthlyStoreId.value = id || undefined
+  refreshMonthly()
+})
+
+
+
 // --- MANEJADOR DE VISIBILIDAD ---
 let visibilityTimeoutId: ReturnType<typeof setTimeout> | null = null
 let lastRefreshTime = ref(Date.now())
@@ -137,16 +143,6 @@ const handleVisibilityChange = () => {
 // --- REFRESCO PERIÓDICO ---
 let intervalId: ReturnType<typeof setInterval> | null = null
 
-const startPeriodicRefresh = () => {
-  if (intervalId) clearInterval(intervalId)
-  intervalId = setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      console.log('⏰ Refresco periódico automático')
-      refreshAllData()
-      lastRefreshTime.value = Date.now()
-    }
-  }, 300000)
-}
 
 // --- CICLO DE VIDA ---
 onMounted(async () => {
@@ -154,7 +150,8 @@ onMounted(async () => {
   await refreshAllData()
   lastRefreshTime.value = Date.now()
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  startPeriodicRefresh()
+    refreshMonthly()
+
 })
 
 onUnmounted(() => {
@@ -257,6 +254,18 @@ const recentProducts = computed(() => {
     ? products.value.filter((p) => p.byStore.some((b) => b.storeId === selectedStoreId.value))
     : products.value
   return list.slice(0, 6)
+})
+
+const {
+  data: monthlyInventory,
+  pending: loadingMonthly,
+  month: monthlyMonth,
+  storeId: monthlyStoreId,
+  refresh: refreshMonthly
+} = useMonthlyInventory()
+
+watch(monthlyMonth, () => {
+  refreshMonthly()
 })
 
 // --- MÉTRICAS ---
@@ -410,6 +419,26 @@ const isLoading = computed(
           <UIcon :name="m.icon" :class="['size-7 shrink-0', m.color]" />
         </div>
       </UCard>
+      <UCard>
+  <template #header>
+    <div class="flex items-center gap-2">
+      <UIcon name="i-lucide-calendar-range" class="size-5 text-primary" />
+      <h2 class="font-semibold">Cierre de inventario por mes</h2>
+      <UInput v-model="monthlyMonth" type="month" class="ml-auto w-40" />
+    </div>
+  </template>
+
+  <p v-if="loadingMonthly" class="text-sm text-muted py-6 text-center">Calculando…</p>
+  <div v-else-if="monthlyInventory" class="grid gap-4 sm:grid-cols-3">
+  
+    <div>
+      <p class="text-sm text-muted">Inventario al cierre</p>
+      <p class="mt-1 text-xl font-semibold text-success">
+        {{ currency.format(monthlyInventory.endingInventoryValue) }}
+      </p>
+    </div>
+  </div>
+</UCard>
     </section>
 
     <UCard>
