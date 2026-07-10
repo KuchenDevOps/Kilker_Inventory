@@ -347,3 +347,12 @@ export interface CustomerInput {
   email?: string | null
   phone?: string | null
 }
+
+/** Valuación de inventario de un mes (`GET /api/reports/monthly-inventory`). */
+export interface ApiMonthlyInventory {
+  month: string
+  entriesValue: number
+  exitsValue: number
+  endingInventoryValue: number
+  productsWithStock: number
+}
