@@ -239,7 +239,10 @@ export interface ApiSale {
   status: InvoiceStatus
   paymentMethod: PaymentMethod
   /** numeric → string. Usar Number() para operar. */
-  totalAmount: string
+  subtotalAmount: string
+  discountPct: string
+  discountAmount: string
+  totalAmount: string  
   note: string | null
   itemCount: number
   createdByName: string | null
@@ -248,6 +251,22 @@ export interface ApiSale {
   voidReason: string | null
   /** true si hay un ticket de corrección ABIERTO para esta venta. */
   pendingCorrection?: boolean
+}
+
+export interface ApiSaleItem {
+  id: number
+  productId: number
+  productName: string | null
+  productSku: string | null
+  unit: ProductUnit | null
+  quantity: string
+  unitPrice: string
+  lineTotal: string
+}
+
+/** Detalle completo de una venta (`GET /api/sales/:id`). */
+export interface ApiSaleDetail extends ApiSale {
+  items: ApiSaleItem[]
 }
 
 /** Entrada de stock tal como la lista `GET /api/movements`. Los numeric → string. */
