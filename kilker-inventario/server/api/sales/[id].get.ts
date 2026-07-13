@@ -1,54 +1,73 @@
 // ───────────────────────────────────────────────
-//  GET /api/sales/:id — detalle de una venta
+//  GET /api/sales/:id — detalle de una venta (ticket)
 // ───────────────────────────────────────────────
-// Cabecera + líneas. Empleado: su tienda. Admin: cualquiera.
-import { eq } from 'drizzle-orm'
+// Empleado: solo ventas de su tienda. Admin: cualquiera.
+import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { invoices } from '../../db/schema'
+import { invoices, tickets } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
-
   const id = Number(getRouterParam(event, 'id'))
-  if (!id) throw createError({ statusCode: 400, statusMessage: 'id inválido' })
+  if (!id) {
+    throw createError({ statusCode: 400, statusMessage: 'ID inválido' })
+  }
 
   const db = useDb()
-  const inv = await db.query.invoices.findFirst({
+
+  const invoice = await db.query.invoices.findFirst({
     where: eq(invoices.id, id),
     with: {
       store: { columns: { code: true, name: true } },
+      customer: { columns: { name: true } },
       createdBy: { columns: { fullName: true } },
-      voidedBy: { columns: { fullName: true } },
       items: {
-        with: { product: { columns: { sku: true, name: true, unit: true } } }
+        with: {
+          product: { columns: { name: true, sku: true, unit: true } }
+        }
       }
     }
   })
-  if (!inv) throw createError({ statusCode: 404, statusMessage: 'Venta no existe' })
 
-  if (profile.role === 'empleado' && profile.storeId !== inv.storeId) {
-    throw createError({ statusCode: 403, statusMessage: 'Venta de otra tienda' })
+  if (!invoice) {
+    throw createError({ statusCode: 404, statusMessage: 'Venta no existe' })
   }
 
+  // Empleado solo puede ver ventas de su propia tienda.
+  if (profile.role === 'empleado' && invoice.storeId !== profile.storeId) {
+    throw createError({ statusCode: 403, statusMessage: 'No puedes ver ventas de otra sucursal' })
+  }
+
+  const openTicket = await db.query.tickets.findFirst({
+    where: and(eq(tickets.invoiceId, invoice.id), eq(tickets.status, 'abierto'))
+  })
+
   return {
-    id: inv.id,
-    folio: inv.folio,
-    storeId: inv.storeId,
-    storeCode: inv.store?.code ?? null,
-    storeName: inv.store?.name ?? null,
-    status: inv.status,
-    totalAmount: inv.totalAmount,
-    note: inv.note,
-    createdByName: inv.createdBy?.fullName ?? null,
-    issuedAt: inv.issuedAt,
-    voidedAt: inv.voidedAt,
-    voidReason: inv.voidReason,
-    voidedByName: inv.voidedBy?.fullName ?? null,
-    items: inv.items.map((it) => ({
+    id: invoice.id,
+    folio: invoice.folio,
+    storeId: invoice.storeId,
+    storeCode: invoice.store?.code ?? null,
+    storeName: invoice.store?.name ?? null,
+    customerId: invoice.customerId,
+    customerName: invoice.customer?.name ?? null,
+    channel: invoice.channel,
+    status: invoice.status,
+    paymentMethod: invoice.paymentMethod,
+    discountPct: invoice.discountPct,
+    discountAmount: invoice.discountAmount,
+    totalAmount: invoice.totalAmount,
+    note: invoice.note,
+    itemCount: invoice.items.length,
+    createdByName: invoice.createdBy?.fullName ?? null,
+    issuedAt: invoice.issuedAt,
+    voidedAt: invoice.voidedAt,
+    voidReason: invoice.voidReason,
+    pendingCorrection: !!openTicket,
+    items: invoice.items.map((it) => ({
       id: it.id,
       productId: it.productId,
-      sku: it.product?.sku ?? null,
-      name: it.product?.name ?? null,
+      productName: it.product?.name ?? null,
+      productSku: it.product?.sku ?? null,
       unit: it.product?.unit ?? null,
       quantity: it.quantity,
       unitPrice: it.unitPrice,
