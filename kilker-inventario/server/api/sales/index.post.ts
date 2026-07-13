@@ -27,6 +27,7 @@ interface SaleBody {
   paymentMethod?: string
   items: SaleItem[]
   discount?: number
+  issuedAt?: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -130,20 +131,34 @@ export default defineEventHandler(async (event) => {
       .where(eq(invoices.storeId, storeId))
     const folio = `${store.code}-${String(Number(folioRow?.count ?? 0) + 1).padStart(4, '0')}`
 
-    const [invoice] = await tx
-      .insert(invoices)
-      .values({
-        folio,
-        storeId,
-        customerId,
-        channel,
-        createdBy: profile.id,
-        status: 'emitida',
-        paymentMethod,
-        note: body.note ?? null,
-        totalAmount: String(totalAmount)
-      })
-      .returning()
+    // Fecha de la venta: si no se especifica, usa el momento actual (default de la columna).
+    let issuedAt: Date | undefined
+    if (body?.issuedAt) {
+      const parsed = new Date(body.issuedAt)
+      if (Number.isNaN(parsed.getTime())) {
+        throw createError({ statusCode: 400, statusMessage: 'Fecha de venta inválida' })
+      }
+     
+      issuedAt = parsed
+    }
+
+   const [invoice] = await tx
+  .insert(invoices)
+  .values({
+    folio,
+    storeId,
+    customerId,
+    channel,
+    createdBy: profile.id,
+    status: 'emitida',
+    paymentMethod,
+    note: body.note ?? null,
+    discountPct: String(discountPct),
+    discountAmount: String(discountAmount),
+    totalAmount: String(totalAmount),
+    ...(issuedAt ? { issuedAt } : {})
+  })
+  .returning()
     if (!invoice) {
       throw createError({ statusCode: 500, statusMessage: 'No se pudo crear la factura' })
     }
