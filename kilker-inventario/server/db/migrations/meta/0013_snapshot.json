@@ -1,6 +1,6 @@
 {
-  "id": "2011691a-e4ba-4e34-bb9e-7382f3be7852",
-  "prevId": "91a05469-7061-4bd8-b79e-348101dcf75b",
+  "id": "c6fecff4-0c09-4170-b29d-a6df9e2dfb89",
+  "prevId": "2011691a-e4ba-4e34-bb9e-7382f3be7852",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -412,6 +412,18 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "retention_iva": {
+          "name": "retention_iva",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retention_isr": {
+          "name": "retention_isr",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
         },
         "amount": {
           "name": "amount",

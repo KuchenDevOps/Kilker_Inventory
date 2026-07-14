@@ -1,5 +1,5 @@
 // GET /api/reports/monthly-inventory
-import { and, asc, eq, gte, lt } from 'drizzle-orm'
+import { and, asc, eq, gte, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, stockMovements } from '../../db/schema'
 
@@ -12,14 +12,12 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Parámetro month requerido (formato YYYY-MM)' })
   }
 
-  // Fechas de inicio y fin del mes (como Date)
   const monthStart = new Date(`${month}-01T00:00:00Z`)
   const monthEnd = new Date(monthStart)
   monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1)
 
-  // Versiones string en formato YYYY-MM-DD para comparar con supplierInvoiceDate (tipo date)
-  const monthStartStr = monthStart.toISOString().slice(0, 10) // "YYYY-MM-DD"
-  const monthEndStr = monthEnd.toISOString().slice(0, 10)   // "YYYY-MM-DD"
+  const monthStartStr = monthStart.toISOString().slice(0, 10)
+  const monthEndStr = monthEnd.toISOString().slice(0, 10)
 
   const db = useDb()
 
@@ -33,14 +31,15 @@ export default defineEventHandler(async (event) => {
     storeId = Number(query.storeId) || undefined
   }
 
-  // Todos los movimientos hasta el cierre del mes (usando supplierInvoiceDate)
-const movementFilters = [
-  lt(stockMovements.supplierInvoiceDate, monthEndStr)  // ← usar string
-]  
-if (storeId) movementFilters.push(eq(stockMovements.storeId, storeId))
+  // IMPORTANTE: ya NO filtramos por supplierInvoiceDate aquí.
+  // Ese filtro se aplicaba a TODOS los tipos de movimiento, pero solo
+  // 'entrada' tiene supplierInvoiceDate poblado; 'venta' y 'anulacion'
+  // vienen con NULL, así que `lt(...)` las descartaba silenciosamente.
+  const movementFilters = []
+  if (storeId) movementFilters.push(eq(stockMovements.storeId, storeId))
 
   const allMovements = await db.query.stockMovements.findMany({
-    where: and(...movementFilters),
+    where: movementFilters.length > 0 ? and(...movementFilters) : undefined,
     orderBy: [asc(stockMovements.supplierInvoiceDate), asc(stockMovements.createdAt)],
     columns: {
       productId: true,
@@ -49,7 +48,8 @@ if (storeId) movementFilters.push(eq(stockMovements.storeId, storeId))
       quantity: true,
       unitValue: true,
       totalValue: true,
-      supplierInvoiceDate: true // lo necesitamos para filtrar entradas del mes
+      supplierInvoiceDate: true,
+      createdAt: true
     },
     with: { product: { columns: { name: true, sku: true, cost: true } } }
   })
@@ -67,8 +67,20 @@ if (storeId) movementFilters.push(eq(stockMovements.storeId, storeId))
   let productsWithStock = 0
 
   for (const movs of groups.values()) {
+    // Recorte "hasta el cierre del mes", por tipo:
+    // - entrada: usa supplierInvoiceDate (fecha de factura del proveedor)
+    // - venta/anulacion: usa createdAt, porque no tienen supplierInvoiceDate
+    const cutoffMovs = movs.filter((m) => {
+      if (m.type === 'entrada') {
+        return m.supplierInvoiceDate
+          ? m.supplierInvoiceDate < monthEndStr
+          : m.createdAt < monthEnd
+      }
+      return m.createdAt < monthEnd
+    })
+
     // Entradas ocurridas DENTRO del mes (según supplierInvoiceDate)
-    for (const m of movs) {
+    for (const m of cutoffMovs) {
       if (
         m.type === 'entrada' &&
         m.supplierInvoiceDate &&
@@ -79,14 +91,14 @@ if (storeId) movementFilters.push(eq(stockMovements.storeId, storeId))
       }
     }
 
-    // Cantidad neta acumulada hasta el CIERRE del mes.
-    const netQty = movs.reduce((sum, m) => sum + Number(m.quantity), 0)
+    // Cantidad neta acumulada hasta el cierre del mes
+    const netQty = cutoffMovs.reduce((sum, m) => sum + Number(m.quantity), 0)
     if (netQty <= 0) continue
 
-    // FIFO usando solo movimientos hasta ese corte (ya ordenados por supplierInvoiceDate)
-    const entries = movs.filter((m) => m.type === 'entrada')
-    const outputs = movs.filter((m) => m.type === 'venta' || m.type === 'ajuste')
-    let remainingToSell = outputs.reduce((sum, m) => sum + Math.abs(Number(m.quantity)), 0)
+    // FIFO usando solo movimientos hasta ese corte
+   const entries = cutoffMovs.filter((m) => m.type === 'entrada')
+    const totalEntradas = entries.reduce((sum, e) => sum + Number(e.quantity), 0)
+    let remainingToSell = Math.max(0, totalEntradas - netQty)
 
     let totalCost = 0
     let totalQty = 0
@@ -115,7 +127,6 @@ if (storeId) movementFilters.push(eq(stockMovements.storeId, storeId))
     productsWithStock++
   }
 
-  // Salidas (ventas emitidas) dentro del mes — se mantiene con issuedAt
   const invoiceFilters = [
     eq(invoices.status, 'emitida'),
     gte(invoices.issuedAt, monthStart),

@@ -78,16 +78,16 @@ export default defineEventHandler(async (event) => {
           eq(mov.storeId, storeId),
           eq(mov.type, 'entrada')
         ),
-        orderBy: (mov, { asc }) => [asc(mov.createdAt)],
+        orderBy: (mov, { asc }) => [asc(mov.supplierInvoiceDate), asc(mov.createdAt)],
         columns: {
           id: true,
           quantity: true,
           unitValue: true,
           totalValue: true,
+          supplierInvoiceDate: true,
           createdAt: true
         }
       })
-
       // Si no hay entradas, usar el costo del producto
       if (entries.length === 0) {
         return {
@@ -106,65 +106,57 @@ export default defineEventHandler(async (event) => {
       }
 
       // 2. Obtener TODAS las salidas (ventas y ajustes negativos) de este producto/sucursal
-      const outputs = await db.query.stockMovements.findMany({
-        where: (mov, { and, eq, or }) => and(
-          eq(mov.productId, productId),
-          eq(mov.storeId, storeId),
-          or(
-            eq(mov.type, 'venta'),
-            eq(mov.type, 'ajuste')
-          )
-        ),
-        orderBy: (mov, { asc }) => [asc(mov.createdAt)],
-        columns: {
-          id: true,
-          quantity: true,
-          createdAt: true
-        }
-      })
+        const outputs = await db.query.stockMovements.findMany({
+          where: (mov, { and, eq, or }) => and(
+            eq(mov.productId, productId),
+            eq(mov.storeId, storeId),
+            or(
+              eq(mov.type, 'venta'),
+              eq(mov.type, 'ajuste')
+            )
+          ),
+          orderBy: (mov, { asc }) => [asc(mov.supplierInvoiceDate), asc(mov.createdAt)],
+          columns: {
+            id: true,
+            quantity: true,
+            supplierInvoiceDate: true,
+            createdAt: true
+          }
+        })
 
-      // 3. Aplicar FIFO (First In, First Out)
-      // Las primeras entradas son las primeras en salir
- let remainingToSell = outputs.reduce((sum, s) => sum + Math.abs(Number(s.quantity)), 0)
+    // 3. Aplicar FIFO (First In, First Out)
+      const totalEntradas = entries.reduce((sum, e) => sum + Number(e.quantity), 0)
+      // Cantidad que salió del stock de forma permanente = todo lo que entró
+      // menos lo que efectivamente queda ahora (ya neto de ventas, ajustes,
+      // anulaciones, o cualquier tipo futuro de movimiento).
+      let remainingToSell = Math.max(0, totalEntradas - availableQty)
       let totalCost = 0
       let totalQty = 0
       let usedEntries = 0
 
-      // Si no hay salidas, todo el stock viene de todas las entradas
       if (remainingToSell === 0) {
-        // Usar todas las entradas
         for (const entry of entries) {
           const entryQty = Number(entry.quantity)
           const entryUnitValue = Number(entry.unitValue)
-          
           totalCost += entryQty * entryUnitValue
           totalQty += entryQty
           usedEntries++
         }
       } else {
-        // Hay salidas, aplicar FIFO
         for (const entry of entries) {
           const entryQty = Number(entry.quantity)
           const entryUnitValue = Number(entry.unitValue)
-          
-          // Calcular cuánto de esta entrada aún está disponible
           let availableFromThisEntry = entryQty
-          
-          // Restar las salidas que consumen esta entrada (FIFO)
           if (remainingToSell > 0) {
             const consumed = Math.min(availableFromThisEntry, remainingToSell)
             availableFromThisEntry -= consumed
             remainingToSell -= consumed
           }
-          
-          // Si aún queda stock de esta entrada, sumarlo al costo total
           if (availableFromThisEntry > 0) {
             totalCost += availableFromThisEntry * entryUnitValue
             totalQty += availableFromThisEntry
             usedEntries++
           }
-          
-          // Si ya no hay más stock que cubrir, terminar
           if (remainingToSell <= 0 && totalQty >= availableQty) {
             break
           }
@@ -211,7 +203,6 @@ export default defineEventHandler(async (event) => {
   const filteredResults = results.filter(r => r !== null)
 
   // Log para depuración (opcional, eliminar en producción)
-  console.log(`📊 Costos promedio calculados para ${filteredResults.length} productos/sucursales`)
 
   return filteredResults
 })

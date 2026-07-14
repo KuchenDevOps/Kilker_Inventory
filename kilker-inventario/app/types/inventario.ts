@@ -330,6 +330,15 @@ export interface ApiAverageCost {
   totalCost: number
 }
 
+/** Valuación de inventario de un mes (`GET /api/reports/monthly-inventory`). */
+export interface ApiMonthlyInventory {
+  month: string
+  entriesValue: number
+  exitsValue: number
+  endingInventoryValue: number
+  productsWithStock: number
+}
+
 export interface ApiTopProduct {
   productId: number
   productName: string
@@ -367,11 +376,33 @@ export interface CustomerInput {
   phone?: string | null
 }
 
-/** Valuación de inventario de un mes (`GET /api/reports/monthly-inventory`). */
-export interface ApiMonthlyInventory {
-  month: string
-  entriesValue: number
-  exitsValue: number
-  endingInventoryValue: number
-  productsWithStock: number
+
+
+/** Gasto operativo (`GET /api/expenses`). */
+export interface ApiExpense {
+  id: number
+  storeId: number
+  storeCode: string | null
+  storeName: string | null
+  supplier: string
+  supplierInvoiceNumber: string
+  reason: string
+  retentionIva: string | null
+  retentionIsr: string | null
+  amount: string
+  paidAt: string
+  note: string | null
+  createdByName: string | null
+  createdAt: string
+}
+
+/** Cuerpo para registrar un gasto (`POST /api/expenses`). */
+export interface NewExpenseInput {
+  storeId: number
+  supplier: string
+  supplierInvoiceNumber: string
+  reason: string
+  amount: number
+  paidAt: string
+  note?: string | null
 }

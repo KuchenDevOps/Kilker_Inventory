@@ -98,6 +98,18 @@ const allNav: NavEntry[] = [
       ]
   },
   {
+    section: 'Gastos',
+    icon: 'i-lucide-credit-card',
+    children: [
+      {
+        label: 'Gastos operativos',
+        to: '/gastos',
+        icon: 'i-lucide-credit-card',
+        roles: ['admin', 'empleado']
+      }
+    ]
+  },
+  {
     section: 'Administración',
     icon: 'i-lucide-shield',
     children: [

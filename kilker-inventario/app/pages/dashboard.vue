@@ -34,6 +34,15 @@ const {
   refresh: refreshSales
 } = useSales()
 
+const {
+  expenses,
+  pending: loadingExpenses,
+  storeId: expensesStoreId,
+  from: expensesFrom,
+  to: expensesTo,
+  refresh: refreshExpenses
+} = useExpenses()
+
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
@@ -72,6 +81,8 @@ const refreshAllData = async () => {
     salesStoreId.value = storeId
     averageCostsStoreId.value = storeId
     topProductsStoreId.value = storeId
+    expensesStoreId.value = storeId
+    monthlyStoreId.value = storeId
 
     movementsFrom.value = periodFrom.value
     movementsTo.value = periodTo.value
@@ -79,12 +90,17 @@ const refreshAllData = async () => {
     salesTo.value = periodTo.value
     topProductsFrom.value = periodFrom.value
     topProductsTo.value = periodTo.value
+    expensesFrom.value = periodFrom.value
+    expensesTo.value = periodTo.value
+    monthlyMonth.value = derivedMonth.value
 
     await Promise.all([
       refreshMovements(),
       refreshSales(),
       refreshAverageCosts(),
-      refreshTopProducts()
+      refreshTopProducts(),
+      refreshExpenses(),
+      refreshMonthly()
     ])
   } catch (error) {
     console.error('Error al refrescar datos:', error)
@@ -105,10 +121,7 @@ watch([periodFrom, periodTo], () => {
   refreshAllData()
 })
 
-watch(selectedStoreId, (id) => {
-  monthlyStoreId.value = id || undefined
-  refreshMonthly()
-})
+
 
 
 
@@ -234,6 +247,10 @@ const salesValue = computed(() =>
     .reduce((sum, s) => sum + Number(s.totalAmount), 0)
 )
 
+const totalExpenses = computed(() =>
+  expenses.value.reduce((sum, e) => sum + Number(e.amount), 0)
+)
+
 const totalLoses = computed(() => salesValue.value - entryValue.value)
 
 const activeStores = computed(() => stores.value.filter((s) => s.isActive).length)
@@ -264,10 +281,21 @@ const {
   refresh: refreshMonthly
 } = useMonthlyInventory()
 
-watch(monthlyMonth, () => {
-  refreshMonthly()
+// Deriva YYYY-MM desde el filtro de periodo global. Si no hay periodo elegido
+// ("Todo"), cae al mes calendario actual como default razonable.
+const derivedMonth = computed(() => {
+  if (periodFrom.value) return periodFrom.value.slice(0, 7)
+  return new Date().toISOString().slice(0, 7)
 })
 
+watch(
+  derivedMonth,
+  (m) => {
+    monthlyMonth.value = m
+    refreshMonthly()
+  },
+  { immediate: true }
+)
 // --- MÉTRICAS ---
 const totalProducts = computed(() => products.value.length)
 const activeProducts = computed(() => products.value.filter((p) => p.isActive).length)
@@ -293,17 +321,17 @@ const metrics = computed(() => {
       loading: loadingProducts.value,
       globalOnly: false
     },
-{
-  label: 'Valor de inventario (costo por sucursal)',
-  value: currency.format(inventoryValue.value),
-  hint: selectedStoreId.value
-    ? `costo promedio de ${stores.value.find((s) => s.id === selectedStoreId.value)?.code ?? 'sucursal'}`
-    : 'costo promedio por sucursal',
-  icon: 'i-lucide-banknote',
-  color: 'text-success',
-  loading: loadingProducts.value || loadingAverageCosts.value,
-  globalOnly: false
-},
+// {
+//   label: 'Valor de inventario (costo por sucursal)',
+//   value: currency.format(inventoryValue.value),
+//   hint: selectedStoreId.value
+//     ? `costo promedio de ${stores.value.find((s) => s.id === selectedStoreId.value)?.code ?? 'sucursal'}`
+//     : 'costo promedio por sucursal',
+//   icon: 'i-lucide-banknote',
+//   color: 'text-success',
+//   loading: loadingProducts.value || loadingAverageCosts.value,
+//   globalOnly: false
+// },
     {
       label: 'Sucursales',
       value: number.format(activeStores.value),
@@ -329,6 +357,15 @@ const metrics = computed(() => {
       icon: 'i-lucide-arrow-down-right',
       color: 'text-error',
       loading: loadingSales.value,
+      globalOnly: false
+    },
+    {
+      label: 'Gastos',
+      value: currency.format(totalExpenses.value),
+      hint: 'en el periodo',
+      icon: 'i-lucide-credit-card',
+      color: 'text-warning',
+      loading: loadingExpenses.value,
       globalOnly: false
     }
   ]
@@ -364,7 +401,8 @@ const isLoading = computed(
     loadingMovements.value ||
     loadingSales.value ||
     loadingAverageCosts.value ||
-    loadingTopProducts.value
+    loadingTopProducts.value ||
+    loadingExpenses.value
 )
 </script>
 
@@ -419,18 +457,17 @@ const isLoading = computed(
           <UIcon :name="m.icon" :class="['size-7 shrink-0', m.color]" />
         </div>
       </UCard>
-      <UCard>
+   <UCard>
   <template #header>
     <div class="flex items-center gap-2">
       <UIcon name="i-lucide-calendar-range" class="size-5 text-primary" />
       <h2 class="font-semibold">Cierre de inventario por mes</h2>
-      <UInput v-model="monthlyMonth" type="month" class="ml-auto w-40" />
+      <span class="ml-auto text-xs text-muted">{{ derivedMonth }}</span>
     </div>
   </template>
 
   <p v-if="loadingMonthly" class="text-sm text-muted py-6 text-center">Calculando…</p>
   <div v-else-if="monthlyInventory" class="grid gap-4 sm:grid-cols-3">
-  
     <div>
       <p class="text-sm text-muted">Inventario al cierre</p>
       <p class="mt-1 text-xl font-semibold text-success">
@@ -439,7 +476,7 @@ const isLoading = computed(
     </div>
   </div>
 </UCard>
-    </section>
+</section>
 
     <UCard>
   <template #header>
