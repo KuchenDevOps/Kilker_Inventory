@@ -409,18 +409,33 @@ export const customers = pgTable(
   (t) => [unique('customers_rfc_uniq').on(t.rfc)]
 ).enableRLS()
 
-export const expenses = pgTable('expenses', {
-  id: bigint('id', { mode: 'number' })
-    .primaryKey(),
-  supplier: text('supplier').notNull(),
-  supplierInvoiceNumber: text('supplier_invoice_number').notNull(),
-  reason: text('reason').notNull(),
-  amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
-  note: text('note'),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-}).enableRLS()
+export const expenses = pgTable(
+  'expenses',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+    supplier: text('supplier').notNull(),
+    supplierInvoiceNumber: text('supplier_invoice_number').notNull(),
+    reason: text('reason').notNull(),
+    retentionIva: numeric('retention_iva', { precision: 14, scale: 2 }),
+    retentionIsr: numeric('retention_isr', { precision: 14, scale: 2 }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    // Fecha real del pago (puede ser distinta a cuándo se capturó en el sistema).
+    paidAt: date('paid_at').notNull(),
+    note: text('note'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [index('expenses_store_paid_idx').on(t.storeId, t.paidAt)]
+).enableRLS()
 
 
 
@@ -617,6 +632,17 @@ export const cashCloseoutsRelations = relations(cashCloseouts, ({ one }) => ({
   })
 }))
 
+export const expensesRelations = relations(expenses, ({ one }) => ({
+  store: one(stores, {
+    fields: [expenses.storeId],
+    references: [stores.id]
+  }),
+  createdBy: one(profiles, {
+    fields: [expenses.createdBy],
+    references: [profiles.id]
+  })
+}))
+
 // ───────────────────────────────────────────────
 //  TIPOS INFERIDOS (select / insert)
 // ───────────────────────────────────────────────
@@ -646,3 +672,5 @@ export type CashCloseout = typeof cashCloseouts.$inferSelect
 export type NewCashCloseout = typeof cashCloseouts.$inferInsert
 export type Customer = typeof customers.$inferSelect
 export type NewCustomer = typeof customers.$inferInsert
+export type Expense = typeof expenses.$inferSelect
+export type NewExpense = typeof expenses.$inferInsert
