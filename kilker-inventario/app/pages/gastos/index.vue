@@ -276,109 +276,106 @@ const formTotalConIva = computed(
       </div>
     </UCard>
 
-    <UModal v-model:open="showModal">
-      <template #content>
-            <UCard class="max-h-[90vh] flex flex-col">
-          <template #header>
-            <h2 class="font-semibold">{{ editingId != null ? 'Editar gasto' : 'Nuevo gasto' }}</h2>
-          </template>
-          <div class="flex-1 overflow-y-auto p-1">
-
-          <form class="space-y-4" @submit.prevent="onSubmit">
-            <UFormField v-if="isAdmin" label="Sucursal" required>
-              <USelect v-model="form.storeId" :items="storeItems" placeholder="Selecciona una sucursal" class="w-full" />
-                </UFormField>
-
-                <UFormField label="Fecha de pago" required>
-                  <UInput v-model="form.paidAt" type="date" class="w-full" />
-                </UFormField>
-            <UFormField label="Proveedor" required>
-              <UInput v-model="form.supplier" placeholder="Nombre del proveedor" class="w-full" />
-            </UFormField>
-            <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Número de factura" required>
-                <UInput v-model="form.supplierInvoiceNumber" placeholder="A-12345" class="w-full" />
-              </UFormField>
-              <UFormField label="Monto (MXN)" required>
-                <UInputNumber
-                  v-model="form.amount"
-
-                  :min="0"
-                  :step="0.01"
-                  :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-                  placeholder="0"
-                  class="w-full"
-                />
-              </UFormField>
-            </div>
-  
-       
-     <div
-  v-if="form.amount"
-  class="rounded-lg border border-default bg-elevated/40 px-4 py-3 space-y-3 text-sm"
->
-  <div class="flex items-center justify-between gap-2">
-    <div>
-      <p class="text-muted text-xs">IVA (16%)</p>
-      <p class="font-medium tabular-nums text-warning">{{ currency.format(formIva) }}</p>
-    </div>
-    <UButton
-      size="xs"
-      variant="ghost"
-      color="neutral"
-      :icon="showRetentions ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-      @click="showRetentions = !showRetentions"
-    >
-      Retenciones
-    </UButton>
-  </div>
-
-        <div v-if="showRetentions" class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-default">
-          <UFormField label="Retención IVA">
-            <UInputNumber
-              v-model="form.retentionIVA"
-              :min="0"
-              :step="0.01"
-              :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-              placeholder="0"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Retención ISR">
-            <UInputNumber
-              v-model="form.retentionISR"
-              :min="0"
-              :step="0.01"
-              :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-              placeholder="0"
-              class="w-full"
-            />
-          </UFormField>
-        </div>
-
-        <div class="pt-2 border-t border-default">
-          <p class="text-muted text-xs">Total (IVA − retenciones)</p>
-          <p class="font-medium tabular-nums text-success">{{ currency.format(formTotalConIva) }}</p>
-        </div>
-      </div>
-            <UFormField label="Motivo" required>
-              <UInput v-model="form.reason" placeholder="Renta, luz, mantenimiento…" class="w-full" />
-            </UFormField>
-            <UFormField label="Nota">
-              <UTextarea v-model="form.note" placeholder="Observaciones (opcional)" class="w-full" />
-            </UFormField>
-            <div class="flex justify-end gap-2 pt-2">
-              <UButton type="button" variant="ghost" color="neutral" @click="showModal = false">
-                Cancelar
-              </UButton>
-              <UButton type="submit" color="primary" :loading="submitting" :disabled="!canSubmit">
-                Guardar
-              </UButton>
-            </div>
-          </form>
-        </div>
-        </UCard>
+   <UModal v-model:open="showModal">
+  <template #content>
+    <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
+      <template #header>
+        <h2 class="font-semibold">{{ editingId != null ? 'Editar gasto' : 'Nuevo gasto' }}</h2>
       </template>
-    </UModal>
+
+      <form class="space-y-2" @submit.prevent="onSubmit">
+        <UFormField v-if="isAdmin" label="Sucursal" required>
+          <USelect v-model="form.storeId" :items="storeItems" placeholder="Selecciona una sucursal" class="w-full" />
+        </UFormField>
+
+        <UFormField label="Fecha de pago" required>
+          <UInput v-model="form.paidAt" type="date" class="w-full" />
+        </UFormField>
+        <UFormField label="Proveedor" required>
+          <UInput v-model="form.supplier" placeholder="Nombre del proveedor" class="w-full" />
+        </UFormField>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="Número de factura" required>
+            <UInput v-model="form.supplierInvoiceNumber" placeholder="A-12345" class="w-full" />
+          </UFormField>
+          <UFormField label="Monto (MXN)" required>
+            <UInputNumber
+              v-model="form.amount"
+              :min="0"
+              :step="0.01"
+              :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+              placeholder="0"
+              class="w-full"
+            />
+          </UFormField>
+        </div>
+
+        <div
+          v-if="form.amount"
+          class="rounded-lg border border-default bg-elevated/40 px-4 py-3 space-y-3 text-sm"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <p class="text-muted text-xs">IVA (16%)</p>
+              <p class="font-medium tabular-nums text-warning">{{ currency.format(formIva) }}</p>
+            </div>
+            <UButton
+              size="xs"
+              variant="ghost"
+              color="neutral"
+              :icon="showRetentions ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+              @click="showRetentions = !showRetentions"
+            >
+              Retenciones
+            </UButton>
+          </div>
+
+          <div v-if="showRetentions" class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-default">
+            <UFormField label="Retención IVA">
+              <UInputNumber
+                v-model="form.retentionIVA"
+                :min="0"
+                :step="0.01"
+                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                placeholder="0"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="Retención ISR">
+              <UInputNumber
+                v-model="form.retentionISR"
+                :min="0"
+                :step="0.01"
+                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                placeholder="0"
+                class="w-full"
+              />
+            </UFormField>
+          </div>
+
+          <div class="pt-2 border-t border-default">
+            <p class="text-muted text-xs">Total (IVA − retenciones)</p>
+            <p class="font-medium tabular-nums text-success">{{ currency.format(formTotalConIva) }}</p>
+          </div>
+        </div>
+
+        <UFormField label="Motivo" required>
+          <UInput v-model="form.reason" placeholder="Renta, luz, mantenimiento…" class="w-full" />
+        </UFormField>
+        <UFormField label="Nota">
+          <UTextarea v-model="form.note" placeholder="Observaciones (opcional)" class="w-full" />
+        </UFormField>
+        <div class="flex justify-end gap-2 pt-2">
+          <UButton type="button" variant="ghost" color="neutral" @click="showModal = false">
+            Cancelar
+          </UButton>
+          <UButton type="submit" color="primary" :loading="submitting" :disabled="!canSubmit">
+            Guardar
+          </UButton>
+        </div>
+      </form>
+    </UCard>
+  </template>
+</UModal>
   </UContainer>
 </template>
