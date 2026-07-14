@@ -44,6 +44,15 @@ const paymentItems = (Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((v) =>
   label: PAYMENT_LABELS[v],
   value: v,
 }))
+// Fecha/hora de la venta. Vacío = ahora mismo (el backend usa defaultNow()).
+const issuedAt = ref('')
+
+// Fecha de la venta (solo día). Vacío = hoy (el backend usa defaultNow()).
+const saleDate = ref('')
+
+
+// Límite superior para el input: no permitir seleccionar una fecha futura.
+const maxIssuedAt = computed(() => new Date().toISOString().slice(0, 16))
 const lines = reactive<Line[]>([{ productId: undefined, quantity: undefined, unitPrice: undefined }])
 const submitting = ref(false)
 const discount = ref(0)
@@ -114,6 +123,23 @@ async function onSubmit() {
   if (!canSubmit.value) return
   submitting.value = true
   try {
+    // Si se eligió una fecha, se combina con la hora actual para no perder
+    // el orden cronológico real de captura dentro del mismo día.
+    let issuedAt: string | undefined
+    if (saleDate.value) {
+      const now = new Date()
+      const [year, month, day] = saleDate.value.split('-').map(Number)
+      const combined = new Date(
+        year,
+        month - 1,
+        day,
+        now.getHours(),
+        now.getMinutes(),
+        now.getSeconds()
+      )
+      issuedAt = combined.toISOString()
+    }
+
     const result = await apiFetch<SaleResult>('/api/sales', {
       method: 'POST',
       body: {
@@ -123,6 +149,7 @@ async function onSubmit() {
         note: note.value.trim() || undefined,
         paymentMethod: paymentMethod.value,
         discount: discount.value || undefined,
+        issuedAt,
         items: validLines.value.map((l) => ({
           productId: l.productId,
           quantity: l.quantity,
@@ -139,10 +166,10 @@ async function onSubmit() {
       color: 'success',
       icon: 'i-lucide-circle-check',
     })
-    // Reiniciar líneas (la tienda del empleado se mantiene).
     note.value = ''
     discount.value = 0
-    customerId.value = undefined,
+    customerId.value = undefined
+    saleDate.value = ''
 
     lines.splice(0, lines.length, {
       productId: undefined,
@@ -277,11 +304,24 @@ async function quickCreateCustomer() {
     <USelect v-model="channel" :items="channelItems" :disabled="!canOperate" class="w-full" />
   </UFormField>
 
+<UFormField
+  label="Fecha de la venta"
+  name="saleDate"
+  help="Déjalo vacío para usar hoy."
+>
+  <UInput
+    v-model="saleDate"
+    type="date"
+    :disabled="!canOperate"
+    class="w-full"
+  />
+</UFormField>
+
  <UFormField label="Cliente" name="customerId">
   <div class="flex gap-2">
     <USelectMenu
       v-model="customerId"
-      :items="customerItems"
+      :items="customerItems" 
       value-key="value"
       :disabled="!canOperate"
       searchable

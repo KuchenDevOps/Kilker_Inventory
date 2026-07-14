@@ -79,7 +79,6 @@ export default defineEventHandler(async (event) => {
   const rows = await db.query.stockMovements.findMany({
     where: and(...filters),
     orderBy: [desc(stockMovements.supplierInvoiceDate), desc(stockMovements.createdAt)],
-    limit: 200,
     with: {
       product: { columns: { name: true, sku: true, unit: true } },
       store: { columns: { code: true, name: true } },

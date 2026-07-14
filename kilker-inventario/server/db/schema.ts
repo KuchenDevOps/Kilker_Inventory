@@ -197,6 +197,8 @@ export const invoices = pgTable(
     channel: saleChannel('channel').notNull().default('mostrador'),
 
     note: text('note'),
+    discountPct: numeric('discount_pct', { precision: 5, scale: 2 }).notNull().default('0'),
+    discountAmount: numeric('discount_amount', { precision: 14, scale: 2 }).notNull().default('0'),
     totalAmount: numeric('total_amount', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),

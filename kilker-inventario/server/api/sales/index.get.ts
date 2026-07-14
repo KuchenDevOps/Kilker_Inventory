@@ -93,6 +93,8 @@ export default defineEventHandler(async (event) => {
     channel: inv.channel,
     status: inv.status,
     paymentMethod: inv.paymentMethod,
+    discountPct: inv.discountPct,
+  discountAmount: inv.discountAmount,
     totalAmount: inv.totalAmount,
     note: inv.note,
     itemCount: inv.items.length,
