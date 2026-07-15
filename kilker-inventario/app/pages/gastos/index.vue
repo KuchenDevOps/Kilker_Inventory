@@ -1,6 +1,8 @@
 <script setup lang="ts">
 useHead({ title: 'Gastos · Inventario Kilker' })
 
+import type { ApiExpense, ApiExpensePayment, PaymentMethod } from '~/types/inventario'
+import { PAYMENT_LABELS } from '~/types/inventario'
 const { expenses, pending, error, storeId, from, to, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me } = useMe()
@@ -186,6 +188,103 @@ const formIva = computed(() => (form.amount ?? 0) * IVA_RATE)
 const formTotalConIva = computed(
   () => (form.amount ?? 0) + formIva.value - (form.retentionIVA ?? 0) - (form.retentionISR ?? 0)
 )
+
+// ───────────────────────────────────────────────
+//  MODAL DE PAGOS
+// ───────────────────────────────────────────────
+const viewingExpense = ref<ApiExpense | null>(null)
+const showPaymentsModal = ref(false)
+const payments = ref<ApiExpensePayment[]>([])
+const loadingPayments = ref(false)
+
+const paymentMethodItems = (Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((v) => ({
+  label: PAYMENT_LABELS[v],
+  value: v
+}))
+
+const paymentForm = reactive({
+  amount: undefined as number | undefined,
+  paidAt: '',
+  method: 'efectivo' as PaymentMethod,
+  note: ''
+})
+const submittingPayment = ref(false)
+
+async function openPayments(e: ApiExpense) {
+  viewingExpense.value = e
+  showPaymentsModal.value = true
+  Object.assign(paymentForm, {
+    amount: undefined,
+    paidAt: new Date().toISOString().slice(0, 10),
+    method: 'efectivo',
+    note: ''
+  })
+  await refreshPayments()
+}
+
+async function refreshPayments() {
+  if (!viewingExpense.value) return
+  loadingPayments.value = true
+  try {
+    payments.value = await apiFetch<ApiExpensePayment[]>(
+      `/api/expenses/${viewingExpense.value.id}/payments`
+    )
+  } catch (e) {
+    toast.add({
+      title: 'No se pudieron cargar los pagos',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    loadingPayments.value = false
+  }
+}
+
+const canSubmitPayment = computed(
+  () =>
+    (paymentForm.amount ?? 0) > 0 &&
+    paymentForm.paidAt.length > 0 &&
+    !!viewingExpense.value &&
+    (paymentForm.amount ?? 0) <= viewingExpense.value.balance + 0.01
+)
+
+async function submitPayment() {
+  if (!canSubmitPayment.value || !viewingExpense.value) return
+  submittingPayment.value = true
+  try {
+    await apiFetch(`/api/expenses/${viewingExpense.value.id}/payments`, {
+      method: 'POST',
+      body: {
+        amount: paymentForm.amount,
+        paidAt: paymentForm.paidAt,
+        method: paymentForm.method,
+        note: paymentForm.note.trim() || undefined
+      }
+    })
+    toast.add({ title: 'Pago registrado', color: 'success', icon: 'i-lucide-circle-check' })
+    Object.assign(paymentForm, { amount: undefined, note: '' })
+    await refreshPayments()
+    await refresh() // actualiza saldo/estado en la tabla principal de gastos
+    // Sincroniza el saldo mostrado en el header del modal con el gasto ya actualizado.
+    const updated = expenses.value.find((x) => x.id === viewingExpense.value?.id)
+    if (updated) viewingExpense.value = updated
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo registrar el pago',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submittingPayment.value = false
+  }
+}
+
+const dayFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
+function fmtDay(s: string) {
+  return dayFmt.format(new Date(`${s}T00:00:00`))
+}
 </script>
 
 <template>
@@ -230,16 +329,17 @@ const formTotalConIva = computed(
         <table class="w-full text-sm">
           <thead class="text-muted border-b border-default">
             <tr class="text-left">
-                            <th class="px-4 py-3 font-medium">Fecha de pago</th>
+            <th class="px-4 py-3 font-medium">Fecha de Factura</th>
 
               <th class="px-4 py-3 font-medium">Proveedor</th>
               <th class="px-4 py-3 font-medium">Factura</th>
               <th class="px-4 py-3 font-medium">Motivo</th>
               <th class="px-4 py-3 font-medium text-right">Monto</th>
               <th class="px-4 py-3 font-medium">Sucursal</th>
-                            <th class="px-4 py-3 font-medium">Fecha Registro</th>
-
+              <th class="px-4 py-3 font-medium">Fecha Registro</th>
               <th class="px-4 py-3 font-medium">Nota</th>
+              <th class="px-4 py-3 font-medium">Estado</th>
+              <th class="px-4 py-3 font-medium text-right">Saldo</th>
               <th class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
@@ -261,7 +361,23 @@ const formTotalConIva = computed(
                             <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(e.createdAt) }}</td>
 
               <td class="px-4 py-3 text-muted truncate max-w-48">{{ e.note ?? '—' }}</td>
+              <td class="px-4 py-3">
+  <UBadge
+    :label="e.paymentStatus === 'pagado' ? 'Pagado' : e.paymentStatus === 'parcial' ? 'Parcial' : 'Pendiente'"
+    :color="e.paymentStatus === 'pagado' ? 'success' : e.paymentStatus === 'parcial' ? 'warning' : 'error'"
+    variant="subtle"
+  />
+    </td>
+    <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(e.balance) }}</td>
               <td class="px-4 py-3 text-right">
+                <div class="flex items-center justify-end gap-1">
+                  <UButton
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-wallet"
+                    @click="openPayments(e)"
+                  />
                 <UButton
                   size="xs"
                   color="neutral"
@@ -269,6 +385,7 @@ const formTotalConIva = computed(
                   icon="i-lucide-pencil"
                   @click="openEdit(e)"
                 />
+                </div>
               </td>
             </tr>
           </tbody>
@@ -374,6 +491,137 @@ const formTotalConIva = computed(
           </UButton>
         </div>
       </form>
+    </UCard>
+  </template>
+</UModal>
+<UModal v-model:open="showPaymentsModal">
+  <template #content>
+    <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-wallet" class="size-5 text-primary" />
+          <h2 class="font-semibold">{{ viewingExpense?.supplier }}</h2>
+          <UBadge
+            v-if="viewingExpense"
+            :label="
+              viewingExpense.paymentStatus === 'pagado'
+                ? 'Pagado'
+                : viewingExpense.paymentStatus === 'parcial'
+                  ? 'Parcial'
+                  : 'Pendiente'
+            "
+            :color="
+              viewingExpense.paymentStatus === 'pagado'
+                ? 'success'
+                : viewingExpense.paymentStatus === 'parcial'
+                  ? 'warning'
+                  : 'error'
+            "
+            variant="subtle"
+            class="ml-auto"
+          />
+        </div>
+      </template>
+
+      <div v-if="viewingExpense" class="space-y-5">
+        <!-- Resumen -->
+        <div class="grid gap-3 sm:grid-cols-3 text-sm rounded-lg bg-elevated/40 px-4 py-3">
+          <div>
+            <p class="text-muted text-xs">Total a pagar</p>
+            <p class="font-medium tabular-nums">{{ currency.format(viewingExpense.totalToPay) }}</p>
+          </div>
+          <div>
+            <p class="text-muted text-xs">Pagado</p>
+            <p class="font-medium tabular-nums text-success">
+              {{ currency.format(viewingExpense.totalPaid) }}
+            </p>
+          </div>
+          <div>
+            <p class="text-muted text-xs">Saldo pendiente</p>
+            <p class="font-medium tabular-nums text-error">
+              {{ currency.format(viewingExpense.balance) }}
+            </p>
+          </div>
+        </div>
+
+        <!-- Historial de pagos -->
+        <div>
+          <h3 class="text-sm font-semibold mb-2">Historial de pagos</h3>
+          <p v-if="loadingPayments" class="text-sm text-muted py-4 text-center">Cargando…</p>
+          <p v-else-if="!payments.length" class="text-sm text-muted py-4 text-center">
+            Sin pagos registrados todavía.
+          </p>
+          <ul v-else class="divide-y divide-default text-sm">
+            <li
+              v-for="p in payments"
+              :key="p.id"
+              class="flex items-center justify-between gap-3 py-2"
+            >
+              <div>
+                <p class="font-medium">{{ currency.format(Number(p.amount)) }}</p>
+                <p class="text-xs text-muted">
+                  {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
+                  <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
+                </p>
+                <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <USeparator v-if="viewingExpense.balance > 0" />
+
+        <!-- Registrar nuevo pago -->
+        <div v-if="viewingExpense.balance > 0" class="space-y-3">
+          <h3 class="text-sm font-semibold">Registrar pago</h3>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <UFormField label="Monto">
+              <UInputNumber
+                v-model="paymentForm.amount"
+                :min="0"
+                :max="viewingExpense.balance"
+                :step="0.01"
+                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                :placeholder="`máx. ${viewingExpense.balance.toFixed(2)}`"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="Fecha de pago">
+              <UInput v-model="paymentForm.paidAt" type="date" class="w-full" />
+            </UFormField>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <UFormField label="Método">
+              <USelect v-model="paymentForm.method" :items="paymentMethodItems" class="w-full" />
+            </UFormField>
+            <UFormField label="Nota (opcional)">
+              <UInput v-model="paymentForm.note" placeholder="Referencia, folio…" class="w-full" />
+            </UFormField>
+          </div>
+          <div class="flex justify-end">
+            <UButton
+              icon="i-lucide-plus"
+              color="primary"
+              :loading="submittingPayment"
+              :disabled="!canSubmitPayment"
+              @click="submitPayment"
+            >
+              Agregar pago
+            </UButton>
+          </div>
+        </div>
+        <UAlert
+          v-else
+          color="success"
+          variant="soft"
+          icon="i-lucide-circle-check"
+          title="Gasto completamente pagado"
+        />
+      </div>
+
+      <div class="flex justify-end pt-4">
+        <UButton variant="ghost" color="neutral" @click="showPaymentsModal = false">Cerrar</UButton>
+      </div>
     </UCard>
   </template>
 </UModal>
