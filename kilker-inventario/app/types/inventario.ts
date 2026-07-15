@@ -406,3 +406,51 @@ export interface NewExpenseInput {
   paidAt: string
   note?: string | null
 }
+
+/** Pago/abono de un gasto (`GET /api/expenses/:id/payments`). */
+export interface ApiExpensePayment {
+  id: number
+  expenseId: number
+  amount: string
+  paidAt: string
+  method: PaymentMethod
+  note: string | null
+  createdByName: string | null
+  createdAt: string
+}
+
+/** Cuerpo para registrar un pago (`POST /api/expenses/:id/payments`). */
+export interface NewExpensePaymentInput {
+  amount: number
+  paidAt: string
+  method?: PaymentMethod
+  note?: string
+}
+
+/** Estado de pago derivado (no persistido). */
+export type ExpensePaymentStatus = 'pendiente' | 'parcial' | 'pagado'
+
+/** Gasto con su saldo calculado. */
+export interface ApiExpense {
+  id: number
+  storeId: number
+  storeCode: string | null
+  storeName: string | null
+  supplier: string
+  supplierInvoiceNumber: string
+  reason: string
+  amount: string
+  retentionIva: string | null
+  retentionIsr: string | null
+  /** Total a pagar: amount*1.16 - retenciones. */
+  totalToPay: number
+  /** Suma de todos los pagos registrados. */
+  totalPaid: number
+  /** totalToPay - totalPaid (nunca negativo). */
+  balance: number
+  paymentStatus: ExpensePaymentStatus
+  paidAt: string
+  note: string | null
+  createdByName: string | null
+  createdAt: string
+}
