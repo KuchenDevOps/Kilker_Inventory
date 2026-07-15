@@ -425,8 +425,10 @@ export const expenses = pgTable(
     reason: text('reason').notNull(),
     retentionIva: numeric('retention_iva', { precision: 14, scale: 2 }),
     retentionIsr: numeric('retention_isr', { precision: 14, scale: 2 }),
+    // Monto base (subtotal, sin IVA). El total a pagar se calcula:
+    // amount * 1.16 - retentionIva - retentionIsr.
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
-    // Fecha real del pago (puede ser distinta a cuándo se capturó en el sistema).
+    // Fecha de la factura del proveedor (no necesariamente cuándo se pagó).
     paidAt: date('paid_at').notNull(),
     note: text('note'),
     createdBy: uuid('created_by')
@@ -438,6 +440,33 @@ export const expenses = pgTable(
   },
   (t) => [index('expenses_store_paid_idx').on(t.storeId, t.paidAt)]
 ).enableRLS()
+
+/** Abonos/pagos de un gasto. Un gasto puede pagarse en parcialidades. */
+export const expensePayments = pgTable(
+  'expense_payments',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    expenseId: bigint('expense_id', { mode: 'number' })
+      .notNull()
+      .references(() => expenses.id, { onDelete: 'cascade' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    paidAt: date('paid_at').notNull(),
+    method: paymentMethod('method').notNull().default('efectivo'),
+    note: text('note'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [index('expense_payments_expense_idx').on(t.expenseId, t.paidAt)]
+).enableRLS()
+
+
+
 
 
 
@@ -634,15 +663,15 @@ export const cashCloseoutsRelations = relations(cashCloseouts, ({ one }) => ({
   })
 }))
 
-export const expensesRelations = relations(expenses, ({ one }) => ({
-  store: one(stores, {
-    fields: [expenses.storeId],
-    references: [stores.id]
-  }),
-  createdBy: one(profiles, {
-    fields: [expenses.createdBy],
-    references: [profiles.id]
-  })
+export const expensesRelations = relations(expenses, ({ one, many }) => ({
+  store: one(stores, { fields: [expenses.storeId], references: [stores.id] }),
+  createdBy: one(profiles, { fields: [expenses.createdBy], references: [profiles.id] }),
+  payments: many(expensePayments)
+}))
+
+export const expensePaymentsRelations = relations(expensePayments, ({ one }) => ({
+  expense: one(expenses, { fields: [expensePayments.expenseId], references: [expenses.id] }),
+  createdBy: one(profiles, { fields: [expensePayments.createdBy], references: [profiles.id] })
 }))
 
 // ───────────────────────────────────────────────
@@ -676,3 +705,5 @@ export type Customer = typeof customers.$inferSelect
 export type NewCustomer = typeof customers.$inferInsert
 export type Expense = typeof expenses.$inferSelect
 export type NewExpense = typeof expenses.$inferInsert
+export type ExpensePayment = typeof expensePayments.$inferSelect
+export type NewExpensePayment = typeof expensePayments.$inferInsert
