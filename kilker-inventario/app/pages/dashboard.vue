@@ -43,6 +43,14 @@ const {
   refresh: refreshExpenses
 } = useExpenses()
 
+const totalExpensesPaid = computed(() =>
+  expenses.value.reduce((sum, e) => sum + Number(e.totalPaid), 0)
+)
+
+const totalExpensesPending = computed(() =>
+  expenses.value.reduce((sum, e) => sum + Number(e.balance), 0)
+)
+
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
@@ -134,11 +142,9 @@ const handleVisibilityChange = () => {
   if (document.visibilityState === 'visible') {
     const now = Date.now()
     if (now - lastRefreshTime.value < MIN_REFRESH_INTERVAL) {
-      console.log('⏳ Refresco demasiado rápido, omitiendo...')
       return
     }
     
-    console.log('👁️ Pestaña activada - programando refresco')
     
     if (visibilityTimeoutId) {
       clearTimeout(visibilityTimeoutId)
@@ -301,7 +307,7 @@ const totalProducts = computed(() => products.value.length)
 const activeProducts = computed(() => products.value.filter((p) => p.isActive).length)
 const totalUnits = computed(() => products.value.reduce((sum, p) => sum + stockFor(p), 0))
 
-const metrics = computed(() => {
+const metricsSection1 = computed(() => {
   const all = [
     {
       label: 'Productos',
@@ -310,7 +316,7 @@ const metrics = computed(() => {
       icon: 'i-lucide-package',
       color: 'text-primary',
       loading: loadingProducts.value,
-      globalOnly: true
+      globalOnly: false
     },
     {
       label: 'Existencias',
@@ -321,26 +327,14 @@ const metrics = computed(() => {
       loading: loadingProducts.value,
       globalOnly: false
     },
-// {
-//   label: 'Valor de inventario (costo por sucursal)',
-//   value: currency.format(inventoryValue.value),
-//   hint: selectedStoreId.value
-//     ? `costo promedio de ${stores.value.find((s) => s.id === selectedStoreId.value)?.code ?? 'sucursal'}`
-//     : 'costo promedio por sucursal',
-//   icon: 'i-lucide-banknote',
-//   color: 'text-success',
-//   loading: loadingProducts.value || loadingAverageCosts.value,
-//   globalOnly: false
-// },
-    {
-      label: 'Sucursales',
-      value: number.format(activeStores.value),
-      hint: `${totalCategories.value} categorías`,
-      icon: 'i-lucide-store',
-      color: 'text-warning',
-      loading: false,
-      globalOnly: true 
-    },
+
+  ]
+  
+  return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
+})
+
+const metricsSection2 = computed(() => {
+  const all = [
     {
       label: 'Valor de entradas',
       value: currency.format(entryValue.value),
@@ -358,18 +352,9 @@ const metrics = computed(() => {
       color: 'text-error',
       loading: loadingSales.value,
       globalOnly: false
-    },
-    {
-      label: 'Gastos',
-      value: currency.format(totalExpenses.value),
-      hint: 'en el periodo',
-      icon: 'i-lucide-credit-card',
-      color: 'text-warning',
-      loading: loadingExpenses.value,
-      globalOnly: false
     }
   ]
-  
+
   if (totalLoses.value < 0) {
     all.push({
       label: 'Pérdidas',
@@ -392,8 +377,42 @@ const metrics = computed(() => {
     })
   }
 
+ all.push({
+  label: 'Gastos',
+  value: currency.format(totalExpenses.value),
+  hint: 'en el periodo',
+  icon: 'i-lucide-credit-card',
+  color: 'text-warning',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+all.push({
+  label: 'Gastos pagados',
+  value: currency.format(totalExpensesPaid.value),
+  hint: 'en el periodo',
+  icon: 'i-lucide-circle-check',
+  color: 'text-success',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+all.push({
+  label: 'Gastos pendientes',
+  value: currency.format(totalExpensesPending.value),
+  hint: 'por pagar',
+  icon: 'i-lucide-clock',
+  color: 'text-error',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
+
   return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 })
+
+
 
 const isLoading = computed(
   () =>
@@ -430,6 +449,12 @@ const isLoading = computed(
 
     <USelect v-model="selectedStoreId" :items="storeFilterItems" class="w-64" />
 
+<h2 v-if="!selectedStoreId" class="flex items-center gap-2 font-semibold">
+  <UIcon name="i-lucide-store" class="size-5 text-warning" />
+  Sucursales
+  <UBadge :label="number.format(activeStores)" color="warning" variant="subtle" class="ml-1" />
+</h2>
+
     <UAlert
       v-if="productsError"
       color="error"
@@ -441,7 +466,7 @@ const isLoading = computed(
 
     <!-- Tarjetas de métricas -->
     <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <UCard v-for="m in metrics" :key="m.label">
+      <UCard v-for="m in metricsSection1" :key="m.label">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0 flex-1">
             <p class="text-sm text-muted">{{ m.label }}</p>
@@ -476,6 +501,22 @@ const isLoading = computed(
     </div>
   </div>
 </UCard>
+      <UCard v-for="m in metricsSection2" :key="m.label">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm text-muted">{{ m.label }}</p>
+            <template v-if="m.loading">
+              <USkeleton class="h-8 w-24 mt-1" />
+              <USkeleton class="h-3 w-16 mt-2" />
+            </template>
+            <template v-else>
+              <p class="mt-1 text-2xl font-semibold">{{ m.value }}</p>
+              <p class="text-xs text-muted mt-1">{{ m.hint }}</p>
+            </template>
+          </div>
+          <UIcon :name="m.icon" :class="['size-7 shrink-0', m.color]" />
+        </div>
+      </UCard>
 </section>
 
     <UCard>
