@@ -43,6 +43,14 @@ const {
   refresh: refreshExpenses
 } = useExpenses()
 
+const totalExpensesPaid = computed(() =>
+  expenses.value.reduce((sum, e) => sum + Number(e.totalPaid), 0)
+)
+
+const totalExpensesPending = computed(() =>
+  expenses.value.reduce((sum, e) => sum + Number(e.balance), 0)
+)
+
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
@@ -134,11 +142,9 @@ const handleVisibilityChange = () => {
   if (document.visibilityState === 'visible') {
     const now = Date.now()
     if (now - lastRefreshTime.value < MIN_REFRESH_INTERVAL) {
-      console.log('⏳ Refresco demasiado rápido, omitiendo...')
       return
     }
     
-    console.log('👁️ Pestaña activada - programando refresco')
     
     if (visibilityTimeoutId) {
       clearTimeout(visibilityTimeoutId)
@@ -371,15 +377,37 @@ const metricsSection2 = computed(() => {
     })
   }
 
-  all.push({
-    label: 'Gastos',
-    value: currency.format(totalExpenses.value),
-    hint: 'en el periodo',
-    icon: 'i-lucide-credit-card',
-    color: 'text-warning',
-    loading: loadingExpenses.value,
-    globalOnly: false
-  })
+ all.push({
+  label: 'Gastos',
+  value: currency.format(totalExpenses.value),
+  hint: 'en el periodo',
+  icon: 'i-lucide-credit-card',
+  color: 'text-warning',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+all.push({
+  label: 'Gastos pagados',
+  value: currency.format(totalExpensesPaid.value),
+  hint: 'en el periodo',
+  icon: 'i-lucide-circle-check',
+  color: 'text-success',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+all.push({
+  label: 'Gastos pendientes',
+  value: currency.format(totalExpensesPending.value),
+  hint: 'por pagar',
+  icon: 'i-lucide-clock',
+  color: 'text-error',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 
   return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 })
