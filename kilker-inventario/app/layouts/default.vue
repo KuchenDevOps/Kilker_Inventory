@@ -49,6 +49,24 @@ const allNav: NavEntry[] = [
     ]
   },
   {
+    section: 'Transferencias',
+    icon: 'i-lucide-truck',
+    children: [
+      {
+        label: 'Nueva transferencia',
+        to: '/transferencias/nueva',
+        icon: 'i-lucide-truck',
+        roles: ['admin', 'empleado']
+      },
+      {
+        label: 'Historial',
+        to: '/transferencias',
+        icon: 'i-lucide-history',
+        roles: ['admin', 'empleado']
+      }
+    ]
+  },
+  {
     section: 'Ventas',
     icon: 'i-lucide-receipt-text',
     children: [

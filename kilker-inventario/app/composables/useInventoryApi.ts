@@ -495,3 +495,51 @@ export function apiErrorMessage(e: unknown, fallback = 'Ocurrió un error.'): st
     fallback
   )
 }
+
+export type TransferStatus = 'pendiente' | 'en_transito' | 'recibida' | 'cancelada'
+
+export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
+  pendiente: 'Pendiente',
+  en_transito: 'En tránsito',
+  recibida: 'Recibida',
+  cancelada: 'Cancelada'
+}
+
+export interface ApiTransferItem {
+  id: number
+  productId: number
+  productName: string | null
+  productSku: string | null
+  unit: ProductUnit | null
+  quantity: string
+  /** Costo unitario tomado al momento de la salida (para valuar la transferencia). */
+  unitValue: string
+}
+
+export interface ApiTransfer {
+  id: number
+  fromStoreId: number
+  fromStoreCode: string | null
+  fromStoreName: string | null
+  toStoreId: number
+  toStoreCode: string | null
+  toStoreName: string | null
+  status: TransferStatus
+  note: string | null
+  createdByName: string | null
+  itemCount: number
+  totalValue: number
+  createdAt: string
+  receivedAt: string | null
+}
+
+export interface ApiTransferDetail extends ApiTransfer {
+  items: ApiTransferItem[]
+}
+
+export interface NewTransferInput {
+  fromStoreId: number
+  toStoreId: number
+  note?: string
+  items: { productId: number; quantity: number }[]
+}

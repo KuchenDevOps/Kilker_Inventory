@@ -305,6 +305,12 @@ export const transfers = pgTable('transfers', {
     .notNull()
     .references(() => profiles.id),
   note: text('note'),
+  // Cuándo se confirmó la recepción en destino. Null hasta que status = 'recibida'.
+  receivedAt: timestamp('received_at', { withTimezone: true }),
+  // Cuándo se canceló (si aplica). Null salvo status = 'cancelada'.
+  canceledAt: timestamp('canceled_at', { withTimezone: true }),
+  canceledBy: uuid('canceled_by').references(() => profiles.id),
+  cancelReason: text('cancel_reason'),
   ...timestamps()
 }).enableRLS()
 
