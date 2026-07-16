@@ -113,6 +113,27 @@
       "when": 1784063508844,
       "tag": "0015_bored_lake",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784165137085,
+      "tag": "0016_glorious_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784219470538,
+      "tag": "0017_big_nemesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784221416965,
+      "tag": "0018_useful_imperial_guard",
+      "breakpoints": true
     }
   ]
 }

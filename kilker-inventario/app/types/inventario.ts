@@ -454,3 +454,59 @@ export interface ApiExpense {
   createdByName: string | null
   createdAt: string
 }
+
+export type TransferStatus = 'pendiente' | 'en_transito' | 'recibida' | 'cancelada'
+
+export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
+  pendiente: 'Pendiente',
+  en_transito: 'En tránsito',
+  recibida: 'Recibida',
+  cancelada: 'Cancelada'
+}
+
+export interface ApiTransferItem {
+  id: number
+  productId: number
+  productName: string | null
+  productSku: string | null
+  unit: ProductUnit | null
+  quantity: string
+  receivedByName: string | null
+  canceledByName: string | null
+  issuedAt: string
+  /** Costo unitario tomado al momento de la salida (para valuar la transferencia). */
+  unitValue: string
+}
+
+export interface ApiTransfer {
+  id: number
+  fromStoreId: number
+  fromStoreCode: string | null
+  fromStoreName: string | null
+  toStoreId: number
+  toStoreCode: string | null
+  toStoreName: string | null
+  status: TransferStatus
+  note: string | null
+  createdByName: string | null
+  itemCount: number
+  totalValue: number
+  createdAt: string
+  issuedAt: string
+  receivedAt: string | null
+  canceledAt: string | null
+  cancelReason: string | null
+}
+
+export interface ApiTransferDetail extends ApiTransfer {
+  items: ApiTransferItem[]
+  receivedByName: string | null
+  canceledByName: string | null
+}
+
+export interface NewTransferInput {
+  fromStoreId: number
+  toStoreId: number
+  note?: string
+  items: { productId: number; quantity: number }[]
+}

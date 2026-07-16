@@ -4,7 +4,9 @@ useHead({ title: 'Historial de entradas · Inventario Kilker' })
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { movements, pending, error, storeId, from, to, search, refresh } = useMovements()
+const { movements, total, page, pageSize, pending, error, storeId, from, to, search, refresh } = useMovementsHistory()
+
+
 const { data: stores } = useStores()
 const { data: products } = useProducts()
 const toast = useToast()
@@ -205,6 +207,14 @@ async function onSubmitEdit() {
       </div>
     </UCard>
 
+
+    <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ movements.length }} de {{ total }} entrada(s)</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
+
+    <!-- Modal de edición (solo admin) -->
+
     <!-- Modal de edición (solo admin) -->
     <UModal v-model:open="showEditModal">
       <template #content>
@@ -255,6 +265,7 @@ async function onSubmitEdit() {
             </div>
           </form>
         </UCard>
+        
       </template>
     </UModal>
   </UContainer>

@@ -1,0 +1,1 @@
+ALTER TABLE "transfers" ADD COLUMN "issued_at" timestamp with time zone DEFAULT now() NOT NULL;

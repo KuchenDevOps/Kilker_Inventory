@@ -405,7 +405,7 @@ function fmtDay(s: string) {
           <USelect v-model="form.storeId" :items="storeItems" placeholder="Selecciona una sucursal" class="w-full" />
         </UFormField>
 
-        <UFormField label="Fecha de pago" required>
+        <UFormField label="Fecha de Factura" required>
           <UInput v-model="form.paidAt" type="date" class="w-full" />
         </UFormField>
         <UFormField label="Proveedor" required>
