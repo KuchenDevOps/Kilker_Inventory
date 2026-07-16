@@ -305,9 +305,10 @@ export const transfers = pgTable('transfers', {
     .notNull()
     .references(() => profiles.id),
   note: text('note'),
-  // Cuándo se confirmó la recepción en destino. Null hasta que status = 'recibida'.
+  issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
   receivedAt: timestamp('received_at', { withTimezone: true }),
-  // Cuándo se canceló (si aplica). Null salvo status = 'cancelada'.
+  // Quién confirmó la recepción en destino. Null hasta que status = 'recibida'.
+  receivedBy: uuid('received_by').references(() => profiles.id),
   canceledAt: timestamp('canceled_at', { withTimezone: true }),
   canceledBy: uuid('canceled_by').references(() => profiles.id),
   cancelReason: text('cancel_reason'),
@@ -616,7 +617,18 @@ export const transfersRelations = relations(transfers, ({ one, many }) => ({
   }),
   createdBy: one(profiles, {
     fields: [transfers.createdBy],
-    references: [profiles.id]
+    references: [profiles.id],
+    relationName: 'transfer_created_by'   
+  }),
+  receivedBy: one(profiles, {
+    fields: [transfers.receivedBy],
+    references: [profiles.id],
+    relationName: 'transfer_received_by'
+  }),
+  canceledBy: one(profiles, {
+    fields: [transfers.canceledBy],
+    references: [profiles.id],
+    relationName: 'transfer_canceled_by'
   }),
   items: many(transferItems),
   stockMovements: many(stockMovements)

@@ -2,9 +2,9 @@
 //  GET /api/transfers — historial de transferencias
 // ───────────────────────────────────────────────
 // Empleado: transferencias donde su tienda es origen o destino. Admin: todas.
-import { and, desc, eq, or } from 'drizzle-orm'
+import { and, desc, eq, gte, ilike, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { stockMovements, transferItems, transfers } from '../../db/schema'
+import { products, stockMovements, stores, transferItems, transfers } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -23,6 +23,38 @@ export default defineEventHandler(async (event) => {
     filters.push(eq(transfers.status, String(query.status) as any))
   }
 
+  // Rango de fechas sobre issuedAt (la fecha "de negocio" de la transferencia).
+if (query.from) {
+  const fromDate = new Date(String(query.from))
+  if (!Number.isNaN(fromDate.getTime())) {
+    filters.push(gte(transfers.issuedAt, fromDate))
+  }
+}
+if (query.to) {
+  const toDate = new Date(String(query.to))
+  if (!Number.isNaN(toDate.getTime())) {
+    filters.push(lt(transfers.issuedAt, toDate)) // exclusive, no lte
+  }
+}
+
+  // Búsqueda: nota, código de sucursal (origen/destino), .
+  const q = typeof query.q === 'string' ? query.q.trim() : ''
+  if (q) {
+    const like = `%${q}%`
+    filters.push(
+      or(
+        ilike(transfers.note, like),
+        sql`exists (select 1 from ${stores} s where s.id = ${transfers.fromStoreId} and (s.code ilike ${like} or s.name ilike ${like}))`,
+        sql`exists (select 1 from ${stores} s where s.id = ${transfers.toStoreId} and (s.code ilike ${like} or s.name ilike ${like}))`,
+        sql`exists (
+          select 1 from ${transferItems} ti
+          join ${products} p on p.id = ti.product_id
+          where ti.transfer_id = ${transfers.id} and (p.name ilike ${like} or p.sku ilike ${like})
+        )`
+      )!
+    )
+  }
+
   const rows = await db.query.transfers.findMany({
     where: filters.length ? and(...filters) : undefined,
     orderBy: [desc(transfers.createdAt)],
@@ -35,7 +67,6 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // Valor total de cada transferencia: suma de los movimientos de salida asociados.
   const transferIds = rows.map((r) => r.id)
   const valueMap = new Map<number, number>()
   if (transferIds.length) {
@@ -58,6 +89,7 @@ export default defineEventHandler(async (event) => {
     toStoreCode: t.toStore?.code ?? null,
     toStoreName: t.toStore?.name ?? null,
     status: t.status,
+    issuedAt: t.issuedAt,
     note: t.note,
     createdByName: t.createdBy?.fullName ?? null,
     itemCount: t.items.length,
@@ -65,6 +97,6 @@ export default defineEventHandler(async (event) => {
     createdAt: t.createdAt,
     receivedAt: t.receivedAt,
     canceledAt: t.canceledAt,
-    cancelReason: t.cancelReason, 
-   }))
+    cancelReason: t.cancelReason
+  }))
 })

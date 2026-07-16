@@ -60,7 +60,7 @@ export default defineEventHandler(async (event) => {
 
     const [updated] = await tx
     .update(transfers)
-    .set({ status: 'recibida', receivedAt: new Date() })
+    .set({ status: 'recibida', receivedAt: new Date(),  receivedBy: profile.id  })
     .where(eq(transfers.id, id))
     .returning()
 

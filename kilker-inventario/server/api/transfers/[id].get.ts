@@ -17,6 +17,8 @@ export default defineEventHandler(async (event) => {
       fromStore: { columns: { code: true, name: true } },
       toStore: { columns: { code: true, name: true } },
       createdBy: { columns: { fullName: true } },
+       receivedBy: { columns: { fullName: true } },
+    canceledBy: { columns: { fullName: true } },
       items: { with: { product: { columns: { name: true, sku: true, unit: true } } } }
     }
   })
@@ -46,6 +48,8 @@ export default defineEventHandler(async (event) => {
     status: transfer.status,
     note: transfer.note,
     createdByName: transfer.createdBy?.fullName ?? null,
+     receivedByName: transfer.receivedBy?.fullName ?? null,
+  canceledByName: transfer.canceledBy?.fullName ?? null,
     itemCount: transfer.items.length,
     totalValue:
       Math.round(
@@ -54,6 +58,7 @@ export default defineEventHandler(async (event) => {
           0
         ) * 100
       ) / 100,
+        issuedAt: transfer.issuedAt,
     createdAt: transfer.createdAt,
     receivedAt: transfer.receivedAt,
     canceledAt: transfer.canceledAt,

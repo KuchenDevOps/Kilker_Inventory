@@ -16,6 +16,7 @@ interface TransferBody {
   fromStoreId: number
   toStoreId: number
   note?: string
+    issuedAt?: string
   items: TransferItem[]
 }
 
@@ -45,6 +46,17 @@ export default defineEventHandler(async (event) => {
   // El empleado solo puede transferir DESDE su propia sucursal.
   if (profile.role === 'empleado' && profile.storeId !== fromStoreId) {
     throw createError({ statusCode: 403, statusMessage: 'Solo puedes transferir desde tu sucursal' })
+  }
+   let issuedAt: Date | undefined
+  if (body.issuedAt) {
+    const parsed = new Date(body.issuedAt)
+    if (Number.isNaN(parsed.getTime())) {
+      throw createError({ statusCode: 400, statusMessage: 'issuedAt inválido' })
+    }
+    if (parsed.getTime() > Date.now()) {
+      throw createError({ statusCode: 400, statusMessage: 'issuedAt no puede ser una fecha futura' })
+    }
+    issuedAt = parsed
   }
 
   const db = useDb()
@@ -87,7 +99,9 @@ export default defineEventHandler(async (event) => {
         toStoreId,
         status: 'en_transito',
         createdBy: profile.id,
-        note: body.note?.trim() || null
+        note: body.note?.trim() || null,
+        ...(issuedAt ? { issuedAt } : {}) // si no viene, usa el defaultNow()
+
       })
       .returning()
     if (!transfer) throw createError({ statusCode: 500, statusMessage: 'No se pudo crear la transferencia' })

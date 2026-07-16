@@ -47,7 +47,7 @@ function stockInFromStore(productId: number | undefined) {
   return p?.byStore.find((b) => b.storeId === fromStoreId.value)?.quantity ?? 0
 }
 
-const saleDate = ref('')
+const issueDate = ref('')
 
 const validLines = computed(() => lines.filter((l) => l.productId != null && (l.quantity ?? 0) > 0))
 const canSubmit = computed(
@@ -65,9 +65,9 @@ async function onSubmit() {
   try {
         let issuedAt: string | undefined
 
-       if (saleDate.value) {
+       if (issueDate.value) {
       const now = new Date()
-      const [year, month, day] = saleDate.value.split('-').map(Number)
+      const [year, month, day] = issueDate.value.split('-').map(Number)
       const combined = new Date(
         year,
         month - 1,
@@ -84,6 +84,7 @@ async function onSubmit() {
         fromStoreId: fromStoreId.value,
         toStoreId: toStoreId.value,
         note: note.value.trim() || undefined,
+        issuedAt,
         items: validLines.value.map((l) => ({ productId: l.productId, quantity: l.quantity }))
       }
     })
@@ -127,11 +128,11 @@ async function onSubmit() {
         <div>
           <UFormField
             label="Fecha de la venta"
-            name="saleDate"
+            name="issuedAt"
             help="Déjalo vacío para usar hoy."
           >
             <UInput
-              v-model="saleDate"
+              v-model="issueDate"
               type="date"
               :disabled="!canOperate"
               class="w-full"

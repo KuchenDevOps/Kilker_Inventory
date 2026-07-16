@@ -471,6 +471,9 @@ export interface ApiTransferItem {
   productSku: string | null
   unit: ProductUnit | null
   quantity: string
+  receivedByName: string | null
+  canceledByName: string | null
+  issuedAt: string
   /** Costo unitario tomado al momento de la salida (para valuar la transferencia). */
   unitValue: string
 }
@@ -489,6 +492,7 @@ export interface ApiTransfer {
   itemCount: number
   totalValue: number
   createdAt: string
+  issuedAt: string
   receivedAt: string | null
   canceledAt: string | null
   cancelReason: string | null
@@ -496,6 +500,8 @@ export interface ApiTransfer {
 
 export interface ApiTransferDetail extends ApiTransfer {
   items: ApiTransferItem[]
+  receivedByName: string | null
+  canceledByName: string | null
 }
 
 export interface NewTransferInput {

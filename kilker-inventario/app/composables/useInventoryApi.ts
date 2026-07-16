@@ -94,6 +94,7 @@ export function useSales() {
   const error = useState<string | null>('sales-error', () => null)
   const status = useState<'todas' | 'emitida' | 'anulada'>('sales-status', () => 'todas')
   const storeId = useState<number | undefined>('sales-store', () => undefined)
+  const productId = useState<number | undefined>('sales-product', () => undefined) // NUEVO
   const from = useState<string | undefined>('sales-from', () => undefined)
   const to = useState<string | undefined>('sales-to', () => undefined)
   const search = useState('sales-search', () => '')
@@ -117,6 +118,7 @@ export function useSales() {
       const q = new URLSearchParams()
       if (status.value !== 'todas') q.set('status', status.value)
       if (storeId.value) q.set('storeId', String(storeId.value))
+      if (productId.value) q.set('productId', String(productId.value)) 
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       if (search.value.trim()) q.set('q', search.value.trim())
@@ -135,7 +137,7 @@ export function useSales() {
   //  Mejor: Usar un solo watcher que se ejecuta siempre
   if (import.meta.client) {
     // Watcher para cambios en los filtros
-    watch([user, status, storeId, from, to, search], () => {
+    watch([user, status, storeId, productId, from, to, search], () => {
       refresh()
     }, { immediate: true })
     
@@ -154,7 +156,7 @@ export function useSales() {
     })
   }
 
-  return { sales, pending, error, status, storeId, from, to, search, refresh }
+  return { sales, pending, error, status, storeId, productId, from, to, search, refresh }
 }
 
 /** Historial de entradas de stock; el backend filtra por rol. Filtros storeId/fecha/q recargan. */
@@ -535,6 +537,10 @@ export interface ApiTransfer {
 
 export interface ApiTransferDetail extends ApiTransfer {
   items: ApiTransferItem[]
+   receivedBy: string | null
+  receivedByName: string | null
+  canceledBy: string | null
+  canceledByName: string | null
 }
 
 export interface NewTransferInput {

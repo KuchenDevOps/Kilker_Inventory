@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { TRANSFER_STATUS_LABELS, UNIT_LABELS ,  type ApiTransfer, type ApiTransferDetail } from '~/types/inventario'
+import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
+
 
 useHead({ title: 'Transferencias · Inventario Kilker' })
 
 const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
-const { transfers, pending, error, storeId, status, refresh } = useTransfers()
+const { transfers, pending, error, storeId, status, refresh, search, from, to } = useTransfers()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
@@ -38,8 +40,13 @@ const statusItems = [
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
+const dateOnlyFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
+
 function fmtDate(s: string | null) {
   return s ? dateFmt.format(new Date(s)) : '—'
+}
+function fmtDateOnly(s: string | null) {
+  return s ? dateOnlyFmt.format(new Date(s)) : '—'
 }
 
 const canReceive = (t: ApiTransfer) =>
@@ -119,6 +126,14 @@ async function openDetail(t: ApiTransfer) {
       </UButton>
     </header>
 
+     <FiltroPeriodo
+        v-model:search="search"
+        v-model:from="from"
+        v-model:to="to"
+        search-placeholder="Buscar por nota, sucursal o producto…"
+        />
+
+
     <div class="flex flex-wrap gap-3">
       <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
       <USelect v-model="status" :items="statusItems" class="w-44" @update:model-value="refresh" />
@@ -131,7 +146,8 @@ async function openDetail(t: ApiTransfer) {
         <table class="w-full text-sm">
           <thead class="text-muted border-b border-default">
             <tr class="text-left">
-              <th class="px-4 py-3 font-medium">Fecha</th>
+              <th class="px-4 py-3 font-medium">Fecha Registro</th>
+              <th class="px-4 py-3 font-medium">Fecha de envio</th>
               <th class="px-4 py-3 font-medium">Origen</th>
               <th class="px-4 py-3 font-medium">Destino</th>
               <th class="px-4 py-3 font-medium text-right">Prod.</th>
@@ -146,6 +162,8 @@ async function openDetail(t: ApiTransfer) {
             <tr v-else-if="!transfers.length"><td colspan="8" class="px-4 py-8 text-center text-muted">Sin transferencias.</td></tr>
             <tr v-else v-for="t in transfers" :key="t.id" class="hover:bg-elevated/50">
               <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(t.createdAt) }}</td>
+            <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDateOnly(t.issuedAt) }}</td>
+
               <td class="px-4 py-3 text-muted">{{ t.fromStoreCode }}</td>
               <td class="px-4 py-3 text-muted">{{ t.toStoreCode }}</td>
               <td class="px-4 py-3 text-right tabular-nums">{{ t.itemCount }}</td>
@@ -233,14 +251,27 @@ async function openDetail(t: ApiTransfer) {
             <p class="text-muted">Enviada</p>
             <p class="font-medium">{{ fmtDate(transferDetail.createdAt) }}</p>
           </div>
-          <div>
-            <p class="text-muted">Recibida</p>
-            <p class="font-medium">{{ fmtDate(transferDetail.receivedAt) }}</p>
-          </div>
-          <div>
+        <div>
             <p class="text-muted">Registró</p>
             <p class="font-medium">{{ transferDetail.createdByName ?? '—' }}</p>
           </div>
+            <div v-if="transferDetail.status === 'recibida'">
+                <p class="text-muted">Recibida</p>
+                <p class="font-medium">{{ fmtDate(transferDetail.receivedAt) }}</p>
+            </div>
+            <div v-if="transferDetail.status === 'recibida'">
+                <p class="text-muted">Recibió</p>
+                <p class="font-medium">{{ transferDetail.receivedByName ?? '—' }}</p>
+            </div>
+              <div v-if="transferDetail.status === 'cancelada'">
+                <p class="text-muted">Cancelada</p>
+                <p class="font-medium">{{ fmtDate(transferDetail.canceledAt) }}</p>
+            </div>
+            <div v-if="transferDetail.status === 'cancelada'">
+                <p class="text-muted">Canceló</p>
+                <p class="font-medium">{{ transferDetail.canceledByName ?? '—' }}</p>
+            </div>
+
           <div>
             <p class="text-muted">Valor total</p>
             <p class="font-medium">{{ currency.format(transferDetail.totalValue) }}</p>
