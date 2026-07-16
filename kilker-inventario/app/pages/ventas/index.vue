@@ -13,8 +13,10 @@ const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { sales, pending, error, status, storeId, from, to, search, refresh } = useSales()
+const { sales, pending, error, status, storeId,productId, from, to, search, refresh } = useSales()
 const { data: stores } = useStores()
+const { data: products } = useProducts()
+
 const apiFetch = useApiFetch()
 
 const viewingId = ref<number | null>(null)
@@ -43,6 +45,11 @@ const statusItems = [
 const storeItems = computed(() => [
   { label: 'Todas las sucursales', value: 0 },
   ...stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
+])
+
+const productItems = computed(() => [
+  { label: 'Todos los productos', value: undefined },
+  ...products.value.map((p) => ({ label: `${p.sku} — ${p.name}`, value: p.id }))
 ])
 // El filtro de tienda usa 0 = todas; lo mapeamos al ref (undefined = todas).
 const storeFilter = computed({
@@ -193,6 +200,14 @@ async function openDetail(sale: ApiSale) {
       <div class="flex flex-wrap gap-3">
         <USelect v-model="status" :items="statusItems" class="w-44" />
         <USelect v-if="isAdmin" v-model="storeFilter" :items="storeItems" class="w-60" />
+         <USelectMenu
+      v-model="productId"
+      :items="productItems"
+      value-key="value"
+      searchable
+      placeholder="Buscar producto…"
+      class="w-64"
+    />
       </div>
     </div>
 

@@ -1,10 +1,10 @@
 // ───────────────────────────────────────────────
 //  GET /api/sales — historial de ventas
 // ───────────────────────────────────────────────
-// Empleado: su tienda. Admin: todas (filtros ?storeId/?status).
+// Empleado: su tienda. Admin: todas (filtros ?storeId/?status/?productId).
 import { and, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { customers, invoices, profiles, stores, tickets } from '../../db/schema'
+import { customers, invoiceItems, invoices, profiles, stores, tickets } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -12,7 +12,6 @@ export default defineEventHandler(async (event) => {
 
   const db = useDb()
 
-  // Filtro por tienda: forzado para empleado; opcional para admin.
   const filters = []
   if (profile.role === 'empleado') {
     if (profile.storeId == null) return []
@@ -25,19 +24,29 @@ export default defineEventHandler(async (event) => {
     filters.push(eq(invoices.status, query.status))
   }
 
-  // Rango de fechas (issued_at): from inclusivo, to exclusivo.
+  // Filtro por producto: ventas que contienen ese productId en alguna línea.
+  if (query.productId) {
+    const productId = Number(query.productId)
+    if (productId) {
+      const matchingInvoiceIds = await db
+        .select({ invoiceId: invoiceItems.invoiceId })
+        .from(invoiceItems)
+        .where(eq(invoiceItems.productId, productId))
+      const ids = matchingInvoiceIds.map((r) => r.invoiceId)
+      // Si no hay ninguna venta con ese producto, corta temprano (evita un inArray vacío).
+      if (ids.length === 0) return []
+      filters.push(inArray(invoices.id, ids))
+    }
+  }
+
   if (query.from) filters.push(gte(invoices.issuedAt, new Date(String(query.from))))
   if (query.to) filters.push(lt(invoices.issuedAt, new Date(String(query.to))))
 
-  // Búsqueda ?q: folio, método de pago, sucursal (name/code), empleado que emitió, cliente.
   const q = String(query.q ?? '').trim()
   if (q) {
     const like = `%${q}%`
     const [storeIds, profIds, customerIds] = await Promise.all([
-      db
-        .select({ id: stores.id })
-        .from(stores)
-        .where(or(ilike(stores.name, like), ilike(stores.code, like))),
+      db.select({ id: stores.id }).from(stores).where(or(ilike(stores.name, like), ilike(stores.code, like))),
       db.select({ id: profiles.id }).from(profiles).where(ilike(profiles.fullName, like)),
       db.select({ id: customers.id }).from(customers).where(ilike(customers.name, like))
     ])
@@ -47,15 +56,9 @@ export default defineEventHandler(async (event) => {
     for (const m of ['efectivo', 'tarjeta', 'transferencia'] as const) {
       if (m.includes(pm)) orParts.push(eq(invoices.paymentMethod, m))
     }
-    if (storeIds.length) {
-      orParts.push(inArray(invoices.storeId, storeIds.map((r) => r.id)))
-    }
-    if (profIds.length) {
-      orParts.push(inArray(invoices.createdBy, profIds.map((r) => r.id)))
-    }
-    if (customerIds.length) {
-      orParts.push(inArray(invoices.customerId, customerIds.map((r) => r.id)))
-    }
+    if (storeIds.length) orParts.push(inArray(invoices.storeId, storeIds.map((r) => r.id)))
+    if (profIds.length) orParts.push(inArray(invoices.createdBy, profIds.map((r) => r.id)))
+    if (customerIds.length) orParts.push(inArray(invoices.customerId, customerIds.map((r) => r.id)))
     filters.push(or(...orParts)!)
   }
 
@@ -71,7 +74,6 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // Facturas con ticket abierto (marca "esperando corrección").
   const invoiceIds = rows.map((r) => r.id)
   const pending = new Set<number>()
   if (invoiceIds.length) {
@@ -94,7 +96,7 @@ export default defineEventHandler(async (event) => {
     status: inv.status,
     paymentMethod: inv.paymentMethod,
     discountPct: inv.discountPct,
-  discountAmount: inv.discountAmount,
+    discountAmount: inv.discountAmount,
     totalAmount: inv.totalAmount,
     note: inv.note,
     itemCount: inv.items.length,

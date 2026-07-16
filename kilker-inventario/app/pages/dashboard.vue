@@ -466,36 +466,36 @@ const isLoading = computed(
 
     <!-- Tarjetas de métricas -->
     <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <UCard v-for="m in metricsSection1" :key="m.label">
-        <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0 flex-1">
-            <p class="text-sm text-muted">{{ m.label }}</p>
-            <template v-if="m.loading">
-              <USkeleton class="h-8 w-24 mt-1" />
-              <USkeleton class="h-3 w-16 mt-2" />
-            </template>
-            <template v-else>
-              <p class="mt-1 text-2xl font-semibold">{{ m.value }}</p>
-              <p class="text-xs text-muted mt-1">{{ m.hint }}</p>
-            </template>
-          </div>
-          <UIcon :name="m.icon" :class="['size-7 shrink-0', m.color]" />
-        </div>
-      </UCard>
-   <UCard>
+<UCard v-for="m in metricsSection1" :key="m.label" :ui="{ body: 'p-3 sm:p-4' }">
+  <div class="flex items-start justify-between gap-2">
+    <div class="min-w-0 flex-1">
+      <p class="text-xs text-muted">{{ m.label }}</p>
+      <template v-if="m.loading">
+        <USkeleton class="h-6 w-20 mt-1" />
+        <USkeleton class="h-2.5 w-14 mt-1.5" />
+      </template>
+      <template v-else>
+        <p class="mt-0.5 text-xl font-semibold">{{ m.value }}</p>
+        <p class="text-xs text-muted mt-0.5">{{ m.hint }}</p>
+      </template>
+    </div>
+    <UIcon :name="m.icon" :class="['size-6 shrink-0', m.color]" />
+  </div>
+</UCard>
+ <UCard :ui="{ body: 'p-3 sm:p-4' }">
   <template #header>
-    <div class="flex items-center gap-2">
-      <UIcon name="i-lucide-calendar-range" class="size-5 text-primary" />
-      <h2 class="font-semibold">Cierre de inventario por mes</h2>
+    <div class="flex items-center gap-2 py-0">
+      <UIcon name="i-lucide-calendar-range" class="size-4 text-primary" />
+      <h2 class="text-sm font-semibold">Cierre de inventario por mes</h2>
       <span class="ml-auto text-xs text-muted">{{ derivedMonth }}</span>
     </div>
   </template>
 
-  <p v-if="loadingMonthly" class="text-sm text-muted py-6 text-center">Calculando…</p>
+  <p v-if="loadingMonthly" class="text-xs text-muted py-2 text-center">Calculando…</p>
   <div v-else-if="monthlyInventory" class="grid gap-4 sm:grid-cols-3">
     <div>
-      <p class="text-sm text-muted">Inventario al cierre</p>
-      <p class="mt-1 text-xl font-semibold text-success">
+      <p class="text-xs text-muted">Inventario al cierre</p>
+      <p class="mt-0.5 text-lg font-semibold text-success">
         {{ currency.format(monthlyInventory.endingInventoryValue) }}
       </p>
     </div>

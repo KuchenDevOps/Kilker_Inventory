@@ -94,6 +94,7 @@ export function useSales() {
   const error = useState<string | null>('sales-error', () => null)
   const status = useState<'todas' | 'emitida' | 'anulada'>('sales-status', () => 'todas')
   const storeId = useState<number | undefined>('sales-store', () => undefined)
+  const productId = useState<number | undefined>('sales-product', () => undefined) // NUEVO
   const from = useState<string | undefined>('sales-from', () => undefined)
   const to = useState<string | undefined>('sales-to', () => undefined)
   const search = useState('sales-search', () => '')
@@ -117,6 +118,7 @@ export function useSales() {
       const q = new URLSearchParams()
       if (status.value !== 'todas') q.set('status', status.value)
       if (storeId.value) q.set('storeId', String(storeId.value))
+      if (productId.value) q.set('productId', String(productId.value)) 
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       if (search.value.trim()) q.set('q', search.value.trim())
@@ -135,7 +137,7 @@ export function useSales() {
   //  Mejor: Usar un solo watcher que se ejecuta siempre
   if (import.meta.client) {
     // Watcher para cambios en los filtros
-    watch([user, status, storeId, from, to, search], () => {
+    watch([user, status, storeId, productId, from, to, search], () => {
       refresh()
     }, { immediate: true })
     
@@ -154,7 +156,7 @@ export function useSales() {
     })
   }
 
-  return { sales, pending, error, status, storeId, from, to, search, refresh }
+  return { sales, pending, error, status, storeId, productId, from, to, search, refresh }
 }
 
 /** Historial de entradas de stock; el backend filtra por rol. Filtros storeId/fecha/q recargan. */
@@ -494,4 +496,56 @@ export function apiErrorMessage(e: unknown, fallback = 'Ocurrió un error.'): st
     err?.message ||
     fallback
   )
+}
+
+export type TransferStatus = 'pendiente' | 'en_transito' | 'recibida' | 'cancelada'
+
+export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
+  pendiente: 'Pendiente',
+  en_transito: 'En tránsito',
+  recibida: 'Recibida',
+  cancelada: 'Cancelada'
+}
+
+export interface ApiTransferItem {
+  id: number
+  productId: number
+  productName: string | null
+  productSku: string | null
+  unit: ProductUnit | null
+  quantity: string
+  /** Costo unitario tomado al momento de la salida (para valuar la transferencia). */
+  unitValue: string
+}
+
+export interface ApiTransfer {
+  id: number
+  fromStoreId: number
+  fromStoreCode: string | null
+  fromStoreName: string | null
+  toStoreId: number
+  toStoreCode: string | null
+  toStoreName: string | null
+  status: TransferStatus
+  note: string | null
+  createdByName: string | null
+  itemCount: number
+  totalValue: number
+  createdAt: string
+  receivedAt: string | null
+}
+
+export interface ApiTransferDetail extends ApiTransfer {
+  items: ApiTransferItem[]
+   receivedBy: string | null
+  receivedByName: string | null
+  canceledBy: string | null
+  canceledByName: string | null
+}
+
+export interface NewTransferInput {
+  fromStoreId: number
+  toStoreId: number
+  note?: string
+  items: { productId: number; quantity: number }[]
 }
