@@ -2,7 +2,7 @@
 //  POST /api/sales — registrar una venta
 // ───────────────────────────────────────────────
 // En transacción: crea factura + líneas, movimientos de venta y baja inventario.
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, lte, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import {
   customers,
@@ -48,19 +48,16 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // Método de pago (corte de caja). Default efectivo.
   const allowedPayments = ['efectivo', 'tarjeta', 'transferencia'] as const
   const paymentMethod = allowedPayments.includes(body?.paymentMethod as never)
     ? (body?.paymentMethod as (typeof allowedPayments)[number])
     : 'efectivo'
 
-  // Canal de venta. Default mostrador.
   const allowedChannels = ['mostrador', 'en_linea'] as const
   const channel = allowedChannels.includes(body?.channel as never)
     ? (body?.channel as (typeof allowedChannels)[number])
     : 'mostrador'
 
-  // Cliente opcional.
   let customerId: number | null = null
   if (body?.customerId != null) {
     customerId = Number(body.customerId)
@@ -69,13 +66,27 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // El empleado solo vende en su tienda.
   if (profile.role === 'empleado' && profile.storeId !== storeId) {
     throw createError({
       statusCode: 403,
       statusMessage: 'El empleado solo puede vender en su tienda'
     })
   }
+
+  // Fecha de la venta: si no se especifica, usa el momento actual.
+  let issuedAt: Date | undefined
+  if (body?.issuedAt) {
+    const parsed = new Date(body.issuedAt)
+    if (Number.isNaN(parsed.getTime())) {
+      throw createError({ statusCode: 400, statusMessage: 'Fecha de venta inválida' })
+    }
+    issuedAt = parsed
+  }
+  const effectiveDate = issuedAt ?? new Date()
+  // Solo se valida "stock a la fecha" para ventas retroactivas (fecha pasada
+  // explícita). Para ventas en tiempo real, el chequeo normal contra el
+  // inventario actual ya es suficiente y más rápido.
+  const isBackdated = issuedAt != null && issuedAt.getTime() < Date.now() - 60 * 1000
 
   const db = useDb()
 
@@ -86,7 +97,6 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 400, statusMessage: 'La sucursal está inactiva' })
     }
 
-    // Validar cliente si viene.
     if (customerId != null) {
       const customer = await tx.query.customers.findFirst({
         where: eq(customers.id, customerId)
@@ -96,7 +106,6 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    // Resolver precios (snapshot) y validar existencias antes de escribir.
     const lines: { productId: number; quantity: number; unitPrice: number; lineTotal: number }[] = []
     for (const it of items) {
       const productId = Number(it.productId)
@@ -105,6 +114,8 @@ export default defineEventHandler(async (event) => {
       if (!product) {
         throw createError({ statusCode: 404, statusMessage: `Producto ${productId} no existe` })
       }
+
+      // Validación estándar: contra el inventario actual (siempre se hace).
       const inv = await tx.query.inventory.findFirst({
         where: and(eq(inventory.productId, productId), eq(inventory.storeId, storeId))
       })
@@ -115,6 +126,45 @@ export default defineEventHandler(async (event) => {
           statusMessage: `Stock insuficiente de ${product.sku} en ${store.code}: hay ${available}, se piden ${quantity}`
         })
       }
+
+      // Validación adicional para ventas con fecha retroactiva: verifica que,
+      // A LA FECHA declarada de la venta, ya hubiera suficiente stock (evita
+      // registrar una venta "en el pasado" antes de que la mercancía hubiera
+      // entrado según el kardex — el mismo desfase que causó los shortfalls
+      // detectados en el reporte mensual).
+      if (isBackdated) {
+        const priorMovements = await tx.query.stockMovements.findMany({
+          where: and(
+            eq(stockMovements.productId, productId),
+            eq(stockMovements.storeId, storeId),
+            lte(stockMovements.createdAt, effectiveDate)
+          ),
+          columns: { quantity: true, type: true, supplierInvoiceDate: true, createdAt: true }
+        })
+
+        // Para entradas, si tienen supplier_invoice_date, esa es la fecha real
+        // de referencia (puede diferir de created_at por captura retroactiva).
+        // Se re-filtra usando esa fecha "efectiva" cuando exista.
+        const netAtDate = priorMovements.reduce((sum, m) => {
+          const effective =
+            m.type === 'entrada' && m.supplierInvoiceDate
+              ? new Date(m.supplierInvoiceDate)
+              : m.createdAt
+          if (effective > effectiveDate) return sum
+          return sum + Number(m.quantity)
+        }, 0)
+
+        if (netAtDate < quantity) {
+          throw createError({
+            statusCode: 400,
+            statusMessage:
+              `No se puede registrar esta venta con fecha ${effectiveDate.toISOString().slice(0, 10)}: ` +
+              `según el kardex, a esa fecha solo había ${netAtDate} unidad(es) de ${product.sku} disponibles ` +
+              `en ${store.code} (se piden ${quantity}). Revisa si falta registrar una entrada anterior a esta fecha.`
+          })
+        }
+      }
+
       const unitPrice = it.unitPrice != null ? Number(it.unitPrice) : Number(product.price)
       lines.push({ productId, quantity, unitPrice, lineTotal: quantity * unitPrice })
     }
@@ -124,41 +174,29 @@ export default defineEventHandler(async (event) => {
     const discountAmount = subTotal * (discountPct / 100)
     const totalAmount = subTotal - discountAmount
 
-    // Folio provisional por tienda (secuencia formal pendiente).
     const [folioRow] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(invoices)
       .where(eq(invoices.storeId, storeId))
     const folio = `${store.code}-${String(Number(folioRow?.count ?? 0) + 1).padStart(4, '0')}`
 
-    // Fecha de la venta: si no se especifica, usa el momento actual (default de la columna).
-    let issuedAt: Date | undefined
-    if (body?.issuedAt) {
-      const parsed = new Date(body.issuedAt)
-      if (Number.isNaN(parsed.getTime())) {
-        throw createError({ statusCode: 400, statusMessage: 'Fecha de venta inválida' })
-      }
-     
-      issuedAt = parsed
-    }
-
-   const [invoice] = await tx
-  .insert(invoices)
-  .values({
-    folio,
-    storeId,
-    customerId,
-    channel,
-    createdBy: profile.id,
-    status: 'emitida',
-    paymentMethod,
-    note: body.note ?? null,
-    discountPct: String(discountPct),
-    discountAmount: String(discountAmount),
-    totalAmount: String(totalAmount),
-    ...(issuedAt ? { issuedAt } : {})
-  })
-  .returning()
+    const [invoice] = await tx
+      .insert(invoices)
+      .values({
+        folio,
+        storeId,
+        customerId,
+        channel,
+        createdBy: profile.id,
+        status: 'emitida',
+        paymentMethod,
+        note: body.note ?? null,
+        discountPct: String(discountPct),
+        discountAmount: String(discountAmount),
+        totalAmount: String(totalAmount),
+        ...(issuedAt ? { issuedAt } : {})
+      })
+      .returning()
     if (!invoice) {
       throw createError({ statusCode: 500, statusMessage: 'No se pudo crear la factura' })
     }

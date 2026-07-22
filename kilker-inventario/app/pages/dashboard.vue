@@ -198,44 +198,6 @@ function stockFor(p: (typeof products.value)[number]) {
 // completo (no depende del periodo ni de selectedStoreId).
 
 
-// --- Obtener costo promedio por producto/sucursal ---
-
-const inventoryValue = computed(() => {
-  let total = 0
-
-  products.value.forEach((p) => {
-    const stock = stockFor(p)
-    if (stock === 0) return
-
-    let avgCost = 0
-
-    if (selectedStoreId.value) {
-      avgCost = getAverageCost(p.id, selectedStoreId.value)
-    } else {
-      const storesWithStock = p.byStore.filter((b) => b.quantity > 0)
-      if (storesWithStock.length > 0) {
-        let totalCost = 0
-        let totalQty = 0
-        storesWithStock.forEach((b) => {
-          const cost = getAverageCost(p.id, b.storeId)
-          totalCost += cost * Number(b.quantity)
-          totalQty += Number(b.quantity)
-        })
-        avgCost = totalQty > 0 ? totalCost / totalQty : 0
-      } else {
-        avgCost = Number(p.cost ?? 0)
-      }
-    }
-
-    total += avgCost * stock
-  })
-
-  return total
-})
-
-const topProductsMax = computed(() =>
-  topProducts.value.reduce((max, p) => Math.max(max, p.totalQuantity), 0)
-)
 
 
 
@@ -320,11 +282,11 @@ const metricsSection1 = computed(() => {
     },
     {
       label: 'Existencias',
-      value: number.format(totalUnits.value),
-      hint: 'unidades en sistema',
+      value: number.format(monthlyInventory.value?.endingUnits ?? 0),
+      hint: `al cierre de ${derivedMonth.value}`,
       icon: 'i-lucide-boxes',
       color: 'text-info',
-      loading: loadingProducts.value,
+      loading: loadingProducts.value || loadingMonthly.value,
       globalOnly: false
     },
 
@@ -537,28 +499,39 @@ const isLoading = computed(
     </div>
   </template>
 
-  <p v-if="loadingTopProducts" class="text-sm text-muted py-6 text-center">
-    Cargando…
-  </p>
+  <!-- Estado de carga -->
+  <div v-if="loadingTopProducts" class="py-6 text-center">
+    <USpinner class="size-8 animate-spin text-primary" />
+    <p class="mt-2 text-sm text-muted">Cargando productos más vendidos...</p>
+  </div>
+
+  <!-- Sin datos -->
   <p v-else-if="!topProducts.length" class="text-sm text-muted py-6 text-center">
     Sin ventas registradas en el periodo.
   </p>
+
+  <!-- Lista de productos -->
   <ul v-else class="space-y-3">
-    <li v-for="p in topProducts" :key="p.productId">
-      <div class="flex items-center justify-between gap-3 mb-1">
-        <p class="text-sm font-medium truncate">{{ p.productName }}</p>
-        <p class="text-xs text-muted shrink-0">
-          {{ number.format(p.totalQuantity) }} {{ UNIT_LABELS[p.unit] }}(s) ·
-          {{ currency.format(p.totalRevenue) }}
-        </p>
-      </div>
-      <div class="h-2 rounded-full bg-elevated overflow-hidden">
-        <div
-          class="h-full rounded-full bg-primary transition-all"
-          :style="{ width: `${topProductsMax ? (p.totalQuantity / topProductsMax) * 100 : 0}%` }"
-        />
-      </div>
-    </li>
+    <!-- Calcular el máximo para las barras -->
+    <template v-if="topProducts.length">
+      <li v-for="p in topProducts" :key="p.productId">
+        <div class="flex items-center justify-between gap-3 mb-1">
+          <p class="text-sm font-medium truncate">{{ p.productName }}</p>
+          <p class="text-xs text-muted shrink-0">
+            {{ number.format(p.totalQuantity) }} {{ UNIT_LABELS[p.unit] }}(s) ·
+            {{ currency.format(p.totalRevenue) }}
+          </p>
+        </div>
+        <div class="h-2 rounded-full bg-elevated overflow-hidden">
+          <div
+            class="h-full rounded-full bg-primary transition-all duration-500"
+            :style="{ 
+              width: `${(p.totalQuantity / topProducts.reduce((max, item) => Math.max(max, item.totalQuantity), 0)) * 100}%` 
+            }"
+          />
+        </div>
+      </li>
+    </template>
   </ul>
 </UCard>
 
