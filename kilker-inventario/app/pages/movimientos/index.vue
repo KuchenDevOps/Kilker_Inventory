@@ -110,6 +110,42 @@ async function onSubmitEdit() {
     submittingEdit.value = false
   }
 }
+
+const voidingId = ref<number | null>(null)
+const voidReason = ref('')
+const submittingVoid = ref(false)
+
+function openVoid(m: (typeof movements.value)[number]) {
+  voidingId.value = m.id
+  voidReason.value = ''
+}
+function cancelVoidPanel() {
+  voidingId.value = null
+  voidReason.value = ''
+}
+
+async function confirmVoid(m: (typeof movements.value)[number]) {
+  submittingVoid.value = true
+  try {
+    await apiFetch(`/api/movements/${m.id}/void`, {
+      method: 'POST',
+      body: { reason: voidReason.value.trim() || undefined }
+    })
+    toast.add({ title: 'Entrada anulada', description: 'Se descontó el inventario.', color: 'success', icon: 'i-lucide-circle-check' })
+    cancelVoidPanel()
+    await refresh()
+    await refreshNuxtData('products')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo anular',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submittingVoid.value = false
+  }
+}
 </script>
 
 <template>
@@ -163,46 +199,85 @@ async function onSubmitEdit() {
               <th v-if="isAdmin" class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-default">
-            <tr v-if="pending">
-              <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">Cargando…</td>
-            </tr>
-            <tr v-else-if="!movements.length">
-              <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">
-                Sin entradas para el filtro actual.
-              </td>
-            </tr>
-            <tr v-for="m in movements" v-else :key="m.id" class="hover:bg-elevated/50">
-              <td class="px-4 py-3 font-mono text-xs">{{ m.folio ?? '-' }}</td>
-              <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(m.createdAt) }}</td>
-              <td class="px-4 py-3">
-                <div class="font-medium">{{ m.productName ?? '—' }}</div>
-                <div class="font-mono text-xs text-muted">{{ m.productSku ?? '—' }}</div>
-              </td>
-              <td class="px-4 py-3 text-muted">{{ m.storeCode ?? '—' }}</td>
-              <td class="px-4 py-3 text-right tabular-nums">
-                {{ qtyFmt.format(Number(m.quantity)) }}
-                <span class="text-muted">{{ m.unit ?? '' }}</span>
-              </td>
-              <td class="px-4 py-3 text-right tabular-nums">
-                {{ qtyFmt.format(Number(m.totalValue)) }}
-              </td>
-              <td class="px-4 py-3 text-muted">{{ m.supplierInvoiceNumber ?? '—' }}</td>
-              <td class="px-4 py-3 text-muted whitespace-nowrap">
-                {{ fmtDay(m.supplierInvoiceDate) }}
-              </td>
-              <td class="px-4 py-3 text-muted">{{ m.createdByName ?? '—' }}</td>
-              <td v-if="isAdmin" class="px-4 py-3 text-right">
-                <UButton
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  icon="i-lucide-pencil"
-                  @click="openEdit(m)"
-                />
-              </td>
-            </tr>
-          </tbody>
+       <tbody class="divide-y divide-default">
+  <tr v-if="pending">
+    <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">Cargando…</td>
+  </tr>
+  <tr v-else-if="!movements.length">
+    <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">
+      Sin entradas para el filtro actual.
+    </td>
+  </tr>
+  <template v-for="m in movements" v-else :key="m.id">
+    <tr class="hover:bg-elevated/50" :class="{ 'opacity-50': m.voided }">
+      <td class="px-4 py-3 font-mono text-xs">{{ m.folio ?? '-' }}</td>
+      <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(m.createdAt) }}</td>
+      <td class="px-4 py-3">
+        <div class="font-medium">{{ m.productName ?? '—' }}</div>
+        <div class="font-mono text-xs text-muted">{{ m.productSku ?? '—' }}</div>
+      </td>
+      <td class="px-4 py-3 text-muted">{{ m.storeCode ?? '—' }}</td>
+      <td class="px-4 py-3 text-right tabular-nums">
+        {{ qtyFmt.format(Number(m.quantity)) }}
+        <span class="text-muted">{{ m.unit ?? '' }}</span>
+      </td>
+      <td class="px-4 py-3 text-right tabular-nums">
+        {{ qtyFmt.format(Number(m.totalValue)) }}
+      </td>
+      <td class="px-4 py-3 text-muted">{{ m.supplierInvoiceNumber ?? '—' }}</td>
+      <td class="px-4 py-3 text-muted whitespace-nowrap">
+        {{ fmtDay(m.supplierInvoiceDate) }}
+      </td>
+      <td class="px-4 py-3 text-muted">{{ m.createdByName ?? '—' }}</td>
+      <td v-if="isAdmin" class="px-4 py-3 text-right">
+        <div v-if="m.voided" class="flex justify-end">
+          <UBadge label="Anulada" color="error" variant="subtle" size="xs" />
+        </div>
+        <div v-else class="flex items-center justify-end gap-1">
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-pencil"
+            @click="openEdit(m)"
+          />
+          <UButton
+            v-if="voidingId !== m.id"
+            size="xs"
+            color="error"
+            variant="ghost"
+            icon="i-lucide-ban"
+            @click="openVoid(m)"
+          />
+        </div>
+      </td>
+    </tr>
+    <!-- Panel de confirmación de anulación -->
+    <tr v-if="isAdmin && voidingId === m.id" class="bg-elevated/40">
+      <td :colspan="9" class="px-4 py-3">
+        <div class="flex flex-wrap items-start gap-3">
+          <div class="flex-1">
+            <p class="text-xs text-muted mb-1">
+              Anular entrada de <strong>{{ m.productName }}</strong> ({{ m.quantity }} {{ m.unit }})
+            </p>
+            <UInput v-model="voidReason" placeholder="Motivo (opcional)…" class="max-w-md" />
+          </div>
+          <div class="flex items-center gap-2">
+            <UButton size="xs" color="neutral" variant="ghost" :disabled="submittingVoid" @click="cancelVoidPanel">
+              Cancelar
+            </UButton>
+            <UButton size="xs" color="error" :loading="submittingVoid" @click="confirmVoid(m)">
+              Confirmar anulación
+            </UButton>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-muted">
+          Descuenta la cantidad del inventario. Solo es posible si aún no se ha vendido/transferido ese stock.
+        </p>
+      </td>
+    </tr>
+  </template>
+</tbody>
         </table>
       </div>
     </UCard>
