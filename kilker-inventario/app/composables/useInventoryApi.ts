@@ -466,6 +466,7 @@ export function useApiFetch() {
     opts: {
       method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
       body?: Record<string, unknown>
+      query?: Record<string, unknown>
       headers?: Record<string, string>
     } = {}
   ): Promise<T> => {
@@ -474,10 +475,8 @@ export function useApiFetch() {
     return (await $fetch<T>(url, {
       method: opts.method,
       body: opts.body,
-      headers: {
-        ...opts.headers,
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      }
+      query: opts.query,
+      headers: { ...opts.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) }
     })) as T
   }
 }

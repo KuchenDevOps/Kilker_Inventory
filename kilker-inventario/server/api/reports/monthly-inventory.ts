@@ -1,5 +1,5 @@
 // GET /api/reports/monthly-inventory
-import { and, eq, lt } from 'drizzle-orm'
+import { and, eq, lt, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, stockMovements } from '../../db/schema'
 
@@ -21,7 +21,11 @@ const EMPTY_RESULT = {
   transfersInUnits: 0,
   transfersInValue: 0,
   transfersOutUnits: 0,
-  transfersOutValue: 0
+  transfersOutValue: 0,
+  voidsValue: 0,        
+  voidsUnits: 0,        
+  adjustmentsValue: 0,  
+  adjustmentsUnits: 0,
 }
 
 export default defineEventHandler(async (event) => {
@@ -50,20 +54,20 @@ export default defineEventHandler(async (event) => {
   }
   // Si storeIds sigue undefined aquí, es admin viendo "todas las sucursales".
 
+  const effectiveDate = sql`COALESCE(${stockMovements.supplierInvoiceDate}::timestamp, ${stockMovements.createdAt})`
+
   // --- 1. Movimientos hasta el cierre del mes (acota por fecha: evita traer
   //         historial completo sin límite conforme crece la base). ---
-  const movementFilters = [lt(stockMovements.createdAt, monthEnd)]
-  if (storeIds) {
-    // Con pocas sucursales, un OR de eq() es más simple que inArray + import extra.
-    movementFilters.push(
-      storeIds.length === 1
-        ? eq(stockMovements.storeId, storeIds[0])
-        : (undefined as any) // multi-store explícito no es un caso actual; ver nota abajo
-    )
+    const movementFilters = []
+if (storeIds && storeIds.length === 1) {
+  const singleStoreId = storeIds[0]
+  if (singleStoreId != null) {
+    movementFilters.push(eq(stockMovements.storeId, singleStoreId))
   }
+}
 
-  const allMovements = await db.query.stockMovements.findMany({
-    where: and(...movementFilters.filter(Boolean)),
+const allMovements = await db.query.stockMovements.findMany({
+  where: movementFilters.length ? and(...movementFilters) : undefined,
     columns: {
       id: true,
       productId: true,
@@ -83,8 +87,12 @@ export default defineEventHandler(async (event) => {
 
   // --- 2. Ventas emitidas hasta el cierre del mes, con sus líneas. ---
   const invoiceFilters = [eq(invoices.status, 'emitida'), lt(invoices.issuedAt, monthEnd)]
-  if (storeIds && storeIds.length === 1) invoiceFilters.push(eq(invoices.storeId, storeIds[0]))
-
+  if (storeIds && storeIds.length === 1) {
+    const singleStoreId = storeIds[0]
+    if (singleStoreId != null) {
+      invoiceFilters.push(eq(invoices.storeId, singleStoreId))
+    }
+  }
   const allInvoicesUpToEnd = await db.query.invoices.findMany({
     where: and(...invoiceFilters),
     columns: { id: true, storeId: true, issuedAt: true },
@@ -132,6 +140,10 @@ export default defineEventHandler(async (event) => {
   let endingUnits = 0
   let exitsValue = 0
   let exitsUnits = 0
+  let voidsValue = 0
+  let voidsUnits = 0
+  let adjustmentsValue = 0
+  let adjustmentsUnits = 0
 
   for (const key of allKeys) {
     const productMovements = movementsByKey.get(key) ?? []
@@ -164,6 +176,21 @@ export default defineEventHandler(async (event) => {
         if (receivedAt && receivedAt >= monthStart && receivedAt < monthEnd) {
           transfersInUnits += Number(m.quantity)
           transfersInValue += Number(m.totalValue)
+        }
+      }
+       if (m.type === 'anulacion') {
+        if (m.createdAt >= monthStart && m.createdAt < monthEnd) {
+          voidsUnits += Math.abs(Number(m.quantity))
+          voidsValue += Math.abs(Number(m.totalValue))
+        }
+      }
+
+      // ← NUEVO: ajustes ocurridos este mes
+      if (m.type === 'ajuste') {
+        const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+        if (date >= monthStart && date < monthEnd) {
+          adjustmentsUnits += Number(m.quantity) // conserva el signo, útil para ver si fue alta o baja
+          adjustmentsValue += Number(m.totalValue)
         }
       }
     }
@@ -219,6 +246,41 @@ export default defineEventHandler(async (event) => {
           })
         }
       }
+        if (m.type === 'anulacion' && m.createdAt < monthEnd) {
+    transactions.push({
+      date: m.createdAt,
+      type: 'salida',
+      quantity: Math.abs(Number(m.quantity)),
+      unitValue: Number(m.unitValue),
+      totalValue: Math.abs(Number(m.totalValue))
+    })
+  }
+
+  // ← NUEVO: el ajuste puede sumar o restar stock según el signo de quantity.
+    if (m.type === 'ajuste') {
+      const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+      if (date < monthEnd) {
+        const qty = Number(m.quantity)
+        if (qty > 0) {
+          transactions.push({
+            date,
+            type: 'entrada',
+            quantity: qty,
+            unitValue: Number(m.unitValue),
+            totalValue: Number(m.totalValue)
+          })
+        } else if (qty < 0) {
+          transactions.push({
+            date,
+            type: 'salida',
+            quantity: Math.abs(qty),
+            unitValue: Number(m.unitValue),
+            totalValue: Math.abs(Number(m.totalValue))
+          })
+        }
+      }
+    }
+
     }
 
     transactions.sort((a, b) => a.date.getTime() - b.date.getTime())
@@ -236,6 +298,7 @@ export default defineEventHandler(async (event) => {
         let index = 0
         while (qtyToConsume > 0 && index < inventoryLayers.length) {
           const layer = inventoryLayers[index]
+          if(!layer) break
           const consumeQty = Math.min(layer.qty, qtyToConsume)
           layer.qty -= consumeQty
           qtyToConsume -= consumeQty
@@ -280,6 +343,10 @@ export default defineEventHandler(async (event) => {
     transfersOutUnits: Math.round(transfersOutUnits * 100) / 100,
     transfersInValue: Math.round(transfersInValue * 100) / 100,
     transfersInUnits: Math.round(transfersInUnits * 100) / 100,
+     voidsValue: Math.round(voidsValue * 100) / 100,          
+    voidsUnits: Math.round(voidsUnits * 100) / 100,           
+    adjustmentsUnits: Math.round(adjustmentsUnits * 100) / 100, 
+    adjustmentsValue: Math.round(adjustmentsValue * 100) / 100, 
     productsWithStock
   }
 })

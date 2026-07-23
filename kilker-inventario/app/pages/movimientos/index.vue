@@ -1,5 +1,6 @@
 <script setup lang="ts">
 useHead({ title: 'Historial de entradas · Inventario Kilker' })
+import * as XLSX from 'xlsx'
 
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -146,22 +147,129 @@ async function confirmVoid(m: (typeof movements.value)[number]) {
     submittingVoid.value = false
   }
 }
+
+const exportingFiltered = ref(false)
+const exportingAll = ref(false)
+
+function movementsToSheet(rows: any[]) {
+  return rows.map((m) => ({
+    Folio: m.folio ?? '',
+    Fecha: fmtDate(m.createdAt),
+    Producto: m.productName ?? '',
+    SKU: m.productSku ?? '',
+    Sucursal: m.storeCode ?? '',
+    Cantidad: Number(m.quantity),
+    Unidad: m.unit ?? '',
+    'Valor Total': Number(m.totalValue),
+    'Factura Proveedor': m.supplierInvoiceNumber ?? '',
+    'Fecha Factura': fmtDay(m.supplierInvoiceDate),
+    'Registró': m.createdByName ?? '',
+    Estado: m.voided ? 'Anulada' : 'Activa'
+  }))
+}
+
+function downloadWorkbook(rows: any[], filenamePrefix: string) {
+  const data = movementsToSheet(rows)
+  const worksheet = XLSX.utils.json_to_sheet(data)
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Entradas')
+
+  worksheet['!cols'] = [
+    { wch: 10 }, { wch: 18 }, { wch: 25 }, { wch: 12 },
+    { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 14 },
+    { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 10 }
+  ]
+
+  const fecha = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(workbook, `${filenamePrefix}_${fecha}.xlsx`)
+}
+
+// Exporta respetando los filtros activos (búsqueda, fechas, sucursal)
+async function exportFiltered() {
+  exportingFiltered.value = true
+  try {
+    const query: Record<string, any> = {}
+    if (storeId.value) query.storeId = storeId.value
+    if (from.value) query.from = from.value
+    if (to.value) query.to = to.value
+    if (search.value) query.q = search.value
+
+    const rows = await apiFetch('/api/movements', { query })
+    if (!rows.length) {
+      toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
+    }
+    downloadWorkbook(rows, 'entradas-filtradas')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo exportar',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exportingFiltered.value = false
+  }
+}
+
+// Exporta TODAS las entradas, ignorando filtros de fecha/búsqueda/sucursal
+async function exportAll() {
+  exportingAll.value = true
+  try {
+    const rows = await apiFetch('/api/movements')
+    if (!rows.length) {
+      toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
+    }
+    downloadWorkbook(rows, 'entradas-todas')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo exportar',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exportingAll.value = false
+  }
+}
 </script>
 
 <template>
   <UContainer class="py-8 space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 class="text-2xl font-semibold">Historial de entradas</h1>
-        <p class="text-sm text-muted">
-          {{ movements.length }} entrada(s)
-          <template v-if="!isAdmin"> · tu sucursal</template>
-        </p>
-      </div>
-      <UButton to="/movimientos/entrada" icon="i-lucide-plus" color="primary">
-        Nueva entrada
-      </UButton>
-    </header>
+  <div>
+    <h1 class="text-2xl font-semibold">Historial de entradas</h1>
+    <p class="text-sm text-muted">
+      {{ movements.length }} entrada(s)
+      <template v-if="!isAdmin"> · tu sucursal</template>
+    </p>
+  </div>
+  <div class="flex flex-wrap gap-2">
+   
+    <UButton
+      icon="i-lucide-file-spreadsheet"
+      color="neutral"
+      variant="subtle"
+      :loading="exportingAll"
+      @click="exportAll"
+    >
+      Exportar todo
+    </UButton>
+        <UButton
+      icon="i-lucide-file-spreadsheet"
+      color="neutral"
+      variant="subtle"
+      :loading="exportingFiltered"
+      @click="exportFiltered"
+    >
+      Exportar con Filtro
+    </UButton>
+    <UButton to="/movimientos/entrada" icon="i-lucide-plus" color="primary">
+      Nueva entrada
+    </UButton>
+  </div>
+</header>
 
     <div class="space-y-3">
       <FiltroPeriodo

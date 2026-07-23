@@ -1,7 +1,8 @@
 <!-- pages/ventas/index.vue -->
 <script setup lang="ts">
 import type { ApiSale, ApiSaleDetail } from '~/types/inventario'
-
+import * as XLSX from 'xlsx'
+const { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
 
 
 // Asegúrate de que la importación sea correcta
@@ -13,7 +14,6 @@ const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { sales, pending, error, status, storeId,productId, from, to, search, refresh } = useSales()
 const { data: stores } = useStores()
 const { data: products } = useProducts()
 
@@ -174,6 +174,126 @@ async function openDetail(sale: ApiSale) {
     loadingDetail.value = false
   }
 }
+
+const exportingAll = ref(false)
+const exportingFiltered = ref(false)
+
+// Hoja 1: resumen de ventas
+function salesToSheet(rows: ApiSale[]) {
+  return rows.map((s) => ({
+    Folio: s.folio ?? '',
+    Fecha: fmtDate(s.issuedAt),
+    Sucursal: s.storeCode ?? '',
+    Cliente: s.customerName ?? 'Sin cliente',
+    'Productos (líneas)': s.itemCount,
+    Total: Number(s.totalAmount),
+    Canal: s.channel === 'en_linea' ? 'En línea' : 'Mostrador',
+    Estado: s.status === 'anulada' ? 'Anulada' : 'Emitida',
+    Creó: s.createdByName ?? ''
+  }))
+}
+
+// Hoja 2: desglose línea por línea de cada ticket
+function saleItemsToSheet(sales: ApiSale[]) {
+  const rows: Record<string, any>[] = []
+  for (const s of sales) {
+    for (const it of s.items) {
+      rows.push({
+        Folio: s.folio ?? '',
+        Fecha: fmtDate(s.issuedAt),
+        Sucursal: s.storeCode ?? '',
+        Cliente: s.customerName ?? 'Sin cliente',
+        Producto: it.productName ?? '',
+        SKU: it.productSku ?? '',
+        Cantidad: Number(it.quantity),
+        'Precio unitario': Number(it.unitPrice),
+        'Total línea': Number(it.lineTotal),
+        Estado: s.status === 'anulada' ? 'Anulada' : 'Emitida'
+      })
+    }
+  }
+  return rows
+}
+
+function downloadSalesWorkbook(sales: ApiSale[], filenamePrefix: string) {
+  const workbook = XLSX.utils.book_new()
+
+  const summarySheet = XLSX.utils.json_to_sheet(salesToSheet(sales))
+  summarySheet['!cols'] = [
+    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 22 },
+    { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 18 }
+  ]
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Ventas')
+
+  const itemsSheet = XLSX.utils.json_to_sheet(saleItemsToSheet(sales))
+  itemsSheet['!cols'] = [
+    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 22 },
+    { wch: 25 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }
+  ]
+  XLSX.utils.book_append_sheet(workbook, itemsSheet, 'Detalle de tickets')
+
+  const fecha = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(workbook, `${filenamePrefix}_${fecha}.xlsx`)
+}
+
+async function exportFiltered() {
+  exportingFiltered.value = true
+  try {
+    const query: Record<string, any> = {}
+    if (status.value !== 'todas') query.status = status.value
+    if (storeId.value) query.storeId = storeId.value
+    if (from.value) query.from = from.value
+    if (to.value) query.to = to.value
+    if (search.value) query.q = search.value
+    if (productId.value) query.productId = productId.value
+
+    const rows = await apiFetch<ApiSale[]>('/api/sales', { query })
+    if (!rows.length) {
+      toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
+    }
+
+    downloadSalesWorkbook(rows, 'ventas-filtradas')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo exportar',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exportingFiltered.value = false
+  }
+}
+
+async function exportAll() {
+  exportingAll.value = true
+  try {
+    const query: Record<string, any> = {}
+    if (storeId.value) query.storeId = storeId.value
+    if (from.value) query.from = from.value
+    if (to.value) query.to = to.value
+    if (search.value) query.q = search.value
+    if (productId.value) query.productId = productId.value
+
+    const rows = await apiFetch<ApiSale[]>('/api/sales', { query })
+    if (!rows.length) {
+      toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
+    }
+
+    downloadSalesWorkbook(rows, 'ventas-con-desglose')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo exportar',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exportingAll.value = false
+  }
+}
 </script>
 
 <template>
@@ -186,7 +306,28 @@ async function openDetail(sale: ApiSale) {
           <template v-if="!isAdmin"> · tu sucursal</template>
         </p>
       </div>
+        <div class="flex flex-wrap gap-2">
+
       <UButton to="/ventas/nueva" icon="i-lucide-plus" color="primary"> Nueva venta </UButton>
+      <UButton
+      icon="i-lucide-file-spreadsheet"
+      color="neutral"
+      variant="subtle"
+      :loading="exportingAll"
+      @click="exportAll"
+    >
+      Exportar todo
+    </UButton>
+     <UButton
+    icon="i-lucide-file-spreadsheet"
+    color="neutral"
+    variant="subtle"
+    :loading="exportingFiltered"
+    @click="exportFiltered"
+  >
+    Exportar con filtro
+  </UButton>
+        </div>
     </header>
 
     <div class="space-y-3">
@@ -389,8 +530,13 @@ async function openDetail(sale: ApiSale) {
             </template>
           </tbody>
         </table>
+       
       </div>
     </UCard>
+     <div class="flex flex-col items-center gap-2">
+          <p class="text-xs text-muted">Mostrando {{ sales.length }} de {{ total }} venta(s)</p>
+          <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+        </div>
     <UModal v-model:open="showDetailModal">
   <template #content>
     <UCard>
