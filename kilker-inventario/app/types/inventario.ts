@@ -251,6 +251,8 @@ export interface ApiSale {
   voidReason: string | null
   /** true si hay un ticket de corrección ABIERTO para esta venta. */
   pendingCorrection?: boolean
+    items: ApiSaleItem[]
+
 }
 
 export interface ApiSaleItem {
@@ -287,6 +289,8 @@ export interface ApiMovement {
   folio: string | null
   createdByName: string | null
   createdAt: string
+    voided: boolean
+
 }
 
 /** Corte de caja (snapshot) tal como lo lista `GET /api/cortes`. Los numeric → string. */
@@ -336,6 +340,11 @@ export interface ApiMonthlyInventory {
   entriesValue: number
   exitsValue: number
   endingInventoryValue: number
+   endingUnits: number 
+   transferOutValue: number
+   transferOutUnits: number
+   transfersInValue: number
+   transfersInUnits: number
   productsWithStock: number
 }
 

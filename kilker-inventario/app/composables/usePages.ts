@@ -1,4 +1,4 @@
-import type { ApiMovement } from '~/types/inventario'
+import type { ApiMovement, ApiSale } from '~/types/inventario'
 
 
 export function useMovementsHistory() {
@@ -64,4 +64,71 @@ export function useMovementsHistory() {
   }
 
   return { movements, total, page, pageSize, pending, error, storeId, from, to, search, refresh }
+}
+
+export function useSalesHistory() {
+  const sales = useState<ApiSale[]>('sales-history', () => [])
+  const total = useState('sales-history-total', () => 0)
+  const page = useState('sales-history-page', () => 1)
+  const pageSize = useState('sales-history-pagesize', () => 100)
+  const pending = useState('sales-history-pending', () => false)
+  const error = useState<string | null>('sales-history-error', () => null)
+  const status = useState<'todas' | 'emitida' | 'anulada'>('sales-history-status', () => 'todas')
+  const storeId = useState<number | undefined>('sales-history-store', () => undefined)
+  const productId = useState<number | undefined>('sales-history-product', () => undefined)
+  const from = useState<string | undefined>('sales-history-from', () => undefined)
+  const to = useState<string | undefined>('sales-history-to', () => undefined)
+  const search = useState('sales-history-search', () => '')
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      sales.value = []
+      total.value = 0
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        sales.value = []
+        return
+      }
+      const q = new URLSearchParams()
+      if (status.value !== 'todas') q.set('status', status.value)
+      if (storeId.value) q.set('storeId', String(storeId.value))
+      if (productId.value) q.set('productId', String(productId.value))
+      if (from.value) q.set('from', from.value)
+      if (to.value) q.set('to', to.value)
+      if (search.value.trim()) q.set('q', search.value.trim())
+      q.set('page', String(page.value))
+      q.set('pageSize', String(pageSize.value))
+
+      const res = await $fetch<{ data: ApiSale[]; total: number; page: number; pageSize: number }>(
+        `/api/sales?${q.toString()}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      sales.value = res.data
+      total.value = res.total
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      sales.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  if (import.meta.client && !useNuxtApp()._salesHistoryWatchScope) {
+    const scope = effectScope(true)
+    useNuxtApp()._salesHistoryWatchScope = scope
+    scope.run(() => {
+      watch([user, status, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
+      watch(page, () => void refresh())
+    })
+  }
+
+  return { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
 }

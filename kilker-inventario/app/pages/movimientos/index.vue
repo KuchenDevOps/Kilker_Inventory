@@ -1,5 +1,6 @@
 <script setup lang="ts">
 useHead({ title: 'Historial de entradas · Inventario Kilker' })
+import * as XLSX from 'xlsx'
 
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -110,22 +111,165 @@ async function onSubmitEdit() {
     submittingEdit.value = false
   }
 }
+
+const voidingId = ref<number | null>(null)
+const voidReason = ref('')
+const submittingVoid = ref(false)
+
+function openVoid(m: (typeof movements.value)[number]) {
+  voidingId.value = m.id
+  voidReason.value = ''
+}
+function cancelVoidPanel() {
+  voidingId.value = null
+  voidReason.value = ''
+}
+
+async function confirmVoid(m: (typeof movements.value)[number]) {
+  submittingVoid.value = true
+  try {
+    await apiFetch(`/api/movements/${m.id}/void`, {
+      method: 'POST',
+      body: { reason: voidReason.value.trim() || undefined }
+    })
+    toast.add({ title: 'Entrada anulada', description: 'Se descontó el inventario.', color: 'success', icon: 'i-lucide-circle-check' })
+    cancelVoidPanel()
+    await refresh()
+    await refreshNuxtData('products')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo anular',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submittingVoid.value = false
+  }
+}
+
+const exportingFiltered = ref(false)
+const exportingAll = ref(false)
+
+function movementsToSheet(rows: any[]) {
+  return rows.map((m) => ({
+    Folio: m.folio ?? '',
+    Fecha: fmtDate(m.createdAt),
+    Producto: m.productName ?? '',
+    SKU: m.productSku ?? '',
+    Sucursal: m.storeCode ?? '',
+    Cantidad: Number(m.quantity),
+    Unidad: m.unit ?? '',
+    'Valor Total': Number(m.totalValue),
+    'Factura Proveedor': m.supplierInvoiceNumber ?? '',
+    'Fecha Factura': fmtDay(m.supplierInvoiceDate),
+    'Registró': m.createdByName ?? '',
+    Estado: m.voided ? 'Anulada' : 'Activa'
+  }))
+}
+
+function downloadWorkbook(rows: any[], filenamePrefix: string) {
+  const data = movementsToSheet(rows)
+  const worksheet = XLSX.utils.json_to_sheet(data)
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Entradas')
+
+  worksheet['!cols'] = [
+    { wch: 10 }, { wch: 18 }, { wch: 25 }, { wch: 12 },
+    { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 14 },
+    { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 10 }
+  ]
+
+  const fecha = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(workbook, `${filenamePrefix}_${fecha}.xlsx`)
+}
+
+// Exporta respetando los filtros activos (búsqueda, fechas, sucursal)
+async function exportFiltered() {
+  exportingFiltered.value = true
+  try {
+    const query: Record<string, any> = {}
+    if (storeId.value) query.storeId = storeId.value
+    if (from.value) query.from = from.value
+    if (to.value) query.to = to.value
+    if (search.value) query.q = search.value
+
+    const rows = await apiFetch('/api/movements', { query })
+    if (!rows.length) {
+      toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
+    }
+    downloadWorkbook(rows, 'entradas-filtradas')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo exportar',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exportingFiltered.value = false
+  }
+}
+
+// Exporta TODAS las entradas, ignorando filtros de fecha/búsqueda/sucursal
+async function exportAll() {
+  exportingAll.value = true
+  try {
+    const rows = await apiFetch('/api/movements')
+    if (!rows.length) {
+      toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
+    }
+    downloadWorkbook(rows, 'entradas-todas')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo exportar',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exportingAll.value = false
+  }
+}
 </script>
 
 <template>
   <UContainer class="py-8 space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 class="text-2xl font-semibold">Historial de entradas</h1>
-        <p class="text-sm text-muted">
-          {{ movements.length }} entrada(s)
-          <template v-if="!isAdmin"> · tu sucursal</template>
-        </p>
-      </div>
-      <UButton to="/movimientos/entrada" icon="i-lucide-plus" color="primary">
-        Nueva entrada
-      </UButton>
-    </header>
+  <div>
+    <h1 class="text-2xl font-semibold">Historial de entradas</h1>
+    <p class="text-sm text-muted">
+      {{ movements.length }} entrada(s)
+      <template v-if="!isAdmin"> · tu sucursal</template>
+    </p>
+  </div>
+  <div class="flex flex-wrap gap-2">
+   
+    <UButton
+      icon="i-lucide-file-spreadsheet"
+      color="neutral"
+      variant="subtle"
+      :loading="exportingAll"
+      @click="exportAll"
+    >
+      Exportar todo
+    </UButton>
+        <UButton
+      icon="i-lucide-file-spreadsheet"
+      color="neutral"
+      variant="subtle"
+      :loading="exportingFiltered"
+      @click="exportFiltered"
+    >
+      Exportar con Filtro
+    </UButton>
+    <UButton to="/movimientos/entrada" icon="i-lucide-plus" color="primary">
+      Nueva entrada
+    </UButton>
+  </div>
+</header>
 
     <div class="space-y-3">
       <FiltroPeriodo
@@ -163,46 +307,85 @@ async function onSubmitEdit() {
               <th v-if="isAdmin" class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-default">
-            <tr v-if="pending">
-              <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">Cargando…</td>
-            </tr>
-            <tr v-else-if="!movements.length">
-              <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">
-                Sin entradas para el filtro actual.
-              </td>
-            </tr>
-            <tr v-for="m in movements" v-else :key="m.id" class="hover:bg-elevated/50">
-              <td class="px-4 py-3 font-mono text-xs">{{ m.folio ?? '-' }}</td>
-              <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(m.createdAt) }}</td>
-              <td class="px-4 py-3">
-                <div class="font-medium">{{ m.productName ?? '—' }}</div>
-                <div class="font-mono text-xs text-muted">{{ m.productSku ?? '—' }}</div>
-              </td>
-              <td class="px-4 py-3 text-muted">{{ m.storeCode ?? '—' }}</td>
-              <td class="px-4 py-3 text-right tabular-nums">
-                {{ qtyFmt.format(Number(m.quantity)) }}
-                <span class="text-muted">{{ m.unit ?? '' }}</span>
-              </td>
-              <td class="px-4 py-3 text-right tabular-nums">
-                {{ qtyFmt.format(Number(m.totalValue)) }}
-              </td>
-              <td class="px-4 py-3 text-muted">{{ m.supplierInvoiceNumber ?? '—' }}</td>
-              <td class="px-4 py-3 text-muted whitespace-nowrap">
-                {{ fmtDay(m.supplierInvoiceDate) }}
-              </td>
-              <td class="px-4 py-3 text-muted">{{ m.createdByName ?? '—' }}</td>
-              <td v-if="isAdmin" class="px-4 py-3 text-right">
-                <UButton
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  icon="i-lucide-pencil"
-                  @click="openEdit(m)"
-                />
-              </td>
-            </tr>
-          </tbody>
+       <tbody class="divide-y divide-default">
+  <tr v-if="pending">
+    <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">Cargando…</td>
+  </tr>
+  <tr v-else-if="!movements.length">
+    <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">
+      Sin entradas para el filtro actual.
+    </td>
+  </tr>
+  <template v-for="m in movements" v-else :key="m.id">
+    <tr class="hover:bg-elevated/50" :class="{ 'opacity-50': m.voided }">
+      <td class="px-4 py-3 font-mono text-xs">{{ m.folio ?? '-' }}</td>
+      <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(m.createdAt) }}</td>
+      <td class="px-4 py-3">
+        <div class="font-medium">{{ m.productName ?? '—' }}</div>
+        <div class="font-mono text-xs text-muted">{{ m.productSku ?? '—' }}</div>
+      </td>
+      <td class="px-4 py-3 text-muted">{{ m.storeCode ?? '—' }}</td>
+      <td class="px-4 py-3 text-right tabular-nums">
+        {{ qtyFmt.format(Number(m.quantity)) }}
+        <span class="text-muted">{{ m.unit ?? '' }}</span>
+      </td>
+      <td class="px-4 py-3 text-right tabular-nums">
+        {{ qtyFmt.format(Number(m.totalValue)) }}
+      </td>
+      <td class="px-4 py-3 text-muted">{{ m.supplierInvoiceNumber ?? '—' }}</td>
+      <td class="px-4 py-3 text-muted whitespace-nowrap">
+        {{ fmtDay(m.supplierInvoiceDate) }}
+      </td>
+      <td class="px-4 py-3 text-muted">{{ m.createdByName ?? '—' }}</td>
+      <td v-if="isAdmin" class="px-4 py-3 text-right">
+        <div v-if="m.voided" class="flex justify-end">
+          <UBadge label="Anulada" color="error" variant="subtle" size="xs" />
+        </div>
+        <div v-else class="flex items-center justify-end gap-1">
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-pencil"
+            @click="openEdit(m)"
+          />
+          <UButton
+            v-if="voidingId !== m.id"
+            size="xs"
+            color="error"
+            variant="ghost"
+            icon="i-lucide-ban"
+            @click="openVoid(m)"
+          />
+        </div>
+      </td>
+    </tr>
+    <!-- Panel de confirmación de anulación -->
+    <tr v-if="isAdmin && voidingId === m.id" class="bg-elevated/40">
+      <td :colspan="9" class="px-4 py-3">
+        <div class="flex flex-wrap items-start gap-3">
+          <div class="flex-1">
+            <p class="text-xs text-muted mb-1">
+              Anular entrada de <strong>{{ m.productName }}</strong> ({{ m.quantity }} {{ m.unit }})
+            </p>
+            <UInput v-model="voidReason" placeholder="Motivo (opcional)…" class="max-w-md" />
+          </div>
+          <div class="flex items-center gap-2">
+            <UButton size="xs" color="neutral" variant="ghost" :disabled="submittingVoid" @click="cancelVoidPanel">
+              Cancelar
+            </UButton>
+            <UButton size="xs" color="error" :loading="submittingVoid" @click="confirmVoid(m)">
+              Confirmar anulación
+            </UButton>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-muted">
+          Descuenta la cantidad del inventario. Solo es posible si aún no se ha vendido/transferido ese stock.
+        </p>
+      </td>
+    </tr>
+  </template>
+</tbody>
         </table>
       </div>
     </UCard>

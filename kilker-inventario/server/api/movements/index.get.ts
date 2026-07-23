@@ -2,6 +2,7 @@ import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { products, profiles, stockMovements, stores } from '../../db/schema'
 
+
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
   const query = getQuery(event)
@@ -69,6 +70,15 @@ export default defineEventHandler(async (event) => {
       createdBy: { columns: { fullName: true } }
     }
   })
+    const movementIds = rows.map((m) => m.id)
+  const voided = new Set<number>()
+  if (movementIds.length) {
+    const reversals = await db
+      .select({ reversesMovementId: stockMovements.reversesMovementId })
+      .from(stockMovements)
+      .where(and(eq(stockMovements.type, 'anulacion'), inArray(stockMovements.reversesMovementId, movementIds)))
+    for (const r of reversals) if (r.reversesMovementId != null) voided.add(r.reversesMovementId)
+  }
 
   const mapped = rows.map((m) => ({
     id: m.id,
@@ -86,10 +96,14 @@ export default defineEventHandler(async (event) => {
     supplierInvoiceDate: m.supplierInvoiceDate,
     folio: m.inventoryEntryInvoiceNumber,
     createdByName: m.createdBy?.fullName ?? null,
-    createdAt: m.createdAt
+    createdAt: m.createdAt,
+    voided: voided.has(m.id),
   }))
 
   if (!paginate) return mapped // ← comportamiento original, usa el dashboard
+
+    // Después de traer `rows`, antes del return:
+
 
   const [{ value: total }] = await db.select({ value: count() }).from(stockMovements).where(whereClause)
   return { data: mapped, total, page, pageSize }
