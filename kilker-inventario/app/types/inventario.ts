@@ -251,6 +251,8 @@ export interface ApiSale {
   voidReason: string | null
   /** true si hay un ticket de corrección ABIERTO para esta venta. */
   pendingCorrection?: boolean
+    items: ApiSaleItem[]
+
 }
 
 export interface ApiSaleItem {

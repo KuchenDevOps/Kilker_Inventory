@@ -2,6 +2,7 @@ import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { products, profiles, stockMovements, stores } from '../../db/schema'
 
+
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
   const query = getQuery(event)

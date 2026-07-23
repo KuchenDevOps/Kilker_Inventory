@@ -2,9 +2,10 @@
 //  GET /api/sales — historial de ventas
 // ───────────────────────────────────────────────
 // Empleado: su tienda. Admin: todas (filtros ?storeId/?status/?productId).
-import { and, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { customers, invoiceItems, invoices, profiles, stores, tickets } from '../../db/schema'
+
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -62,17 +63,31 @@ export default defineEventHandler(async (event) => {
     filters.push(or(...orParts)!)
   }
 
-  const rows = await db.query.invoices.findMany({
-    where: filters.length ? and(...filters) : undefined,
-    orderBy: [desc(invoices.issuedAt)],
-    limit: 200,
-    with: {
-      store: { columns: { code: true, name: true } },
-      customer: { columns: { name: true } },
-      createdBy: { columns: { fullName: true } },
-      items: { columns: { id: true } }
+  const whereClause = filters.length ? and(...filters) : undefined
+const paginate = query.page != null
+const page = Math.max(1, Number(query.page) || 1)
+const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
+
+const limit = paginate ? pageSize : 200
+const offset = paginate ? (page - 1) * pageSize : 0
+
+const rows = await db.query.invoices.findMany({
+  where: whereClause,
+  orderBy: [desc(invoices.issuedAt)],
+  limit,
+  offset,
+  with: {
+    store: { columns: { code: true, name: true } },
+    customer: { columns: { name: true } },
+    createdBy: { columns: { fullName: true } },
+    items: {
+      columns: { id: true, productId: true, quantity: true, unitPrice: true, lineTotal: true },
+      with: { product: { columns: { name: true, sku: true, unit: true } } }
     }
-  })
+  }
+})
+
+
 
   const invoiceIds = rows.map((r) => r.id)
   const pending = new Set<number>()
@@ -84,26 +99,42 @@ export default defineEventHandler(async (event) => {
     for (const t of open) if (t.invoiceId != null) pending.add(t.invoiceId)
   }
 
-  return rows.map((inv) => ({
-    id: inv.id,
-    folio: inv.folio,
-    storeId: inv.storeId,
-    storeCode: inv.store?.code ?? null,
-    storeName: inv.store?.name ?? null,
-    customerId: inv.customerId,
-    customerName: inv.customer?.name ?? null,
-    channel: inv.channel,
-    status: inv.status,
-    paymentMethod: inv.paymentMethod,
-    discountPct: inv.discountPct,
-    discountAmount: inv.discountAmount,
-    totalAmount: inv.totalAmount,
-    note: inv.note,
-    itemCount: inv.items.length,
-    createdByName: inv.createdBy?.fullName ?? null,
-    issuedAt: inv.issuedAt,
-    voidedAt: inv.voidedAt,
-    voidReason: inv.voidReason,
-    pendingCorrection: pending.has(inv.id)
+const mapped = rows.map((inv) => ({
+  id: inv.id,
+  folio: inv.folio,
+  storeId: inv.storeId,
+  storeCode: inv.store?.code ?? null,
+  storeName: inv.store?.name ?? null,
+  customerId: inv.customerId,
+  customerName: inv.customer?.name ?? null,
+  channel: inv.channel,
+  status: inv.status,
+  paymentMethod: inv.paymentMethod,
+  discountPct: inv.discountPct,
+  discountAmount: inv.discountAmount,
+  totalAmount: inv.totalAmount,
+  note: inv.note,
+  itemCount: inv.items.length,
+  createdByName: inv.createdBy?.fullName ?? null,
+  issuedAt: inv.issuedAt,
+  voidedAt: inv.voidedAt,
+  voidReason: inv.voidReason,
+  pendingCorrection: pending.has(inv.id),
+  items: inv.items.map((it) => ({
+    id: it.id,
+    productId: it.productId,
+    productName: it.product?.name ?? null,
+    productSku: it.product?.sku ?? null,
+    unit: it.product?.unit ?? null,
+    quantity: it.quantity,
+    unitPrice: it.unitPrice,
+    lineTotal: it.lineTotal
   }))
+}))
+if (!paginate) return mapped
+
+const [{ value: total }] = await db.select({ value: count() }).from(invoices).where(whereClause)
+return { data: mapped, total, page, pageSize }
 })
+
+
