@@ -1,4 +1,4 @@
-import type { ApiMovement, ApiSale } from '~/types/inventario'
+import type { ApiMovement, ApiSale, ApiTransfer } from '~/types/inventario'
 
 
 export function useMovementsHistory() {
@@ -131,4 +131,73 @@ export function useSalesHistory() {
   }
 
   return { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
+}
+
+export function useTransferHistory() {
+  const transfers = useState<ApiTransfer[]>('transfers-history', () => [])
+  const total = useState('transfers-history-total', () => 0)
+  const page = useState('transfers-history-page', () => 1)
+  const pageSize = useState('transfers-history-pagesize', () => 100)
+  const pending = useState('transfers-history-pending', () => false)
+  const error = useState<string | null>('transfers-history-error', () => null)
+  const status = useState<'todas' | TransferStatus>('transfers-history-status', () => 'todas')
+  const storeId = useState<number | undefined>('transfers-history-store', () => undefined)
+  const productId = useState<number | undefined>('transfers-history-product', () => undefined)
+  const from = useState<string | undefined>('transfers-history-from', () => undefined)
+  const to = useState<string | undefined>('transfers-history-to', () => undefined)
+  const search = useState('transfers-history-search', () => '')
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      transfers.value = []
+      total.value = 0
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        transfers.value = []
+        return
+      }
+      const q = new URLSearchParams()
+      if (status.value !== 'todas') q.set('status', status.value)
+      if (storeId.value) q.set('storeId', String(storeId.value))
+      if (productId.value) q.set('productId', String(productId.value))
+      if (from.value) q.set('from', from.value)
+      if (to.value) q.set('to', to.value)
+      if (search.value.trim()) q.set('q', search.value.trim())
+      q.set('page', String(page.value))
+      q.set('pageSize', String(pageSize.value))
+
+      const res = await $fetch<{ data: ApiTransfer[]; total: number; page: number; pageSize: number }>(
+        `/api/transfers?${q.toString()}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      transfers.value = res.data
+      total.value = res.total
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      transfers.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  if (import.meta.client && !useNuxtApp()._transfersHistoryWatchScope) {
+    const scope = effectScope(true)
+    useNuxtApp()._transfersHistoryWatchScope = scope
+    scope.run(() => {
+      // Cambios de filtro regresan a página 1
+      watch([user, status, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
+      // Cambio de página solo re-fetchea
+      watch(page, () => void refresh())
+    })
+  }
+
+  return { transfers, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
 }

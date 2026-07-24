@@ -1,7 +1,7 @@
 // ───────────────────────────────────────────────
 //  GET /api/expenses — historial de gastos con estado de pago
 // ───────────────────────────────────────────────
-import { and, desc, eq, gte, lt } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { expenses } from '../../db/schema'
 
@@ -30,10 +30,18 @@ export default defineEventHandler(async (event) => {
   if (fromDate) filters.push(gte(expenses.paidAt, fromDate))
   if (toDate) filters.push(lt(expenses.paidAt, toDate))
 
+
+  // ── Paginación: SOLO se activa si viene ?page en la query ──
+  const whereClause = filters.length ? and(...filters) : undefined
+
+  const paginate = query.page != null
+  const page = Math.max(1, Number(query.page) || 1)
+  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
+
   const rows = await db.query.expenses.findMany({
-    where: filters.length ? and(...filters) : undefined,
+    where: whereClause,
     orderBy: [desc(expenses.paidAt)],
-    limit: 200,
+    ...(paginate ? { limit: pageSize, offset: (page - 1) * pageSize } : {}),
     with: {
       store: { columns: { code: true, name: true } },
       createdBy: { columns: { fullName: true } },
@@ -41,7 +49,10 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-return rows.map((e) => {
+
+  
+
+const mapped = rows.map((e) => {
   const totalToPay = Math.round(Number(e.amount) * 100) / 100
   const totalPaid = Math.round(e.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
   const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
@@ -71,4 +82,17 @@ return rows.map((e) => {
     createdAt: e.createdAt
   }
 })
+ if (!paginate) return mapped
+
+  const [{ value: totalCount }] = await db
+    .select({ value: count() })
+    .from(expenses)
+    .where(whereClause)
+
+  return {
+    data: mapped,
+    total: totalCount,
+    page,
+    pageSize
+  }
 })

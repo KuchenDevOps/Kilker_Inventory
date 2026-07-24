@@ -22,7 +22,34 @@ const storeItems = computed(() =>
     .map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 )
 
-// Estado del formulario: null = cerrado; '' = nuevo; uuid = editando.
+// ── Filtros ──────────────────────────────────
+const search = ref('')
+const storeFilter = ref(0) // 0 = todas
+const roleFilter = ref('todos')
+
+const storeFilterItems = computed(() => [
+  { label: 'Todas las sucursales', value: 0 },
+  ...storeItems.value
+])
+const roleFilterItems = [{ label: 'Todos los roles', value: 'todos' }, ...roleItems]
+
+const filteredUsers = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return users.value.filter((u) => {
+    if (q) {
+      const matches =
+        u.fullName.toLowerCase().includes(q) ||
+        (u.email ?? '').toLowerCase().includes(q) ||
+        (u.storeCode ?? '').toLowerCase().includes(q)
+      if (!matches) return false
+    }
+    if (storeFilter.value && u.storeId !== storeFilter.value) return false
+    if (roleFilter.value !== 'todos' && u.role !== roleFilter.value) return false
+    return true
+  })
+})
+
+// ── Formulario alta/edición (sin cambios respecto a lo que ya tenías) ──
 const editingId = ref<string | null>(null)
 const formEmail = ref('')
 const formPassword = ref('')
@@ -161,13 +188,29 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
       <div>
         <h1 class="text-2xl font-semibold">Empleados</h1>
         <p class="text-sm text-muted">
-          {{ users.length }} usuario(s) · cuentas de acceso al sistema
+          {{ filteredUsers.length }} usuario(s) · cuentas de acceso al sistema
         </p>
       </div>
       <UButton icon="i-lucide-plus" color="primary" :disabled="isNew" @click="openNew">
         Nuevo usuario
       </UButton>
     </header>
+
+    <!-- Filtros: mismo layout que /ventas -->
+    <div class="space-y-3">
+   
+      <div class="flex flex-wrap gap-3">
+        
+        <USelect v-model="roleFilter" :items="roleFilterItems" class="w-44" />
+        <USelect v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+           <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Buscar por nombre, email o sucursal…"
+        class="w-auto"
+      />
+      </div>
+    </div>
 
     <UAlert
       v-if="error"
@@ -260,12 +303,12 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
             <tr v-if="pending">
               <td colspan="6" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
-            <tr v-else-if="!users.length">
+            <tr v-else-if="!filteredUsers.length">
               <td colspan="6" class="px-4 py-8 text-center text-muted">
-                Aún no hay usuarios.
+                No hay usuarios que coincidan con el filtro.
               </td>
             </tr>
-            <tr v-for="u in users" v-else :key="u.id" class="hover:bg-elevated/50">
+            <tr v-for="u in filteredUsers" v-else :key="u.id" class="hover:bg-elevated/50">
               <td class="px-4 py-3 font-medium">{{ u.fullName }}</td>
               <td class="px-4 py-3 text-muted">{{ u.email ?? '—' }}</td>
               <td class="px-4 py-3">

@@ -385,6 +385,7 @@ export interface CustomerInput {
   phone?: string | null
 }
 
+export type PaymentStatus = 'pendiente' | 'parcial' | 'pagado'
 
 
 /** Gasto operativo (`GET /api/expenses`). */
@@ -399,10 +400,21 @@ export interface ApiExpense {
   retentionIva: string | null
   retentionIsr: string | null
   amount: string
+  totalToPay: number
+  totalPaid: number
+  balance: number
+  paymentStatus: PaymentStatus
   paidAt: string
   note: string | null
   createdByName: string | null
   createdAt: string
+}
+
+export interface ApiExpensesPage {
+  data: ApiExpense[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 /** Cuerpo para registrar un gasto (`POST /api/expenses`). */

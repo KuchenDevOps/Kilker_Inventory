@@ -3,7 +3,7 @@ useHead({ title: 'Gastos · Inventario Kilker' })
 
 import type { ApiExpense, ApiExpensePayment, PaymentMethod } from '~/types/inventario'
 import { PAYMENT_LABELS } from '~/types/inventario'
-const { expenses, pending, error, storeId, from, to, refresh } = useExpenses()
+const { expenses, total, page, pageSize, pending, error, storeId, from, to, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -32,6 +32,9 @@ const storeFilter = computed({
 const periodSearch = ref('')
 
 watch([storeFilter, from, to], () => {
+  refresh()
+})
+watch(page, () => {
   refresh()
 })
 
@@ -392,6 +395,10 @@ function fmtDay(s: string) {
         </table>
       </div>
     </UCard>
+      <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ expenses.length }} de {{ total }} gastos</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
 
    <UModal v-model:open="showModal">
   <template #content>
@@ -492,6 +499,7 @@ function fmtDay(s: string) {
         </div>
       </form>
     </UCard>
+      
   </template>
 </UModal>
 <UModal v-model:open="showPaymentsModal">

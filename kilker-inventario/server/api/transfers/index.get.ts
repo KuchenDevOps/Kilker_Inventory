@@ -2,7 +2,7 @@
 //  GET /api/transfers — historial de transferencias
 // ───────────────────────────────────────────────
 // Empleado: transferencias donde su tienda es origen o destino. Admin: todas.
-import { and, desc, eq, gte, ilike, lt, or, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ilike, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { products, stockMovements, stores, transferItems, transfers } from '../../db/schema'
 
@@ -24,20 +24,30 @@ export default defineEventHandler(async (event) => {
   }
 
   // Rango de fechas sobre issuedAt (la fecha "de negocio" de la transferencia).
-if (query.from) {
-  const fromDate = new Date(String(query.from))
-  if (!Number.isNaN(fromDate.getTime())) {
-    filters.push(gte(transfers.issuedAt, fromDate))
+  if (query.from) {
+    const fromDate = new Date(String(query.from))
+    if (!Number.isNaN(fromDate.getTime())) {
+      filters.push(gte(transfers.issuedAt, fromDate))
+    }
   }
-}
-if (query.to) {
-  const toDate = new Date(String(query.to))
-  if (!Number.isNaN(toDate.getTime())) {
-    filters.push(lt(transfers.issuedAt, toDate)) // exclusive, no lte
+  if (query.to) {
+    const toDate = new Date(String(query.to))
+    if (!Number.isNaN(toDate.getTime())) {
+      filters.push(lt(transfers.issuedAt, toDate)) // exclusive, no lte
+    }
   }
-}
 
-  // Búsqueda: nota, código de sucursal (origen/destino), .
+  // Filtro por producto: la transferencia califica si alguno de sus items es ese producto.
+  if (query.productId) {
+    const productId = Number(query.productId)
+    if (productId) {
+      filters.push(
+        sql`exists (select 1 from ${transferItems} ti where ti.transfer_id = ${transfers.id} and ti.product_id = ${productId})`
+      )
+    }
+  }
+
+  // Búsqueda: nota, código de sucursal (origen/destino), producto.
   const q = typeof query.q === 'string' ? query.q.trim() : ''
   if (q) {
     const like = `%${q}%`
@@ -55,17 +65,32 @@ if (query.to) {
     )
   }
 
-  const rows = await db.query.transfers.findMany({
-    where: filters.length ? and(...filters) : undefined,
-    orderBy: [desc(transfers.createdAt)],
-    limit: 200,
-    with: {
-      fromStore: { columns: { code: true, name: true } },
-      toStore: { columns: { code: true, name: true } },
-      createdBy: { columns: { fullName: true } },
-      items: { columns: { id: true, quantity: true } }
-    }
-  })
+  const paginate = query.page != null
+  const page = Math.max(1, Number(query.page) || 1)
+  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
+
+  const limit = paginate ? pageSize : 200
+  const offset = paginate ? (page - 1) * pageSize : 0
+
+  const where = filters.length ? and(...filters) : undefined
+
+  const [rows, totalResult] = await Promise.all([
+    db.query.transfers.findMany({
+      where,
+      orderBy: [desc(transfers.createdAt)],
+      limit,
+      offset,
+      with: {
+        fromStore: { columns: { code: true, name: true } },
+        toStore: { columns: { code: true, name: true } },
+        createdBy: { columns: { fullName: true } },
+        items: { columns: { id: true, quantity: true } }
+      }
+    }),
+    paginate
+      ? db.select({ value: count() }).from(transfers).where(where)
+      : Promise.resolve(null)
+  ])
 
   const transferIds = rows.map((r) => r.id)
   const valueMap = new Map<number, number>()
@@ -80,7 +105,7 @@ if (query.to) {
     }
   }
 
-  return rows.map((t) => ({
+  const data = rows.map((t) => ({
     id: t.id,
     fromStoreId: t.fromStoreId,
     fromStoreCode: t.fromStore?.code ?? null,
@@ -99,4 +124,13 @@ if (query.to) {
     canceledAt: t.canceledAt,
     cancelReason: t.cancelReason
   }))
+
+  if (!paginate) return data
+
+  return {
+    data,
+    total: totalResult?.[0]?.value ?? 0,
+    page,
+    pageSize
+  }
 })
