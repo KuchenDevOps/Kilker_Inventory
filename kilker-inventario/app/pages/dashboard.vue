@@ -6,7 +6,7 @@ import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
 
 useHead({ title: 'Dashboard · Inventario Kilker' })
 
-const { data: products, pending: loadingProducts, error: productsError, refresh: refreshProducts } = useProducts()
+const { products, pending: loadingProducts, error: productsError, refresh: refreshProducts } = useAllProducts()
 const { data: stores, refresh: refreshStores } = useStores()
 const {
   averageCosts,

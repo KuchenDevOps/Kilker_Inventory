@@ -21,15 +21,72 @@ import type {
 //  LECTURAS PÚBLICAS (useFetch SSR)
 // ───────────────────────────────────────────────
 
-/** Catálogo de productos con categoría y stock total. */
 export function useProducts() {
-  return useFetch<ApiProduct[]>('/api/products', {
-    key: 'products',
-    default: () => [],
-    transform: (v) => v ?? []
-  })
+  const products = useState<ApiProduct[]>('products', () => [])
+  const total = useState('products-total', () => 0)
+  const page = useState('products-page', () => 1)
+  const pageSize = useState('products-pagesize', () => 100)
+  const pending = useState('products-pending', () => false)
+  const error = useState<string | null>('products-error', () => null)
+
+  async function refresh() {
+    pending.value = true
+    error.value = null
+    try {
+      const q = new URLSearchParams()
+      q.set('page', String(page.value))
+      q.set('pageSize', String(pageSize.value))
+
+      const res = await $fetch<{ data: ApiProduct[]; total: number; page: number; pageSize: number }>(
+        `/api/products?${q.toString()}`
+      )
+      products.value = res.data
+      total.value = res.total
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      products.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('products-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    watch(page, () => void refresh())
+    void refresh()
+  }
+
+  return { products, total, page, pageSize, pending, error, refresh }
 }
 
+export function useAllProducts() {
+  const products = useState<ApiProduct[]>('all-products', () => [])
+  const pending = useState('all-products-pending', () => false)
+  const error = useState<string | null>('all-products-error', () => null)
+
+  async function refresh() {
+    pending.value = true
+    error.value = null
+    try {
+      // Sin 'page' en la query -> el endpoint regresa el arreglo completo
+      products.value = await $fetch<ApiProduct[]>('/api/products')
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      products.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('all-products-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    void refresh()
+  }
+
+  return { products, pending, error, refresh }
+}
 /** Tiendas/sucursales. */
 export function useStores() {
   return useFetch<ApiStore[]>('/api/stores', {

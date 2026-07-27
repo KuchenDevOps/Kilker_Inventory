@@ -15,8 +15,7 @@ const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const { data: stores } = useStores()
-const { data: products } = useProducts()
-
+const { products } = useAllProducts()
 const apiFetch = useApiFetch()
 
 const viewingId = ref<number | null>(null)

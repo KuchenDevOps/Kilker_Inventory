@@ -3,7 +3,7 @@ import { UNIT_LABELS } from '~/types/inventario'
 
 useHead({ title: 'Catálogo · Inventario Kilker' })
 
-const { data: products, pending, error } = useProducts()
+const { products, total, page, pageSize, pending, error, refresh } = useProducts()
 const { data: stores } = useStores();
 const storeMap = computed(() => new Map(stores.value.map((s) => [s.id, s])))
 const expandedId = ref<number | null>(null)
@@ -19,7 +19,7 @@ async function deleteProduct(id: number) {
   deleting.value = true
   try {
     await apiFetch(`/api/products/${id}`, { method: 'DELETE' })
-    await refreshNuxtData('products')
+    await refresh()
     toast.add({
       title: 'Producto borrado',
       color: 'success',
@@ -55,8 +55,6 @@ const filtered = computed(() => {
       (p.color ?? '').toLowerCase().includes(q)
   )
 })
-
-
 </script>
 
 <template>
@@ -65,7 +63,7 @@ const filtered = computed(() => {
       <div>
         <h1 class="text-2xl font-semibold">Catálogo</h1>
         <p class="text-sm text-muted">
-          {{ products.length }} productos · existencias
+          {{ total }} productos · existencias
         </p>
       </div>
       <UButton
@@ -84,7 +82,7 @@ const filtered = computed(() => {
       variant="soft"
       icon="i-lucide-triangle-alert"
       title="No se pudieron cargar los productos"
-      :description="error.message"
+      :description="error"
     />
 
     <UInput
@@ -211,13 +209,16 @@ const filtered = computed(() => {
                     </table>
                   </td>
                 </tr>
-                
               </template>
             </template>
           </tbody>
         </table>
       </div>
-    
     </UCard>
+
+    <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ products.length }} de {{ total }} productos</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
   </UContainer>
 </template>
