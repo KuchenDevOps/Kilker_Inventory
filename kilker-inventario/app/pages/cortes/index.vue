@@ -8,7 +8,7 @@ const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { cortes, pending, error, storeId, refresh, from, to, search } = useCortes()
+const { cortes, pending,total, page, pageSize, error, storeId, refresh, from, to, search } = useCortesHistory()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
@@ -281,5 +281,9 @@ async function toggleDetail(c: ApiCorte) {
         </table>
       </div>
     </UCard>
+     <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ cortes.length }} de {{ total }} entrada(s)</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
   </UContainer>
 </template>

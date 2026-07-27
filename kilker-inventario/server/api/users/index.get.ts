@@ -2,15 +2,25 @@
 //  GET /api/users — usuarios/empleados (admin)
 // ───────────────────────────────────────────────
 // Perfiles enriquecidos con sucursal (código/nombre) y email (desde Auth).
+import { count } from 'drizzle-orm'
 import { useDb } from '../../db'
+import { profiles } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
   await requireProfile(event, { role: 'admin' })
+  const query = getQuery(event)
   const db = useDb()
+
+  const paginate = query.page != null
+  const page = Math.max(1, Number(query.page) || 1)
+  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
 
   const rows = await db.query.profiles.findMany({
     with: { store: { columns: { code: true, name: true } } },
-    orderBy: (p, { asc }) => [asc(p.fullName)]
+    orderBy: (p, { asc }) => [asc(p.fullName)],
+    ...(paginate
+      ? { limit: pageSize, offset: (page - 1) * pageSize }
+      : { limit: 200, offset: 0 })
   })
 
   // Emails desde Supabase Auth (admin API).
@@ -24,7 +34,7 @@ export default defineEventHandler(async (event) => {
   }
   const emailById = new Map(data.users.map((u) => [u.id, u.email ?? null]))
 
-  return rows.map((p) => ({
+  const mapped = rows.map((p) => ({
     id: p.id,
     email: emailById.get(p.id) ?? null,
     fullName: p.fullName,
@@ -35,4 +45,15 @@ export default defineEventHandler(async (event) => {
     isActive: p.isActive,
     createdAt: p.createdAt
   }))
+
+  if (!paginate) return mapped
+
+  const [{ value: totalCount }] = await db.select({ value: count() }).from(profiles)
+
+  return {
+    data: mapped,
+    total: totalCount,
+    page,
+    pageSize
+  }
 })
