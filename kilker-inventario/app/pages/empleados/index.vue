@@ -5,7 +5,7 @@ definePageMeta({ requiresRole: 'admin' })
 useHead({ title: 'Empleados · Inventario Kilker' })
 
 const toast = useToast()
-const { users, pending, error, refresh } = useUsers()
+const { users, total, page, pageSize, pending, error, refresh } = useUsersHistory()
 const { data: stores } = useStores()
 const { me } = useMe()
 const apiFetch = useApiFetch()
@@ -188,7 +188,7 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
       <div>
         <h1 class="text-2xl font-semibold">Empleados</h1>
         <p class="text-sm text-muted">
-          {{ filteredUsers.length }} usuario(s) · cuentas de acceso al sistema
+          {{ total }} usuario(s) · cuentas de acceso al sistema
         </p>
       </div>
       <UButton icon="i-lucide-plus" color="primary" :disabled="isNew" @click="openNew">
@@ -353,5 +353,10 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
         </table>
       </div>
     </UCard>
+
+    <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ users.length }} de {{ total }} usuarios</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
   </UContainer>
 </template>
