@@ -2,7 +2,7 @@
 //  GET /api/tickets — tickets de corrección
 // ───────────────────────────────────────────────
 // Empleado: su tienda. Admin: todos (filtro ?status).
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { tickets } from '../../db/schema'
 
@@ -25,10 +25,18 @@ export default defineEventHandler(async (event) => {
     filters.push(eq(tickets.status, query.status))
   }
 
-  const rows = await db.query.tickets.findMany({
-    where: filters.length ? and(...filters) : undefined,
+  const where = filters.length ? and(...filters) : undefined
+
+  const paginate = query.page != null
+  const page = Math.max(1, Number(query.page) || 1)
+  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
+
+const rows = await db.query.tickets.findMany({
+    where,
     orderBy: [desc(tickets.createdAt)],
-    limit: 200,
+    ...(paginate
+      ? { limit: pageSize, offset: (page - 1) * pageSize }
+      : { limit: 200, offset: 0 }),
     with: {
       store: { columns: { code: true, name: true } },
       raisedBy: { columns: { fullName: true } },
@@ -37,7 +45,7 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  return rows.map((t) => ({
+  const mapped = rows.map((t) => ({
     id: t.id,
     target: t.target,
     status: t.status,
@@ -54,4 +62,18 @@ export default defineEventHandler(async (event) => {
     createdAt: t.createdAt,
     resolvedAt: t.resolvedAt
   }))
+
+  if (!paginate) return mapped
+
+  const [{ value: totalCount }] = await db
+    .select({ value: count() })
+    .from(tickets)
+    .where(where)
+
+  return {
+    data: mapped,
+    total: totalCount,
+    page,
+    pageSize
+  }
 })

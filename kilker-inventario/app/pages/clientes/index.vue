@@ -3,12 +3,16 @@ import type { ApiCustomer } from '~/types/inventario'
 
 useHead({ title: 'Clientes · Inventario Kilker' })
 
-const { data: customers, pending, error, refresh } = useCustomers()
+const { customers, total, page, pageSize, pending, error, refresh } = useCustomers()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const toast = useToast()
 const apiFetch = useApiFetch()
+
+onMounted(() => {
+  refresh()
+})
 
 const search = ref('')
 const filtered = computed(() => {
@@ -136,7 +140,7 @@ async function toggleActive(c: ApiCustomer) {
     <header class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Clientes</h1>
-        <p class="text-sm text-muted">{{ customers.length }} cliente(s)</p>
+        <p class="text-sm text-muted">{{ total }} cliente(s)</p>
       </div>
       <UButton v-if="isAdmin" icon="i-lucide-plus" color="primary" @click="openCreate">
         Nuevo cliente
@@ -149,7 +153,7 @@ async function toggleActive(c: ApiCustomer) {
       variant="soft"
       icon="i-lucide-triangle-alert"
       title="No se pudieron cargar los clientes"
-      :description="error.message"
+      :description="error"
     />
 
     <UInput
@@ -239,6 +243,11 @@ async function toggleActive(c: ApiCustomer) {
         </table>
       </div>
     </UCard>
+
+    <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ customers.length }} de {{ total }} clientes</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
 
     <!-- Modal de alta/edición -->
     <UModal v-model:open="showModal">

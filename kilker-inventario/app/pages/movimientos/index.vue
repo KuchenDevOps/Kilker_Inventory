@@ -2,6 +2,7 @@
 useHead({ title: 'Historial de entradas · Inventario Kilker' })
 import * as XLSX from 'xlsx'
 
+
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 

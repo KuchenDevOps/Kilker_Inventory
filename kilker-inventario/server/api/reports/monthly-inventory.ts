@@ -22,9 +22,9 @@ const EMPTY_RESULT = {
   transfersInValue: 0,
   transfersOutUnits: 0,
   transfersOutValue: 0,
-  voidsValue: 0,        
-  voidsUnits: 0,        
-  adjustmentsValue: 0,  
+  voidsValue: 0,
+  voidsUnits: 0,
+  adjustmentsValue: 0,
   adjustmentsUnits: 0,
 }
 
@@ -54,20 +54,18 @@ export default defineEventHandler(async (event) => {
   }
   // Si storeIds sigue undefined aquí, es admin viendo "todas las sucursales".
 
-  const effectiveDate = sql`COALESCE(${stockMovements.supplierInvoiceDate}::timestamp, ${stockMovements.createdAt})`
-
   // --- 1. Movimientos hasta el cierre del mes (acota por fecha: evita traer
   //         historial completo sin límite conforme crece la base). ---
-    const movementFilters = []
-if (storeIds && storeIds.length === 1) {
-  const singleStoreId = storeIds[0]
-  if (singleStoreId != null) {
-    movementFilters.push(eq(stockMovements.storeId, singleStoreId))
+  const movementFilters = []
+  if (storeIds && storeIds.length === 1) {
+    const singleStoreId = storeIds[0]
+    if (singleStoreId != null) {
+      movementFilters.push(eq(stockMovements.storeId, singleStoreId))
+    }
   }
-}
 
-const allMovements = await db.query.stockMovements.findMany({
-  where: movementFilters.length ? and(...movementFilters) : undefined,
+  const allMovements = await db.query.stockMovements.findMany({
+    where: movementFilters.length ? and(...movementFilters) : undefined,
     columns: {
       id: true,
       productId: true,
@@ -78,12 +76,23 @@ const allMovements = await db.query.stockMovements.findMany({
       totalValue: true,
       supplierInvoiceDate: true,
       invoiceId: true,
+      reversesMovementId: true,
       createdAt: true
     },
     with: {
       transfer: { columns: { issuedAt: true, receivedAt: true } }
     }
   })
+
+  // Mapa id -> type, para saber qué tipo de movimiento revierte cada 'anulacion'.
+  // Necesario porque 'anulacion' se usa tanto para revertir una 'entrada' (que
+  // sigue viva en el FIFO y hay que cancelar) como para revertir una 'venta'
+  // (que ya fue excluida del FIFO al filtrar invoices.status = 'emitida', así
+  // que procesarla de nuevo aquí sería doble conteo).
+  const movementTypeById = new Map<number, string>()
+  for (const m of allMovements) {
+    movementTypeById.set(m.id, m.type)
+  }
 
   // --- 2. Ventas emitidas hasta el cierre del mes, con sus líneas. ---
   const invoiceFilters = [eq(invoices.status, 'emitida'), lt(invoices.issuedAt, monthEnd)]
@@ -178,14 +187,25 @@ const allMovements = await db.query.stockMovements.findMany({
           transfersInValue += Number(m.totalValue)
         }
       }
-       if (m.type === 'anulacion') {
-        if (m.createdAt >= monthStart && m.createdAt < monthEnd) {
-          voidsUnits += Math.abs(Number(m.quantity))
-          voidsValue += Math.abs(Number(m.totalValue))
+
+      // Anulaciones: solo cuentan aquí como corrección de inventario si
+      // revierten una 'entrada'. Si revierten una 'venta', su efecto ya
+      // quedó resuelto al excluir la venta anulada del filtro de invoices.
+      if (m.type === 'anulacion') {
+        const originalType = m.reversesMovementId
+          ? movementTypeById.get(m.reversesMovementId)
+          : undefined
+
+        if (originalType === 'entrada') {
+          if (m.createdAt >= monthStart && m.createdAt < monthEnd) {
+            voidsUnits += Number(m.quantity) // negativo: resta stock
+            voidsValue += Number(m.totalValue)
+          }
         }
+        // originalType === 'venta' (o desconocido): se ignora aquí.
       }
 
-      // ← NUEVO: ajustes ocurridos este mes
+      // El ajuste puede sumar o restar stock según el signo de quantity.
       if (m.type === 'ajuste') {
         const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
         if (date >= monthStart && date < monthEnd) {
@@ -246,41 +266,52 @@ const allMovements = await db.query.stockMovements.findMany({
           })
         }
       }
-        if (m.type === 'anulacion' && m.createdAt < monthEnd) {
-    transactions.push({
-      date: m.createdAt,
-      type: 'salida',
-      quantity: Math.abs(Number(m.quantity)),
-      unitValue: Number(m.unitValue),
-      totalValue: Math.abs(Number(m.totalValue))
-    })
-  }
 
-  // ← NUEVO: el ajuste puede sumar o restar stock según el signo de quantity.
-    if (m.type === 'ajuste') {
-      const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
-      if (date < monthEnd) {
-        const qty = Number(m.quantity)
-        if (qty > 0) {
+      // Anulación de una ENTRADA: la entrada original sigue viva en
+      // `transactions` (arriba), así que aquí hay que cancelarla con una
+      // salida equivalente. Anulación de una VENTA: se ignora — la venta
+      // original nunca entró al FIFO (invoice status != 'emitida'), así
+      // que no hay nada que revertir.
+      if (m.type === 'anulacion' && m.createdAt < monthEnd) {
+        const originalType = m.reversesMovementId
+          ? movementTypeById.get(m.reversesMovementId)
+          : undefined
+
+        if (originalType === 'entrada') {
           transactions.push({
-            date,
-            type: 'entrada',
-            quantity: qty,
-            unitValue: Number(m.unitValue),
-            totalValue: Number(m.totalValue)
-          })
-        } else if (qty < 0) {
-          transactions.push({
-            date,
+            date: m.createdAt,
             type: 'salida',
-            quantity: Math.abs(qty),
+            quantity: Math.abs(Number(m.quantity)),
             unitValue: Number(m.unitValue),
             totalValue: Math.abs(Number(m.totalValue))
           })
         }
       }
-    }
 
+      // El ajuste puede sumar o restar stock según el signo de quantity.
+      if (m.type === 'ajuste') {
+        const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+        if (date < monthEnd) {
+          const qty = Number(m.quantity)
+          if (qty > 0) {
+            transactions.push({
+              date,
+              type: 'entrada',
+              quantity: qty,
+              unitValue: Number(m.unitValue),
+              totalValue: Number(m.totalValue)
+            })
+          } else if (qty < 0) {
+            transactions.push({
+              date,
+              type: 'salida',
+              quantity: Math.abs(qty),
+              unitValue: Number(m.unitValue),
+              totalValue: Math.abs(Number(m.totalValue))
+            })
+          }
+        }
+      }
     }
 
     transactions.sort((a, b) => a.date.getTime() - b.date.getTime())
@@ -298,7 +329,7 @@ const allMovements = await db.query.stockMovements.findMany({
         let index = 0
         while (qtyToConsume > 0 && index < inventoryLayers.length) {
           const layer = inventoryLayers[index]
-          if(!layer) break
+          if (!layer) break
           const consumeQty = Math.min(layer.qty, qtyToConsume)
           layer.qty -= consumeQty
           qtyToConsume -= consumeQty
@@ -343,10 +374,10 @@ const allMovements = await db.query.stockMovements.findMany({
     transfersOutUnits: Math.round(transfersOutUnits * 100) / 100,
     transfersInValue: Math.round(transfersInValue * 100) / 100,
     transfersInUnits: Math.round(transfersInUnits * 100) / 100,
-     voidsValue: Math.round(voidsValue * 100) / 100,          
-    voidsUnits: Math.round(voidsUnits * 100) / 100,           
-    adjustmentsUnits: Math.round(adjustmentsUnits * 100) / 100, 
-    adjustmentsValue: Math.round(adjustmentsValue * 100) / 100, 
+    voidsValue: Math.round(voidsValue * 100) / 100,
+    voidsUnits: Math.round(voidsUnits * 100) / 100,
+    adjustmentsUnits: Math.round(adjustmentsUnits * 100) / 100,
+    adjustmentsValue: Math.round(adjustmentsValue * 100) / 100,
     productsWithStock
   }
 })

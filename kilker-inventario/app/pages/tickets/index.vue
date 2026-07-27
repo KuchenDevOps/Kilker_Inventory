@@ -7,7 +7,7 @@ const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { tickets, pending, error, status, refresh } = useTickets()
+const { tickets,total, page, pageSize, pending, error, status, refresh } = useTicketsHistory()
 const apiFetch = useApiFetch()
 
 onMounted(() => {
@@ -215,7 +215,13 @@ async function confirmAction(t: ApiTicket) {
             </template>
           </tbody>
         </table>
+        
       </div>
+       
     </UCard>
+       <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ tickets.length }} de {{ total }} entrada(s)</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
   </UContainer>
 </template>

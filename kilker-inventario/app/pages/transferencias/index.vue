@@ -8,7 +8,7 @@ useHead({ title: 'Transferencias · Inventario Kilker' })
 const toast = useToast()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
-const { transfers, pending, error, storeId, status, refresh, search, from, to } = useTransfers()
+const { transfers,total, page, pageSize, pending, error, storeId, status, refresh, search, from, to } = useTransferHistory()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
@@ -224,6 +224,10 @@ async function openDetail(t: ApiTransfer) {
         </table>
       </div>
     </UCard>
+        <div class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ transfers.length }} de {{ total }} entrada(s)</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
     <UModal v-model:open="showDetailModal">
   <template #content>
     <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
