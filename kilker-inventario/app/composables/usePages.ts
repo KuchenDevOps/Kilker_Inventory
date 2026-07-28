@@ -107,12 +107,20 @@ export function useSalesHistory() {
       q.set('page', String(page.value))
       q.set('pageSize', String(pageSize.value))
 
-      const res = await $fetch<{ data: ApiSale[]; total: number; page: number; pageSize: number }>(
-        `/api/sales?${q.toString()}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-      sales.value = res.data
-      total.value = res.total
+      const res = await $fetch<{ data: ApiSale[]; total: number; page: number; pageSize: number } | ApiSale[]>(
+  `/api/sales?${q.toString()}`,
+  { headers: { Authorization: `Bearer ${token}` } }
+)
+
+if (Array.isArray(res)) {
+  // Respuesta sin envolver (no debería pasar con ?page, pero por si acaso)
+  sales.value = res
+  total.value = res.length
+} else {
+  sales.value = res?.data ?? []
+  total.value = res?.total ?? 0
+}
+
     } catch (e) {
       error.value = apiErrorMessage(e)
       sales.value = []

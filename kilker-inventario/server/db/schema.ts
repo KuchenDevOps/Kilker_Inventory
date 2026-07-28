@@ -216,6 +216,7 @@ export const invoices = pgTable(
 ).enableRLS()
 
 /** Líneas de venta. `unit_price` es snapshot al momento de la venta. */
+
 export const invoiceItems = pgTable('invoice_items', {
   id: bigint('id', { mode: 'number' })
     .primaryKey()
@@ -229,11 +230,14 @@ export const invoiceItems = pgTable('invoice_items', {
   quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
   unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
   lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull(),
-  // v2: null en v1.
   discountType: discountType('discount_type'),
   discountValue: numeric('discount_value', { precision: 14, scale: 2 }),
   taxRate: numeric('tax_rate', { precision: 5, scale: 2 })
-}).enableRLS()
+}, (table) => [
+  index('idx_invoice_items_product_id').on(table.productId),
+  // este también te conviene: tu exists correlaciona por invoiceId
+  index('idx_invoice_items_invoice_id').on(table.invoiceId),
+]).enableRLS()
 
 /** Libro APPEND-ONLY (kardex). Fuente de verdad; cantidad e importe con signo. */
 export const stockMovements = pgTable(

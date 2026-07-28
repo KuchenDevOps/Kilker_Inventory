@@ -1,0 +1,2 @@
+CREATE INDEX "idx_invoice_items_product_id" ON "invoice_items" USING btree ("product_id");--> statement-breakpoint
+CREATE INDEX "idx_invoice_items_invoice_id" ON "invoice_items" USING btree ("invoice_id");
