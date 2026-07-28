@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { useAllCustomers } from '~/composables/useCustomers'
 import type { ApiCustomer } from '~/types/inventario'
 
 useHead({ title: 'Clientes · Inventario Kilker' })
 
-const { customers, total, page, pageSize, pending, error, refresh } = useCustomers()
+const { customers, pending, error, refresh } = useAllCustomers()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
@@ -26,6 +27,18 @@ const filtered = computed(() => {
       (c.phone ?? '').toLowerCase().includes(q)
   )
 })
+
+// Paginación client-side sobre el resultado ya filtrado
+const page = ref(1)
+const pageSize = ref(20)
+const total = computed(() => filtered.value.length)
+const paged = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
+})
+
+// Si cambia la búsqueda, regresa a la página 1 (si no, puedes quedar en una página vacía)
+watch(search, () => { page.value = 1 })
 
 // ───────────────────────────────────────────────
 //  ALTA / EDICIÓN (modal)

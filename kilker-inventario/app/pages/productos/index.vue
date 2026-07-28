@@ -3,9 +3,8 @@ import { UNIT_LABELS } from '~/types/inventario'
 
 useHead({ title: 'Catálogo · Inventario Kilker' })
 
-const {  total, page, pageSize} = useProducts()
 const { products, pending, error, refresh } = useAllProducts()
-const { data: stores } = useStores();
+const { data: stores } = useStores()
 const storeMap = computed(() => new Map(stores.value.map((s) => [s.id, s])))
 const expandedId = ref<number | null>(null)
 const { me } = useMe()
@@ -56,6 +55,18 @@ const filtered = computed(() => {
       (p.color ?? '').toLowerCase().includes(q)
   )
 })
+
+// Paginación client-side sobre el resultado ya filtrado.
+const page = ref(1)
+const pageSize = ref(20)
+const total = computed(() => filtered.value.length)
+const paged = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
+})
+
+// Si cambia la búsqueda, vuelve a la página 1 (si no, puedes quedar en una página vacía).
+watch(search, () => { page.value = 1 })
 </script>
 
 <template>
@@ -112,13 +123,13 @@ const filtered = computed(() => {
             <tr v-if="pending">
               <td colspan="8" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
-            <tr v-else-if="!filtered.length">
+            <tr v-else-if="!paged.length">
               <td colspan="8" class="px-4 py-8 text-center text-muted">
                 Sin resultados.
               </td>
             </tr>
             <template v-else>
-              <template v-for="p in filtered" :key="p.id">
+              <template v-for="p in paged" :key="p.id">
                 <tr class="hover:bg-elevated/50">
                   <td class="px-4 py-3 font-mono text-xs">{{ p.sku }}</td>
                   <td class="px-4 py-3">
@@ -218,7 +229,7 @@ const filtered = computed(() => {
     </UCard>
 
     <div class="flex flex-col items-center gap-2">
-      <p class="text-xs text-muted">Mostrando {{ products.length }} de {{ total }} productos</p>
+      <p class="text-xs text-muted">Mostrando {{ paged.length }} de {{ total }} productos</p>
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
   </UContainer>
