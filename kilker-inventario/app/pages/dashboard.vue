@@ -16,6 +16,9 @@ const {
   getAverageCost
 } = useAverageCosts()
 
+const { me } = useMe()   // ← NUEVO
+const isEmployee = computed(() => me.value?.role === 'empleado')   // ← NUEVO
+
 const {
   movements,
   pending: loadingMovements,
@@ -73,11 +76,28 @@ const periodFrom = ref<string | undefined>(undefined)
 const periodTo = ref<string | undefined>(undefined)
 
 // Selector de sucursal: 0 = todas.
-const storeFilterItems = computed(() => [
-  { label: 'Todas las sucursales', value: 0 },
-  ...stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
-])
+const storeFilterItems = computed(() => {
+  if (isEmployee.value && me.value?.storeId != null) {
+    // El empleado solo ve su propia sucursal en el selector.
+    const own = stores.value.find((s) => s.id === me.value?.storeId)
+    return own ? [{ label: `${own.code} · ${own.name}`, value: own.id }] : []
+  }
+  return [
+    { label: 'Todas las sucursales', value: 0 },
+    ...stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
+  ]
+})
 const selectedStoreId = ref(0)
+
+watch(
+  () => me.value?.storeId,
+  (storeId) => {
+    if (isEmployee.value && storeId != null) {
+      selectedStoreId.value = storeId
+    }
+  },
+  { immediate: true }
+)
 
 // --- FUNCIÓN CENTRAL DE REFRESH ---
 const refreshAllData = async () => {
@@ -409,9 +429,13 @@ const isLoading = computed(
       </span>
     </div>
 
-    <USelect v-model="selectedStoreId" :items="storeFilterItems" class="w-64" />
-
-<h2 v-if="!selectedStoreId" class="flex items-center gap-2 font-semibold">
+<USelect
+  v-model="selectedStoreId"
+  :items="storeFilterItems"
+  :disabled="isEmployee"
+  class="w-64"
+/>
+<h2 v-if="!selectedStoreId && !isEmployee" class="flex items-center gap-2 font-semibold">
   <UIcon name="i-lucide-store" class="size-5 text-warning" />
   Sucursales
   <UBadge :label="number.format(activeStores)" color="warning" variant="subtle" class="ml-1" />
