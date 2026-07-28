@@ -3,7 +3,8 @@ import { UNIT_LABELS } from '~/types/inventario'
 
 useHead({ title: 'Catálogo · Inventario Kilker' })
 
-const { products, total, page, pageSize, pending, error, refresh } = useProducts()
+const {  total, page, pageSize} = useProducts()
+const { products, pending, error, refresh } = useAllProducts()
 const { data: stores } = useStores();
 const storeMap = computed(() => new Map(stores.value.map((s) => [s.id, s])))
 const expandedId = ref<number | null>(null)
