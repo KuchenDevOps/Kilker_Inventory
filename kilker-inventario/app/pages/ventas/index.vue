@@ -536,116 +536,125 @@ async function exportAll() {
           <p class="text-xs text-muted">Mostrando {{ sales.length }} de {{ total }} venta(s)</p>
           <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
         </div>
+
+    <!--
+      Fix aplicado: el modal ahora limita su altura al viewport y hace scroll
+      SOLO en el body (:ui="{ body: 'max-h-[70vh] overflow-y-auto' }').
+      El header y el footer (botón Cerrar) quedan siempre visibles, sin
+      importar la resolución o el zoom de la pantalla del usuario.
+    -->
     <UModal v-model:open="showDetailModal">
-  <template #content>
-    <UCard>
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-receipt" class="size-5 text-primary" />
-          <h2 class="font-semibold font-mono">{{ detail?.folio ?? '' }}</h2>
-          <UBadge
-            v-if="detail"
-            :label="detail.status === 'anulada' ? 'Anulada' : 'Emitida'"
-            :color="detail.status === 'anulada' ? 'error' : 'success'"
-            variant="subtle"
-            class="ml-auto"
-          />
-        </div>
+      <template #content>
+        <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-receipt" class="size-5 text-primary" />
+              <h2 class="font-semibold font-mono">{{ detail?.folio ?? '' }}</h2>
+              <UBadge
+                v-if="detail"
+                :label="detail.status === 'anulada' ? 'Anulada' : 'Emitida'"
+                :color="detail.status === 'anulada' ? 'error' : 'success'"
+                variant="subtle"
+                class="ml-auto"
+              />
+            </div>
+          </template>
+
+          <p v-if="loadingDetail" class="text-sm text-muted py-8 text-center">Cargando…</p>
+
+          <div v-else-if="detail" class="space-y-4">
+            <!-- Datos generales -->
+            <div class="grid gap-3 sm:grid-cols-2 text-sm">
+              <div>
+                <p class="text-muted">Sucursal</p>
+                <p class="font-medium">{{ detail.storeCode }} · {{ detail.storeName }}</p>
+              </div>
+              <div>
+                <p class="text-muted">Fecha</p>
+                <p class="font-medium">{{ fmtDate(detail.issuedAt) }}</p>
+              </div>
+              <div>
+                <p class="text-muted">Cliente</p>
+                <p class="font-medium">{{ detail.customerName ?? 'Sin cliente' }}</p>
+              </div>
+              <div>
+                <p class="text-muted">Canal</p>
+                <p class="font-medium">{{ detail.channel === 'en_linea' ? 'En línea' : 'Mostrador' }}</p>
+              </div>
+              <div>
+                <p class="text-muted">Método de pago</p>
+                <p class="font-medium capitalize">{{ detail.paymentMethod }}</p>
+              </div>
+              <div>
+                <p class="text-muted">Vendió</p>
+                <p class="font-medium">{{ detail.createdByName ?? '—' }}</p>
+              </div>
+            </div>
+
+            <p v-if="detail.note" class="text-sm text-muted italic">"{{ detail.note }}"</p>
+
+            <USeparator />
+
+            <!-- Líneas de producto -->
+            <div class="max-h-72 overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="text-muted border-b border-default sticky top-0 bg-default">
+                  <tr class="text-left">
+                    <th class="py-2 font-medium">Producto</th>
+                    <th class="py-2 font-medium text-right">Cant.</th>
+                    <th class="py-2 font-medium text-right">P. unit.</th>
+                    <th class="py-2 font-medium text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-default">
+                  <tr v-for="it in detail.items" :key="it.id">
+                    <td class="py-2">
+                      <p class="font-medium">{{ it.productName ?? '—' }}</p>
+                      <p class="text-xs text-muted font-mono">{{ it.productSku ?? '—' }}</p>
+                    </td>
+                    <td class="py-2 text-right tabular-nums">{{ it.quantity }}</td>
+                    <td class="py-2 text-right tabular-nums">{{ currency.format(Number(it.unitPrice)) }}</td>
+                    <td class="py-2 text-right tabular-nums">{{ currency.format(Number(it.lineTotal)) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <USeparator />
+
+            <div class="flex justify-between text-lg font-semibold">
+              <span>Total</span>
+              <span class="tabular-nums">{{ currency.format(Number(detail.totalAmount)) }}</span>
+            </div>
+
+            <div class="space-y-1 text-sm">
+              <div v-if="Number(detail.discountAmount) > 0" class="flex justify-between text-muted">
+                <span>Subtotal</span>
+                <span class="tabular-nums">{{ currency.format(Number(detail.subtotalAmount)) }}</span>
+              </div>
+              <div v-if="Number(detail.discountAmount) > 0" class="flex justify-between text-muted">
+                <span>Descuento ({{ Number(detail.discountPct) }}%)</span>
+                <span class="tabular-nums">-{{ currency.format(Number(detail.discountAmount)) }}</span>
+              </div>
+            </div>
+
+            <UAlert
+              v-if="detail.status === 'anulada'"
+              color="error"
+              variant="soft"
+              icon="i-lucide-ban"
+              title="Venta anulada"
+              :description="detail.voidReason ?? undefined"
+            />
+          </div>
+
+          <template #footer>
+            <div class="flex justify-end">
+              <UButton variant="ghost" color="neutral" @click="showDetailModal = false">Cerrar</UButton>
+            </div>
+          </template>
+        </UCard>
       </template>
-
-      <p v-if="loadingDetail" class="text-sm text-muted py-8 text-center">Cargando…</p>
-
-    <div v-else-if="detail" class="space-y-4">
-  <!-- Datos generales -->
-  <div class="grid gap-3 sm:grid-cols-2 text-sm">
-    <div>
-      <p class="text-muted">Sucursal</p>
-      <p class="font-medium">{{ detail.storeCode }} · {{ detail.storeName }}</p>
-    </div>
-    <div>
-      <p class="text-muted">Fecha</p>
-      <p class="font-medium">{{ fmtDate(detail.issuedAt) }}</p>
-    </div>
-    <div>
-      <p class="text-muted">Cliente</p>
-      <p class="font-medium">{{ detail.customerName ?? 'Sin cliente' }}</p>
-    </div>
-    <div>
-      <p class="text-muted">Canal</p>
-      <p class="font-medium">{{ detail.channel === 'en_linea' ? 'En línea' : 'Mostrador' }}</p>
-    </div>
-    <div>
-      <p class="text-muted">Método de pago</p>
-      <p class="font-medium capitalize">{{ detail.paymentMethod }}</p>
-    </div>
-    <div>
-      <p class="text-muted">Vendió</p>
-      <p class="font-medium">{{ detail.createdByName ?? '—' }}</p>
-    </div>
-  </div>
-
-  <p v-if="detail.note" class="text-sm text-muted italic">"{{ detail.note }}"</p>
-
-  <USeparator />
-
-  <!-- Líneas de producto: con scroll si hay muchas -->
-  <div class="max-h-72 overflow-y-auto">
-    <table class="w-full text-sm">
-      <thead class="text-muted border-b border-default sticky top-0 bg-default">
-        <tr class="text-left">
-          <th class="py-2 font-medium">Producto</th>
-          <th class="py-2 font-medium text-right">Cant.</th>
-          <th class="py-2 font-medium text-right">P. unit.</th>
-          <th class="py-2 font-medium text-right">Total</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-default">
-        <tr v-for="it in detail.items" :key="it.id">
-          <td class="py-2">
-            <p class="font-medium">{{ it.productName ?? '—' }}</p>
-            <p class="text-xs text-muted font-mono">{{ it.productSku ?? '—' }}</p>
-          </td>
-          <td class="py-2 text-right tabular-nums">{{ it.quantity }}</td>
-          <td class="py-2 text-right tabular-nums">{{ currency.format(Number(it.unitPrice)) }}</td>
-          <td class="py-2 text-right tabular-nums">{{ currency.format(Number(it.lineTotal)) }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <USeparator />
-
-  <div class="flex justify-between text-lg font-semibold">
-    <span>Total</span>
-    <span class="tabular-nums">{{ currency.format(Number(detail.totalAmount)) }}</span>
-  </div>
-
-  <div class="space-y-1 text-sm">
-  <div v-if="Number(detail.discountAmount) > 0" class="flex justify-between text-muted">
-    <span>Subtotal</span>
-    <span class="tabular-nums">{{ currency.format(Number(detail.subtotalAmount)) }}</span>
-  </div>
-  <div v-if="Number(detail.discountAmount) > 0" class="flex justify-between text-muted">
-    <span>Descuento ({{ Number(detail.discountPct) }}%)</span>
-    <span class="tabular-nums">-{{ currency.format(Number(detail.discountAmount)) }}</span>
-  </div>
-</div>
-
-  <UAlert
-    v-if="detail.status === 'anulada'"
-    color="error"
-    variant="soft"
-    icon="i-lucide-ban"
-    title="Venta anulada"
-    :description="detail.voidReason ?? undefined"
-  />
-</div>
-
-      <div class="flex justify-end pt-4">
-        <UButton variant="ghost" color="neutral" @click="showDetailModal = false">Cerrar</UButton>
-      </div>
-    </UCard>
-  </template>
-</UModal>
+    </UModal>
   </UContainer>
 </template>

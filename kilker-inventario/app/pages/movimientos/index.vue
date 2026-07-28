@@ -10,7 +10,7 @@ const { movements, total, page, pageSize, pending, error, storeId, from, to, sea
 
 
 const { data: stores } = useStores()
-const { data: products } = useProducts()
+const { products } = useAllProducts()
 const toast = useToast()
 const apiFetch = useApiFetch()
 
@@ -195,7 +195,7 @@ async function exportFiltered() {
     if (to.value) query.to = to.value
     if (search.value) query.q = search.value
 
-    const rows = await apiFetch('/api/movements', { query })
+  const rows = await apiFetch<any[]>('/api/movements', { query })
     if (!rows.length) {
       toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
       return
@@ -217,8 +217,8 @@ async function exportFiltered() {
 async function exportAll() {
   exportingAll.value = true
   try {
-    const rows = await apiFetch('/api/movements')
-    if (!rows.length) {
+  const rows = await apiFetch<any[]>('/api/movements', { query })
+      if (!rows.length) {
       toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
       return
     }

@@ -32,6 +32,7 @@ const storeFilter = computed({
 const periodSearch = ref('')
 
 watch([storeFilter, from, to], () => {
+  page.value = 1
   refresh()
 })
 watch(page, () => {
@@ -348,10 +349,10 @@ function fmtDay(s: string) {
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="9" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td colspan="11" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!filtered.length">
-              <td colspan="9" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
+              <td colspan="11" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
             </tr>
             <tr v-else v-for="e in filtered" :key="e.id" class="hover:bg-elevated/50">
                             <td class="px-4 py-3 text-muted whitespace-nowrap">{{ e.paidAt }}</td>
