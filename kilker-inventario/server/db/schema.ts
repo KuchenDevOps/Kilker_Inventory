@@ -1,237 +1,731 @@
 // ───────────────────────────────────────────────
-//  POST /api/sales — registrar una venta
+//  ESQUEMA DRIZZLE — INVENTARIO KILKER (v1)
 // ───────────────────────────────────────────────
-// En transacción: crea factura + líneas, movimientos de venta y baja inventario.
-import { and, eq, sql } from 'drizzle-orm'
-import { useDb } from '../../db'
+// Fuente de verdad del esquema Postgres. Solo se edita aquí + drizzle-kit.
+// stock_movements: kardex append-only con signo. inventory: saldo materializado.
+
+import { relations, sql } from 'drizzle-orm'
 import {
-  customers,
-  inventory,
-  invoiceItems,
-  invoices,
-  products,
-  stockMovements,
-  stores
-} from '../../db/schema'
+  bigint,
+  boolean,
+  check,
+  date,
+  index,
+  integer,
+  numeric,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+  type AnyPgColumn
+} from 'drizzle-orm/pg-core'
 
-interface SaleItem {
-  productId: number
-  quantity: number
-  unitPrice?: number
-}
-interface SaleBody {
-  storeId: number
-  customerId?: number | null
-  channel?: string
-  note?: string
-  paymentMethod?: string
-  items: SaleItem[]
-  discount?: number
-  issuedAt?: string
-}
+// auth.users la gestiona Supabase; no se modela aquí. FK a profiles vía migración SQL.
 
-export default defineEventHandler(async (event) => {
-  const profile = await requireProfile(event)
-  const body = await readBody<SaleBody>(event)
-
-  const storeId = Number(body?.storeId)
-  const items = Array.isArray(body?.items) ? body.items : []
-  if (!storeId || items.length === 0) {
-    throw createError({ statusCode: 400, statusMessage: 'storeId e items son requeridos' })
-  }
-  for (const it of items) {
-    if (!Number(it.productId) || !(Number(it.quantity) > 0)) {
-      throw createError({
-        statusCode: 400,
-        statusMessage: 'Cada item requiere productId y quantity (>0)'
-      })
-    }
-  }
-
-  const allowedPayments = ['efectivo', 'tarjeta', 'transferencia'] as const
-  const paymentMethod = allowedPayments.includes(body?.paymentMethod as never)
-    ? (body?.paymentMethod as (typeof allowedPayments)[number])
-    : 'efectivo'
-
-  const allowedChannels = ['mostrador', 'en_linea'] as const
-  const channel = allowedChannels.includes(body?.channel as never)
-    ? (body?.channel as (typeof allowedChannels)[number])
-    : 'mostrador'
-
-  let customerId: number | null = null
-  if (body?.customerId != null) {
-    customerId = Number(body.customerId)
-    if (!customerId) {
-      throw createError({ statusCode: 400, statusMessage: 'customerId inválido' })
-    }
-  }
-
-  if (profile.role === 'empleado' && profile.storeId !== storeId) {
-    throw createError({
-      statusCode: 403,
-      statusMessage: 'El empleado solo puede vender en su tienda'
-    })
-  }
-
-  // Fecha de la venta: si no se especifica, usa el momento actual.
-  let issuedAt: Date | undefined
-  if (body?.issuedAt) {
-    const parsed = new Date(body.issuedAt)
-    if (Number.isNaN(parsed.getTime())) {
-      throw createError({ statusCode: 400, statusMessage: 'Fecha de venta inválida' })
-    }
-    issuedAt = parsed
-  }
-  const effectiveDate = issuedAt ?? new Date()
-  // Solo se valida "stock a la fecha" para ventas retroactivas (fecha pasada
-  // explícita). Para ventas en tiempo real, el chequeo normal contra el
-  // inventario actual ya es suficiente y más rápido.
-  const isBackdated = issuedAt != null && issuedAt.getTime() < Date.now() - 60 * 1000
-
-  const db = useDb()
-
-  return await db.transaction(async (tx) => {
-    const store = await tx.query.stores.findFirst({ where: eq(stores.id, storeId) })
-    if (!store) throw createError({ statusCode: 404, statusMessage: 'Tienda no existe' })
-    if (!store.isActive) {
-      throw createError({ statusCode: 400, statusMessage: 'La sucursal está inactiva' })
-    }
-
-    if (customerId != null) {
-      const customer = await tx.query.customers.findFirst({
-        where: eq(customers.id, customerId)
-      })
-      if (!customer) {
-        throw createError({ statusCode: 400, statusMessage: 'El cliente no existe' })
-      }
-    }
-
-    const lines: { productId: number; quantity: number; unitPrice: number; lineTotal: number }[] = []
-    for (const it of items) {
-      const productId = Number(it.productId)
-      const quantity = Number(it.quantity)
-      const product = await tx.query.products.findFirst({ where: eq(products.id, productId) })
-      if (!product) {
-        throw createError({ statusCode: 404, statusMessage: `Producto ${productId} no existe` })
-      }
-
-      // Validación estándar: contra el inventario actual (siempre se hace).
-      const inv = await tx.query.inventory.findFirst({
-        where: and(eq(inventory.productId, productId), eq(inventory.storeId, storeId))
-      })
-      const available = inv ? Number(inv.quantity) : 0
-      if (available < quantity) {
-        throw createError({
-          statusCode: 400,
-          statusMessage: `Stock insuficiente de ${product.sku} en ${store.code}: hay ${available}, se piden ${quantity}`
-        })
-      }
-
-      // Validación adicional para ventas con fecha retroactiva: verifica que,
-      // A LA FECHA declarada de la venta, ya hubiera suficiente stock (evita
-      // registrar una venta "en el pasado" antes de que la mercancía hubiera
-      // entrado según el kardex — el mismo desfase que causó los shortfalls
-      // detectados en el reporte mensual).
-      if (isBackdated) {
-        // Trae TODOS los movimientos de este producto/tienda, sin filtrar por
-        // created_at en SQL — el filtro real ocurre abajo usando la fecha
-        // EFECTIVA (supplier_invoice_date para entradas cuando existe,
-        // created_at en caso contrario). Filtrar por created_at aquí
-        // excluiría entradas capturadas tarde en el sistema pero con
-        // factura de fecha anterior a la venta.
-        const priorMovements = await tx.query.stockMovements.findMany({
-          where: and(
-            eq(stockMovements.productId, productId),
-            eq(stockMovements.storeId, storeId)
-          ),
-          columns: { quantity: true, type: true, supplierInvoiceDate: true, createdAt: true }
-        })
-
-        // Para entradas, si tienen supplier_invoice_date, esa es la fecha real
-        // de referencia (puede diferir de created_at por captura retroactiva).
-        // Se re-filtra usando esa fecha "efectiva" cuando exista.
-        const netAtDate = priorMovements.reduce((sum, m) => {
-          const effective =
-            m.type === 'entrada' && m.supplierInvoiceDate
-              ? new Date(m.supplierInvoiceDate)
-              : m.createdAt
-          if (effective > effectiveDate) return sum
-          return sum + Number(m.quantity)
-        }, 0)
-
-        if (netAtDate < quantity) {
-          throw createError({
-            statusCode: 400,
-            statusMessage:
-              `No se puede registrar esta venta con fecha ${effectiveDate.toISOString().slice(0, 10)}: ` +
-              `según el kardex, a esa fecha solo había ${netAtDate} unidad(es) de ${product.sku} disponibles ` +
-              `en ${store.code} (se piden ${quantity}). Revisa si falta registrar una entrada anterior a esta fecha.`
-          })
-        }
-      }
-
-      const unitPrice = it.unitPrice != null ? Number(it.unitPrice) : Number(product.price)
-      lines.push({ productId, quantity, unitPrice, lineTotal: quantity * unitPrice })
-    }
-
-    const subTotal = lines.reduce((sum, l) => sum + l.lineTotal, 0)
-    const discountPct = Math.min(Math.max(Number(body?.discount ?? 0), 0), 100)
-    const discountAmount = subTotal * (discountPct / 100)
-    const totalAmount = subTotal - discountAmount
-
-    await tx.execute(sql`SELECT id FROM ${stores} WHERE id = ${storeId} FOR UPDATE`)
-
-    const [folioRow] = await tx
-      .select({ count: sql<number>`count(*)::int` })
-      .from(invoices)
-      .where(eq(invoices.storeId, storeId))
-    const folio = `${store.code}-${String(Number(folioRow?.count ?? 0) + 1).padStart(4, '0')}`
-
-    const [invoice] = await tx
-      .insert(invoices)
-      .values({
-        folio,
-        storeId,
-        customerId,
-        channel,
-        createdBy: profile.id,
-        status: 'emitida',
-        paymentMethod,
-        note: body.note ?? null,
-        discountPct: String(discountPct),
-        discountAmount: String(discountAmount),
-        totalAmount: String(totalAmount),
-        ...(issuedAt ? { issuedAt } : {})
-      })
-      .returning()
-    if (!invoice) {
-      throw createError({ statusCode: 500, statusMessage: 'No se pudo crear la factura' })
-    }
-
-    for (const l of lines) {
-      await tx.insert(invoiceItems).values({
-        invoiceId: invoice.id,
-        productId: l.productId,
-        quantity: String(l.quantity),
-        unitPrice: String(l.unitPrice),
-        lineTotal: String(l.lineTotal)
-      })
-      await tx.insert(stockMovements).values({
-        productId: l.productId,
-        storeId,
-        type: 'venta',
-        quantity: String(-l.quantity),
-        unitValue: String(l.unitPrice),
-        totalValue: String(-l.lineTotal),
-        invoiceId: invoice.id,
-        createdBy: profile.id
-      })
-      await tx
-        .update(inventory)
-        .set({ quantity: sql`${inventory.quantity} - ${l.quantity}`, updatedAt: new Date() })
-        .where(and(eq(inventory.productId, l.productId), eq(inventory.storeId, storeId)))
-    }
-
-    return { invoice, items: lines }
-  })
+// ───────────────────────────────────────────────
+//  HELPERS
+// ───────────────────────────────────────────────
+/** created_at + updated_at con zona horaria. */
+const timestamps = () => ({
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date())
 })
+
+// ───────────────────────────────────────────────
+//  ENUMS
+// ───────────────────────────────────────────────
+export const userRole = pgEnum('user_role', ['admin', 'empleado'])
+
+export const movementType = pgEnum('movement_type', [
+  'venta',
+  'entrada',
+  'ajuste',
+  'transferencia_salida',
+  'transferencia_entrada',
+  'anulacion'
+])
+
+export const invoiceStatus = pgEnum('invoice_status', ['emitida', 'anulada'])
+
+export const transferStatus = pgEnum('transfer_status', [
+  'pendiente',
+  'en_transito',
+  'recibida',
+  'cancelada'
+])
+
+export const ticketStatus = pgEnum('ticket_status', [
+  'abierto',
+  'aprobado',
+  'rechazado'
+])
+
+export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
+
+export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'])
+
+export const paymentMethod = pgEnum('payment_method', ['efectivo', 'tarjeta', 'transferencia'])
+
+/** Descuentos: enum listo para v2. */
+export const discountType = pgEnum('discount_type', ['porcentaje', 'combo'])
+
+// ───────────────────────────────────────────────
+//  TABLAS
+// ───────────────────────────────────────────────
+
+/** Tiendas / sucursales. Cada una controla su propio stock. */
+export const stores = pgTable('stores', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  name: text('name').notNull(),
+  code: text('code').notNull().unique(),
+  address: text('address'),
+  isActive: boolean('is_active').notNull().default(true),
+  ...timestamps()
+}).enableRLS()
+
+/** Perfil de aplicación (1:1 con auth.users) + rol y tienda del empleado. */
+export const profiles = pgTable('profiles', {
+  // FK a auth.users ON DELETE CASCADE: se añade vía migración SQL manual.
+  id: uuid('id').primaryKey(),
+  fullName: text('full_name').notNull(),
+  role: userRole('role').notNull(),
+  // Tienda del empleado; admin puede ser null (acceso global).
+  storeId: bigint('store_id', { mode: 'number' }).references(() => stores.id, {
+    onDelete: 'set null'
+  }),
+  isActive: boolean('is_active').notNull().default(true),
+  ...timestamps()
+}).enableRLS()
+
+/** Categorías / líneas de producto (jerarquía opcional). */
+export const categories = pgTable('categories', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  name: text('name').notNull(),
+  parentId: bigint('parent_id', { mode: 'number' }).references(
+    (): AnyPgColumn => categories.id
+  ),
+  ...timestamps()
+}).enableRLS()
+
+/** Catálogo. En v1 solo `color` (texto libre) y `unit` (litro/galon/cubeta/pieza,cuarto/tambo). */
+export const products = pgTable('products', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  sku: text('sku').notNull().unique(),
+  name: text('name').notNull(),
+  maxQuantity: numeric('max_quantity', {precision: 14, scale: 3}),
+  categoryId: bigint('category_id', { mode: 'number' }).references(
+    () => categories.id
+  ),
+  color: text('color'),
+  unit: productUnit('unit').notNull(),
+  price: numeric('price', { precision: 14, scale: 2 }).notNull(),
+  cost: numeric('cost', { precision: 14, scale: 2 }),
+  barcode: text('barcode'),
+  minQuantity: numeric('min_quantity', { precision: 14, scale: 3 }),
+  isActive: boolean('is_active').notNull().default(true),
+  ...timestamps()
+}).enableRLS()
+
+/** Saldo materializado de existencias por (producto × tienda). */
+export const inventory = pgTable(
+  'inventory',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    productId: bigint('product_id', { mode: 'number' })
+      .notNull()
+      .references(() => products.id),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+    quantity: numeric('quantity', { precision: 14, scale: 3 })
+      .notNull()
+      .default('0'),
+    minQuantity: numeric('min_quantity', { precision: 14, scale: 3 }),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date())
+  },
+  (t) => [
+    unique('inventory_product_store_uniq').on(t.productId, t.storeId),
+    check('inventory_quantity_non_negative', sql`${t.quantity} >= 0`)
+  ]
+).enableRLS()
+
+export const saleChannel = pgEnum('sale_channel', ['mostrador', 'en_linea'])
+
+
+/** Cabecera de venta (comprobante interno; sin CFDI/SAT en v1). */
+export const invoices = pgTable(
+  'invoices',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    // Folio secuencial por tienda (secuencia en migración SQL).
+    folio: text('folio').notNull(),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+     customerId: bigint('customer_id', { mode: 'number' }).references(() => customers.id, {
+      onDelete: 'set null'
+    }),
+    
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    status: invoiceStatus('status').notNull().default('emitida'),
+    
+    // Método de pago (corte de caja separa efectivo/tarjeta).
+    paymentMethod: paymentMethod('payment_method').notNull().default('efectivo'),
+    
+    channel: saleChannel('channel').notNull().default('mostrador'),
+
+    note: text('note'),
+    discountPct: numeric('discount_pct', { precision: 5, scale: 2 }).notNull().default('0'),
+    discountAmount: numeric('discount_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    totalAmount: numeric('total_amount', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    issuedAt: timestamp('issued_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: uuid('voided_by').references(() => profiles.id),
+    voidReason: text('void_reason')
+  },
+  (t) => [unique('invoices_store_folio_uniq').on(t.storeId, t.folio)]
+).enableRLS()
+
+/** Líneas de venta. `unit_price` es snapshot al momento de la venta. */
+
+export const invoiceItems = pgTable('invoice_items', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  invoiceId: bigint('invoice_id', { mode: 'number' })
+    .notNull()
+    .references(() => invoices.id, { onDelete: 'cascade' }),
+  productId: bigint('product_id', { mode: 'number' })
+    .notNull()
+    .references(() => products.id),
+  quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+  unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
+  lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull(),
+  discountType: discountType('discount_type'),
+  discountValue: numeric('discount_value', { precision: 14, scale: 2 }),
+  taxRate: numeric('tax_rate', { precision: 5, scale: 2 })
+}, (table) => [
+  index('idx_invoice_items_product_id').on(table.productId),
+  // este también te conviene: tu exists correlaciona por invoiceId
+  index('idx_invoice_items_invoice_id').on(table.invoiceId),
+]).enableRLS()
+
+/** Libro APPEND-ONLY (kardex). Fuente de verdad; cantidad e importe con signo. */
+export const stockMovements = pgTable(
+  'stock_movements',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    productId: bigint('product_id', { mode: 'number' })
+      .notNull()
+      .references(() => products.id),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+    type: movementType('type').notNull(),
+    // Signo: + entra, − sale.
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unitValue: numeric('unit_value', { precision: 14, scale: 2 }).notNull(),
+    totalValue: numeric('total_value', { precision: 14, scale: 2 }).notNull(),
+    invoiceId: bigint('invoice_id', { mode: 'number' }).references(
+      () => invoices.id
+    ),
+    transferId: bigint('transfer_id', { mode: 'number' }).references(
+      () => transfers.id
+    ),
+    // Liga la reversa (anulacion) al movimiento original.
+    reversesMovementId: bigint('reverses_movement_id', {
+      mode: 'number'
+    }).references((): AnyPgColumn => stockMovements.id),
+    reason: text('reason'),
+    supplierInvoiceNumber: text('supplier_invoice_number'),
+    supplierInvoiceDate: date('supplier_invoice_date'),
+    inventoryEntryInvoiceNumber: text('Folio'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [
+    index('stock_movements_store_created_idx').on(t.storeId, t.createdAt),
+    index('stock_movements_product_idx').on(t.productId),
+    unique('stock_movements_store_folio_unique').on(t.storeId, t.inventoryEntryInvoiceNumber)
+  ]
+).enableRLS()
+
+export const entryFolioCounters = pgTable('entry_folio_counters', {
+  storeId: bigint('store_id', { mode: 'number' })
+    .primaryKey()
+    .references(() => stores.id),
+  lastSeq: integer('last_seq').notNull().default(0)
+}).enableRLS()
+
+
+/** Cabecera de transferencia entre tiendas. */
+export const transfers = pgTable('transfers', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  fromStoreId: bigint('from_store_id', { mode: 'number' })
+    .notNull()
+    .references(() => stores.id),
+  toStoreId: bigint('to_store_id', { mode: 'number' })
+    .notNull()
+    .references(() => stores.id),
+  status: transferStatus('status').notNull().default('pendiente'),
+  createdBy: uuid('created_by')
+    .notNull()
+    .references(() => profiles.id),
+  note: text('note'),
+  issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+  receivedAt: timestamp('received_at', { withTimezone: true }),
+  // Quién confirmó la recepción en destino. Null hasta que status = 'recibida'.
+  receivedBy: uuid('received_by').references(() => profiles.id),
+  canceledAt: timestamp('canceled_at', { withTimezone: true }),
+  canceledBy: uuid('canceled_by').references(() => profiles.id),
+  cancelReason: text('cancel_reason'),
+  ...timestamps()
+}).enableRLS()
+
+/** Líneas de transferencia: generan salida en origen + entrada en destino. */
+export const transferItems = pgTable('transfer_items', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  transferId: bigint('transfer_id', { mode: 'number' })
+    .notNull()
+    .references(() => transfers.id, { onDelete: 'cascade' }),
+  productId: bigint('product_id', { mode: 'number' })
+    .notNull()
+    .references(() => products.id),
+  quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull()
+}).enableRLS()
+
+/** Tickets de corrección: el empleado los levanta; el admin los resuelve. */
+export const tickets = pgTable('tickets', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  raisedBy: uuid('raised_by')
+    .notNull()
+    .references(() => profiles.id),
+  storeId: bigint('store_id', { mode: 'number' })
+    .notNull()
+    .references(() => stores.id),
+  target: ticketTarget('target').notNull(),
+  invoiceId: bigint('invoice_id', { mode: 'number' }).references(
+    () => invoices.id
+  ),
+  movementId: bigint('movement_id', { mode: 'number' }).references(
+    () => stockMovements.id
+  ),
+  reason: text('reason').notNull(),
+  status: ticketStatus('status').notNull().default('abierto'),
+  resolvedBy: uuid('resolved_by').references(() => profiles.id),
+  resolutionNote: text('resolution_note'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true })
+}).enableRLS()
+
+/** Corte de caja por turno: snapshot de ventas de la tienda desde el corte anterior. */
+export const cashCloseouts = pgTable(
+  'cash_closeouts',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    // Ventana del corte. period_from null = desde el inicio.
+    periodFrom: timestamp('period_from', { withTimezone: true }),
+    periodTo: timestamp('period_to', { withTimezone: true }).notNull(),
+    // Snapshot de ventas emitidas del periodo.
+    salesCount: integer('sales_count').notNull().default(0),
+    totalEmitido: numeric('total_emitido', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    totalEfectivo: numeric('total_efectivo', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    totalTarjeta: numeric('total_tarjeta', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    totalTransferencia: numeric('total_transferencia', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    // Ventas del periodo anuladas al momento del corte (informativo).
+    voidedCount: integer('voided_count').notNull().default(0),
+    totalVoided: numeric('total_voided', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [index('cash_closeouts_store_created_idx').on(t.storeId, t.createdAt)]
+).enableRLS()
+
+/** Clientes del negocio. */
+export const customers = pgTable(
+  'customers',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    name: text('name').notNull(),
+    rfc: text('rfc'),
+    address: text('address'),
+    email: text('email'),
+    phone: text('phone'),
+    isActive: boolean('is_active').notNull().default(true),
+    ...timestamps()
+  },
+  (t) => [unique('customers_rfc_uniq').on(t.rfc)]
+).enableRLS()
+
+export const expenses = pgTable(
+  'expenses',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+    supplier: text('supplier').notNull(),
+    supplierInvoiceNumber: text('supplier_invoice_number').notNull(),
+    reason: text('reason').notNull(),
+    retentionIva: numeric('retention_iva', { precision: 14, scale: 2 }),
+    retentionIsr: numeric('retention_isr', { precision: 14, scale: 2 }),
+    // Monto base (subtotal, sin IVA). El total a pagar se calcula:
+    // amount * 1.16 - retentionIva - retentionIsr.
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    // Fecha de la factura del proveedor (no necesariamente cuándo se pagó).
+    paidAt: date('paid_at').notNull(),
+    note: text('note'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [index('expenses_store_paid_idx').on(t.storeId, t.paidAt)]
+).enableRLS()
+
+/** Abonos/pagos de un gasto. Un gasto puede pagarse en parcialidades. */
+export const expensePayments = pgTable(
+  'expense_payments',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    expenseId: bigint('expense_id', { mode: 'number' })
+      .notNull()
+      .references(() => expenses.id, { onDelete: 'cascade' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    paidAt: date('paid_at').notNull(),
+    method: paymentMethod('method').notNull().default('efectivo'),
+    note: text('note'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [index('expense_payments_expense_idx').on(t.expenseId, t.paidAt)]
+).enableRLS()
+
+
+
+
+
+
+// ───────────────────────────────────────────────
+//  RELACIONES
+// ───────────────────────────────────────────────
+
+export const profilesRelations = relations(profiles, ({ one, many }) => ({
+  store: one(stores, {
+    fields: [profiles.storeId],
+    references: [stores.id]
+  }),
+  stockMovements: many(stockMovements),
+  invoices: many(invoices),
+  transfers: many(transfers),
+  raisedTickets: many(tickets, { relationName: 'ticketRaisedBy' }),
+  resolvedTickets: many(tickets, { relationName: 'ticketResolvedBy' }),
+  cashCloseouts: many(cashCloseouts)
+}))
+
+export const storesRelations = relations(stores, ({ many }) => ({
+  profiles: many(profiles),
+  inventory: many(inventory),
+  stockMovements: many(stockMovements),
+  invoices: many(invoices),
+  transfersFrom: many(transfers, { relationName: 'transferFrom' }),
+  transfersTo: many(transfers, { relationName: 'transferTo' }),
+  tickets: many(tickets),
+  cashCloseouts: many(cashCloseouts)
+}))
+
+export const categoriesRelations = relations(categories, ({ one, many }) => ({
+  parent: one(categories, {
+    fields: [categories.parentId],
+    references: [categories.id],
+    relationName: 'categoryParent'
+  }),
+  children: many(categories, { relationName: 'categoryParent' }),
+  products: many(products)
+}))
+
+export const productsRelations = relations(products, ({ one, many }) => ({
+  category: one(categories, {
+    fields: [products.categoryId],
+    references: [categories.id]
+  }),
+  inventory: many(inventory),
+  stockMovements: many(stockMovements),
+  invoiceItems: many(invoiceItems),
+  transferItems: many(transferItems)
+}))
+
+export const customersRelations = relations(customers, ({ many }) => ({
+  invoices: many(invoices)
+}))
+
+export const inventoryRelations = relations(inventory, ({ one }) => ({
+  product: one(products, {
+    fields: [inventory.productId],
+    references: [products.id]
+  }),
+  store: one(stores, {
+    fields: [inventory.storeId],
+    references: [stores.id]
+  })
+}))
+
+export const invoicesRelations = relations(invoices, ({ one, many }) => ({
+  store: one(stores, {
+    fields: [invoices.storeId],
+    references: [stores.id]
+  }),
+  customer: one(customers, {
+    fields: [invoices.customerId],
+    references: [customers.id]
+  }),
+  createdBy: one(profiles, {
+    fields: [invoices.createdBy],
+    references: [profiles.id]
+  }),
+  voidedBy: one(profiles, {
+    fields: [invoices.voidedBy],
+    references: [profiles.id]
+  }),
+  items: many(invoiceItems),
+  stockMovements: many(stockMovements)
+}))
+
+export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
+  invoice: one(invoices, {
+    fields: [invoiceItems.invoiceId],
+    references: [invoices.id]
+  }),
+  product: one(products, {
+    fields: [invoiceItems.productId],
+    references: [products.id]
+  })
+}))
+
+export const stockMovementsRelations = relations(
+  stockMovements,
+  ({ one }) => ({
+    product: one(products, {
+      fields: [stockMovements.productId],
+      references: [products.id]
+    }),
+    store: one(stores, {
+      fields: [stockMovements.storeId],
+      references: [stores.id]
+    }),
+    invoice: one(invoices, {
+      fields: [stockMovements.invoiceId],
+      references: [invoices.id]
+    }),
+    transfer: one(transfers, {
+      fields: [stockMovements.transferId],
+      references: [transfers.id]
+    }),
+    reverses: one(stockMovements, {
+      fields: [stockMovements.reversesMovementId],
+      references: [stockMovements.id],
+      relationName: 'movementReversal'
+    }),
+    createdBy: one(profiles, {
+      fields: [stockMovements.createdBy],
+      references: [profiles.id]
+    })
+  })
+)
+
+export const transfersRelations = relations(transfers, ({ one, many }) => ({
+  fromStore: one(stores, {
+    fields: [transfers.fromStoreId],
+    references: [stores.id],
+    relationName: 'transferFrom'
+  }),
+  toStore: one(stores, {
+    fields: [transfers.toStoreId],
+    references: [stores.id],
+    relationName: 'transferTo'
+  }),
+  createdBy: one(profiles, {
+    fields: [transfers.createdBy],
+    references: [profiles.id],
+    relationName: 'transfer_created_by'   
+  }),
+  receivedBy: one(profiles, {
+    fields: [transfers.receivedBy],
+    references: [profiles.id],
+    relationName: 'transfer_received_by'
+  }),
+  canceledBy: one(profiles, {
+    fields: [transfers.canceledBy],
+    references: [profiles.id],
+    relationName: 'transfer_canceled_by'
+  }),
+  items: many(transferItems),
+  stockMovements: many(stockMovements)
+}))
+
+export const transferItemsRelations = relations(transferItems, ({ one }) => ({
+  transfer: one(transfers, {
+    fields: [transferItems.transferId],
+    references: [transfers.id]
+  }),
+  product: one(products, {
+    fields: [transferItems.productId],
+    references: [products.id]
+  })
+}))
+
+export const ticketsRelations = relations(tickets, ({ one }) => ({
+  raisedBy: one(profiles, {
+    fields: [tickets.raisedBy],
+    references: [profiles.id],
+    relationName: 'ticketRaisedBy'
+  }),
+  resolvedBy: one(profiles, {
+    fields: [tickets.resolvedBy],
+    references: [profiles.id],
+    relationName: 'ticketResolvedBy'
+  }),
+  store: one(stores, {
+    fields: [tickets.storeId],
+    references: [stores.id]
+  }),
+  invoice: one(invoices, {
+    fields: [tickets.invoiceId],
+    references: [invoices.id]
+  }),
+  movement: one(stockMovements, {
+    fields: [tickets.movementId],
+    references: [stockMovements.id]
+  })
+}))
+
+export const cashCloseoutsRelations = relations(cashCloseouts, ({ one }) => ({
+  store: one(stores, {
+    fields: [cashCloseouts.storeId],
+    references: [stores.id]
+  }),
+  createdBy: one(profiles, {
+    fields: [cashCloseouts.createdBy],
+    references: [profiles.id]
+  })
+}))
+
+export const expensesRelations = relations(expenses, ({ one, many }) => ({
+  store: one(stores, { fields: [expenses.storeId], references: [stores.id] }),
+  createdBy: one(profiles, { fields: [expenses.createdBy], references: [profiles.id] }),
+  payments: many(expensePayments)
+}))
+
+export const expensePaymentsRelations = relations(expensePayments, ({ one }) => ({
+  expense: one(expenses, { fields: [expensePayments.expenseId], references: [expenses.id] }),
+  createdBy: one(profiles, { fields: [expensePayments.createdBy], references: [profiles.id] })
+}))
+
+// ───────────────────────────────────────────────
+//  TIPOS INFERIDOS (select / insert)
+// ───────────────────────────────────────────────
+export type Store = typeof stores.$inferSelect
+export type NewStore = typeof stores.$inferInsert
+export type Profile = typeof profiles.$inferSelect
+export type NewProfile = typeof profiles.$inferInsert
+export type Category = typeof categories.$inferSelect
+export type NewCategory = typeof categories.$inferInsert
+export type Product = typeof products.$inferSelect
+export type NewProduct = typeof products.$inferInsert
+export type InventoryRow = typeof inventory.$inferSelect
+export type NewInventoryRow = typeof inventory.$inferInsert
+export type Invoice = typeof invoices.$inferSelect
+export type NewInvoice = typeof invoices.$inferInsert
+export type InvoiceItem = typeof invoiceItems.$inferSelect
+export type NewInvoiceItem = typeof invoiceItems.$inferInsert
+export type StockMovement = typeof stockMovements.$inferSelect
+export type NewStockMovement = typeof stockMovements.$inferInsert
+export type Transfer = typeof transfers.$inferSelect
+export type NewTransfer = typeof transfers.$inferInsert
+export type TransferItem = typeof transferItems.$inferSelect
+export type NewTransferItem = typeof transferItems.$inferInsert
+export type Ticket = typeof tickets.$inferSelect
+export type NewTicket = typeof tickets.$inferInsert
+export type CashCloseout = typeof cashCloseouts.$inferSelect
+export type NewCashCloseout = typeof cashCloseouts.$inferInsert
+export type Customer = typeof customers.$inferSelect
+export type NewCustomer = typeof customers.$inferInsert
+export type Expense = typeof expenses.$inferSelect
+export type NewExpense = typeof expenses.$inferInsert
+export type ExpensePayment = typeof expensePayments.$inferSelect
+export type NewExpensePayment = typeof expensePayments.$inferInsert
