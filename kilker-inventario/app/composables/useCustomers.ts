@@ -38,3 +38,30 @@ export function useCustomers() {
 
   return { customers, total, page, pageSize, pending, error, refresh }
 }
+
+export function useAllCustomers() {
+  const customers = useState<ApiCustomer[]>('all-customers', () => [])
+  const pending = useState('all-customers-pending', () => false)
+  const error = useState<string | null>('all-customers-error', () => null)
+
+  async function refresh() {
+    pending.value = true
+    error.value = null
+    try {
+      customers.value = await $fetch<ApiCustomer[]>('/api/customers')
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      customers.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('all-customers-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    void refresh()
+  }
+
+  return { customers, pending, error, refresh }
+}

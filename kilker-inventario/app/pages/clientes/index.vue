@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useAllCustomers } from '~/composables/useCustomers'
 import type { ApiCustomer } from '~/types/inventario'
 
 useHead({ title: 'Clientes · Inventario Kilker' })
@@ -10,10 +9,6 @@ const isAdmin = computed(() => me.value?.role === 'admin')
 
 const toast = useToast()
 const apiFetch = useApiFetch()
-
-onMounted(() => {
-  refresh()
-})
 
 const search = ref('')
 const filtered = computed(() => {
@@ -28,7 +23,7 @@ const filtered = computed(() => {
   )
 })
 
-// Paginación client-side sobre el resultado ya filtrado
+// Paginación client-side sobre el resultado ya filtrado.
 const page = ref(1)
 const pageSize = ref(20)
 const total = computed(() => filtered.value.length)
@@ -37,7 +32,7 @@ const paged = computed(() => {
   return filtered.value.slice(start, start + pageSize.value)
 })
 
-// Si cambia la búsqueda, regresa a la página 1 (si no, puedes quedar en una página vacía)
+// Si cambia la búsqueda, vuelve a la página 1.
 watch(search, () => { page.value = 1 })
 
 // ───────────────────────────────────────────────
@@ -194,10 +189,10 @@ async function toggleActive(c: ApiCustomer) {
             <tr v-if="pending">
               <td colspan="7" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
-            <tr v-else-if="!filtered.length">
+            <tr v-else-if="!paged.length">
               <td colspan="7" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
             </tr>
-            <tr v-else v-for="c in filtered" :key="c.id" class="hover:bg-elevated/50">
+            <tr v-else v-for="c in paged" :key="c.id" class="hover:bg-elevated/50">
               <td class="px-4 py-3 font-medium">{{ c.name }}</td>
               <td class="px-4 py-3 text-muted font-mono text-xs">{{ c.rfc ?? '—' }}</td>
               <td class="px-4 py-3 text-muted">{{ c.email ?? '—' }}</td>
@@ -258,7 +253,7 @@ async function toggleActive(c: ApiCustomer) {
     </UCard>
 
     <div class="flex flex-col items-center gap-2">
-      <p class="text-xs text-muted">Mostrando {{ customers.length }} de {{ total }} clientes</p>
+      <p class="text-xs text-muted">Mostrando {{ paged.length }} de {{ total }} clientes</p>
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
 
