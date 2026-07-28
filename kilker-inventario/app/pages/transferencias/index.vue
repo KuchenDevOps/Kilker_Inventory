@@ -27,7 +27,6 @@ const storeFilter = computed({
   get: () => storeId.value ?? 0,
   set: (v: number) => {
     storeId.value = v || undefined
-    refresh()
   }
 })
 
@@ -136,7 +135,7 @@ async function openDetail(t: ApiTransfer) {
 
     <div class="flex flex-wrap gap-3">
       <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
-      <USelect v-model="status" :items="statusItems" class="w-44" @update:model-value="refresh" />
+      <USelect v-model="status" :items="statusItems" class="w-44" />
     </div>
 
     <UAlert v-if="error" color="error" variant="soft" icon="i-lucide-triangle-alert" title="No se pudo cargar" :description="error" />
@@ -158,68 +157,69 @@ async function openDetail(t: ApiTransfer) {
             </tr>
           </thead>
           <tbody class="divide-y divide-default">
-            <tr v-if="pending"><td colspan="8" class="px-4 py-8 text-center text-muted">Cargando…</td></tr>
-            <tr v-else-if="!transfers.length"><td colspan="8" class="px-4 py-8 text-center text-muted">Sin transferencias.</td></tr>
-            <tr v-else v-for="t in transfers" :key="t.id" class="hover:bg-elevated/50">
-              <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(t.createdAt) }}</td>
-            <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDateOnly(t.issuedAt) }}</td>
-
-              <td class="px-4 py-3 text-muted">{{ t.fromStoreCode }}</td>
-              <td class="px-4 py-3 text-muted">{{ t.toStoreCode }}</td>
-              <td class="px-4 py-3 text-right tabular-nums">{{ t.itemCount }}</td>
-              <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(t.totalValue) }}</td>
-              <td class="px-4 py-3 text-center">
-                <UBadge
-                  :label="TRANSFER_STATUS_LABELS[t.status]"
-                  :color="t.status === 'recibida' ? 'success' : t.status === 'en_transito' ? 'warning' : 'neutral'"
-                  variant="subtle"
-                />
-              </td>
-              <td class="px-4 py-3 text-muted">{{ t.createdByName ?? '—' }}</td>
-                    <td class="px-4 py-3 text-right">
-                <div class="flex items-center justify-end gap-1">
+            <tr v-if="pending"><td colspan="9" class="px-4 py-8 text-center text-muted">Cargando…</td></tr>
+            <tr v-else-if="!transfers.length"><td colspan="9" class="px-4 py-8 text-center text-muted">Sin transferencias.</td></tr>
+            <template v-else v-for="t in transfers" :key="t.id">
+              <tr class="hover:bg-elevated/50">
+                <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(t.createdAt) }}</td>
+                <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDateOnly(t.issuedAt) }}</td>
+                <td class="px-4 py-3 text-muted">{{ t.fromStoreCode }}</td>
+                <td class="px-4 py-3 text-muted">{{ t.toStoreCode }}</td>
+                <td class="px-4 py-3 text-right tabular-nums">{{ t.itemCount }}</td>
+                <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(t.totalValue) }}</td>
+                <td class="px-4 py-3 text-center">
+                  <UBadge
+                    :label="TRANSFER_STATUS_LABELS[t.status]"
+                    :color="t.status === 'recibida' ? 'success' : t.status === 'en_transito' ? 'warning' : 'neutral'"
+                    variant="subtle"
+                  />
+                </td>
+                <td class="px-4 py-3 text-muted">{{ t.createdByName ?? '—' }}</td>
+                <td class="px-4 py-3 text-right">
+                  <div class="flex items-center justify-end gap-1">
                     <UButton
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    icon="i-lucide-eye"
-                    @click="openDetail(t)"
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-eye"
+                      @click="openDetail(t)"
                     />
                     <UButton
-                    v-if="canReceive(t)"
-                    size="xs"
-                    color="success"
-                    variant="soft"
-                    icon="i-lucide-package-check"
-                    :loading="receivingId === t.id"
-                    @click="receive(t)"
+                      v-if="canReceive(t)"
+                      size="xs"
+                      color="success"
+                      variant="soft"
+                      icon="i-lucide-package-check"
+                      :loading="receivingId === t.id"
+                      @click="receive(t)"
                     >
-                    Recibir
+                      Recibir
                     </UButton>
                     <UButton
-                    v-if="canCancel(t) && confirmingCancelId !== t.id"
-                    size="xs"
-                    color="error"
-                    variant="ghost"
-                    icon="i-lucide-x-circle"
-                    @click="openCancel(t)"
+                      v-if="canCancel(t) && confirmingCancelId !== t.id"
+                      size="xs"
+                      color="error"
+                      variant="ghost"
+                      icon="i-lucide-x-circle"
+                      @click="openCancel(t)"
                     />
-                </div>
+                  </div>
                 </td>
-                <tr v-if="confirmingCancelId === t.id" class="bg-elevated/40">
-                    <td colspan="8" class="px-4 py-3">
-                        <div class="flex flex-wrap items-end gap-3">
-                        <UFormField label="Motivo (opcional)" class="flex-1 min-w-60">
-                            <UInput v-model="cancelReason" placeholder="Error de captura, cambio de plan…" class="w-full" />
-                        </UFormField>
-                        <UButton color="error" icon="i-lucide-x-circle" :loading="cancelingId === t.id" @click="confirmCancel(t)">
-                            Confirmar cancelación
-                        </UButton>
-                        <UButton color="neutral" variant="ghost" @click="confirmingCancelId = null">Cancelar</UButton>
-                        </div>
-                    </td>
-                    </tr>
-            </tr>
+              </tr>
+              <tr v-if="confirmingCancelId === t.id" class="bg-elevated/40">
+                <td colspan="9" class="px-4 py-3">
+                  <div class="flex flex-wrap items-end gap-3">
+                    <UFormField label="Motivo (opcional)" class="flex-1 min-w-60">
+                      <UInput v-model="cancelReason" placeholder="Error de captura, cambio de plan…" class="w-full" />
+                    </UFormField>
+                    <UButton color="error" icon="i-lucide-x-circle" :loading="cancelingId === t.id" @click="confirmCancel(t)">
+                      Confirmar cancelación
+                    </UButton>
+                    <UButton color="neutral" variant="ghost" @click="confirmingCancelId = null">Cancelar</UButton>
+                  </div>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
