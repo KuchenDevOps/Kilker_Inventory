@@ -3,7 +3,7 @@ useHead({ title: 'Gastos · Inventario Kilker' })
 
 import type { ApiExpense, ApiExpensePayment, PaymentMethod } from '~/types/inventario'
 import { PAYMENT_LABELS } from '~/types/inventario'
-const { expenses, total, page, pageSize, pending, error, storeId, from, to, refresh } = useExpenses()
+const { expenses, total, page, pageSize, pending, error, storeId, from, to, search, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -27,21 +27,10 @@ const storeFilter = computed({
   }
 })
 
-// search del FiltroPeriodo no aplica aquí (ya tienes tu propio buscador de texto),
-// así que lo dejamos sin conectar y usamos un ref suelto que ignoramos.
+// search del FiltroPeriodo no aplica aquí (usamos nuestro propio buscador de
+// texto conectado al composable, que ahora filtra server-side). Se deja este
+// ref suelto solo para el binding del componente de fechas, sin efecto real.
 const periodSearch = ref('')
-
-watch([storeFilter, from, to], () => {
-  page.value = 1
-  refresh()
-})
-watch(page, () => {
-  refresh()
-})
-
-onMounted(() => {
-  refresh()
-})
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
@@ -49,32 +38,7 @@ function fmtDate(s: string) {
   return dateFmt.format(new Date(s))
 }
 
-const search = ref('')
-const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return expenses.value
-  return expenses.value.filter(
-    (e) =>
-      e.supplier.toLowerCase().includes(q) ||
-      e.supplierInvoiceNumber.toLowerCase().includes(q) ||
-      e.reason.toLowerCase().includes(q)
-  )
-})
-
 const IVA_RATE = 0.16
-
-// Renombra tu computed actual: era el subtotal, no el total real
-const subtotalAmount = computed(() =>
-  filtered.value.reduce((sum, e) => sum + Number(e.amount), 0)
-)
-
-const ivaAmount = computed(() => subtotalAmount.value * IVA_RATE)
-
-const totalWithIva = computed(() => subtotalAmount.value + ivaAmount.value)
-
-const totalAmount = computed(() =>
-  filtered.value.reduce((sum, e) => sum + Number(e.amount), 0)
-)
 
 // Alta de gasto (modal)
 const showModal = ref(false)
@@ -92,8 +56,6 @@ const form = reactive({
 })
 
 const showRetentions = ref(false)
-
-
 
 const editingId = ref<number | null>(null) // null = alta nueva, number = editando ese id
 
@@ -113,8 +75,6 @@ function openCreate() {
   })
   showModal.value = true
 }
-
-
 
 function openEdit(e: (typeof expenses.value)[number]) {
   editingId.value = e.id
@@ -185,8 +145,6 @@ async function onSubmit() {
     submitting.value = false
   }
 }
-
-
 
 const formIva = computed(() => (form.amount ?? 0) * IVA_RATE)
 const formTotalConIva = computed(
@@ -296,14 +254,14 @@ function fmtDay(s: string) {
     <header class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Gastos</h1>
-        
+        <p class="text-sm text-muted">{{ total }} gasto(s)</p>
       </div>
       <UButton icon="i-lucide-plus" color="primary" @click="openCreate">
         Nuevo gasto
       </UButton>
     </header>
 
-        <div class="space-y-3">
+    <div class="space-y-3">
       <FiltroCortePeriodo
         v-model:search="periodSearch"
         v-model:from="from"
@@ -333,8 +291,7 @@ function fmtDay(s: string) {
         <table class="w-full text-sm">
           <thead class="text-muted border-b border-default">
             <tr class="text-left">
-            <th class="px-4 py-3 font-medium">Fecha de Factura</th>
-
+              <th class="px-4 py-3 font-medium">Fecha de Factura</th>
               <th class="px-4 py-3 font-medium">Proveedor</th>
               <th class="px-4 py-3 font-medium">Factura</th>
               <th class="px-4 py-3 font-medium">Motivo</th>
@@ -351,28 +308,26 @@ function fmtDay(s: string) {
             <tr v-if="pending">
               <td colspan="11" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
-            <tr v-else-if="!filtered.length">
+            <tr v-else-if="!expenses.length">
               <td colspan="11" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
             </tr>
-            <tr v-else v-for="e in filtered" :key="e.id" class="hover:bg-elevated/50">
-                            <td class="px-4 py-3 text-muted whitespace-nowrap">{{ e.paidAt }}</td>
-
+            <tr v-else v-for="e in expenses" :key="e.id" class="hover:bg-elevated/50">
+              <td class="px-4 py-3 text-muted whitespace-nowrap">{{ e.paidAt }}</td>
               <td class="px-4 py-3 font-medium">{{ e.supplier }}</td>
               <td class="px-4 py-3 font-mono text-xs">{{ e.supplierInvoiceNumber }}</td>
               <td class="px-4 py-3 text-muted">{{ e.reason }}</td>
               <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(Number(e.amount)) }}</td>
               <td class="px-4 py-3 text-muted">{{ e.storeCode ?? '—' }}</td>
-                            <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(e.createdAt) }}</td>
-
+              <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(e.createdAt) }}</td>
               <td class="px-4 py-3 text-muted truncate max-w-48">{{ e.note ?? '—' }}</td>
               <td class="px-4 py-3">
-  <UBadge
-    :label="e.paymentStatus === 'pagado' ? 'Pagado' : e.paymentStatus === 'parcial' ? 'Parcial' : 'Pendiente'"
-    :color="e.paymentStatus === 'pagado' ? 'success' : e.paymentStatus === 'parcial' ? 'warning' : 'error'"
-    variant="subtle"
-  />
-    </td>
-    <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(e.balance) }}</td>
+                <UBadge
+                  :label="e.paymentStatus === 'pagado' ? 'Pagado' : e.paymentStatus === 'parcial' ? 'Parcial' : 'Pendiente'"
+                  :color="e.paymentStatus === 'pagado' ? 'success' : e.paymentStatus === 'parcial' ? 'warning' : 'error'"
+                  variant="subtle"
+                />
+              </td>
+              <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(e.balance) }}</td>
               <td class="px-4 py-3 text-right">
                 <div class="flex items-center justify-end gap-1">
                   <UButton
@@ -382,13 +337,13 @@ function fmtDay(s: string) {
                     icon="i-lucide-wallet"
                     @click="openPayments(e)"
                   />
-                <UButton
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  icon="i-lucide-pencil"
-                  @click="openEdit(e)"
-                />
+                  <UButton
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-pencil"
+                    @click="openEdit(e)"
+                  />
                 </div>
               </td>
             </tr>
@@ -396,243 +351,244 @@ function fmtDay(s: string) {
         </table>
       </div>
     </UCard>
-      <div class="flex flex-col items-center gap-2">
+
+    <div class="flex flex-col items-center gap-2">
       <p class="text-xs text-muted">Mostrando {{ expenses.length }} de {{ total }} gastos</p>
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
 
-   <UModal v-model:open="showModal">
-  <template #content>
-    <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
-      <template #header>
-        <h2 class="font-semibold">{{ editingId != null ? 'Editar gasto' : 'Nuevo gasto' }}</h2>
-      </template>
+    <UModal v-model:open="showModal">
+      <template #content>
+        <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
+          <template #header>
+            <h2 class="font-semibold">{{ editingId != null ? 'Editar gasto' : 'Nuevo gasto' }}</h2>
+          </template>
 
-      <form class="space-y-2" @submit.prevent="onSubmit">
-        <UFormField v-if="isAdmin" label="Sucursal" required>
-          <USelect v-model="form.storeId" :items="storeItems" placeholder="Selecciona una sucursal" class="w-full" />
-        </UFormField>
+          <form class="space-y-2" @submit.prevent="onSubmit">
+            <UFormField v-if="isAdmin" label="Sucursal" required>
+              <USelect v-model="form.storeId" :items="storeItems" placeholder="Selecciona una sucursal" class="w-full" />
+            </UFormField>
 
-        <UFormField label="Fecha de Factura" required>
-          <UInput v-model="form.paidAt" type="date" class="w-full" />
-        </UFormField>
-        <UFormField label="Proveedor" required>
-          <UInput v-model="form.supplier" placeholder="Nombre del proveedor" class="w-full" />
-        </UFormField>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="Número de factura" required>
-            <UInput v-model="form.supplierInvoiceNumber" placeholder="A-12345" class="w-full" />
-          </UFormField>
-          <UFormField label="Monto (MXN)" required>
-            <UInputNumber
-              v-model="form.amount"
-              :min="0"
-              :step="0.01"
-              :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-              placeholder="0"
-              class="w-full"
-            />
-          </UFormField>
-        </div>
-
-        <div
-          v-if="form.amount"
-          class="rounded-lg border border-default bg-elevated/40 px-4 py-3 space-y-3 text-sm"
-        >
-          <div class="flex items-center justify-between gap-2">
-            <div>
-              <p class="text-muted text-xs">IVA (16%)</p>
-              <p class="font-medium tabular-nums text-warning">{{ currency.format(formIva) }}</p>
+            <UFormField label="Fecha de Factura" required>
+              <UInput v-model="form.paidAt" type="date" class="w-full" />
+            </UFormField>
+            <UFormField label="Proveedor" required>
+              <UInput v-model="form.supplier" placeholder="Nombre del proveedor" class="w-full" />
+            </UFormField>
+            <div class="grid gap-4 sm:grid-cols-2">
+              <UFormField label="Número de factura" required>
+                <UInput v-model="form.supplierInvoiceNumber" placeholder="A-12345" class="w-full" />
+              </UFormField>
+              <UFormField label="Monto (MXN)" required>
+                <UInputNumber
+                  v-model="form.amount"
+                  :min="0"
+                  :step="0.01"
+                  :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                  placeholder="0"
+                  class="w-full"
+                />
+              </UFormField>
             </div>
-            <UButton
-              size="xs"
-              variant="ghost"
-              color="neutral"
-              :icon="showRetentions ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-              @click="showRetentions = !showRetentions"
+
+            <div
+              v-if="form.amount"
+              class="rounded-lg border border-default bg-elevated/40 px-4 py-3 space-y-3 text-sm"
             >
-              Retenciones
-            </UButton>
-          </div>
-
-          <div v-if="showRetentions" class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-default">
-            <UFormField label="Retención IVA">
-              <UInputNumber
-                v-model="form.retentionIVA"
-                :min="0"
-                :step="0.01"
-                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-                placeholder="0"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Retención ISR">
-              <UInputNumber
-                v-model="form.retentionISR"
-                :min="0"
-                :step="0.01"
-                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-                placeholder="0"
-                class="w-full"
-              />
-            </UFormField>
-          </div>
-
-          <div class="pt-2 border-t border-default">
-            <p class="text-muted text-xs">Total (IVA − retenciones)</p>
-            <p class="font-medium tabular-nums text-success">{{ currency.format(formTotalConIva) }}</p>
-          </div>
-        </div>
-
-        <UFormField label="Motivo" required>
-          <UInput v-model="form.reason" placeholder="Renta, luz, mantenimiento…" class="w-full" />
-        </UFormField>
-        <UFormField label="Nota">
-          <UTextarea v-model="form.note" placeholder="Observaciones (opcional)" class="w-full" />
-        </UFormField>
-        <div class="flex justify-end gap-2 pt-2">
-          <UButton type="button" variant="ghost" color="neutral" @click="showModal = false">
-            Cancelar
-          </UButton>
-          <UButton type="submit" color="primary" :loading="submitting" :disabled="!canSubmit">
-            Guardar
-          </UButton>
-        </div>
-      </form>
-    </UCard>
-      
-  </template>
-</UModal>
-<UModal v-model:open="showPaymentsModal">
-  <template #content>
-    <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-wallet" class="size-5 text-primary" />
-          <h2 class="font-semibold">{{ viewingExpense?.supplier }}</h2>
-          <UBadge
-            v-if="viewingExpense"
-            :label="
-              viewingExpense.paymentStatus === 'pagado'
-                ? 'Pagado'
-                : viewingExpense.paymentStatus === 'parcial'
-                  ? 'Parcial'
-                  : 'Pendiente'
-            "
-            :color="
-              viewingExpense.paymentStatus === 'pagado'
-                ? 'success'
-                : viewingExpense.paymentStatus === 'parcial'
-                  ? 'warning'
-                  : 'error'
-            "
-            variant="subtle"
-            class="ml-auto"
-          />
-        </div>
-      </template>
-
-      <div v-if="viewingExpense" class="space-y-5">
-        <!-- Resumen -->
-        <div class="grid gap-3 sm:grid-cols-3 text-sm rounded-lg bg-elevated/40 px-4 py-3">
-          <div>
-            <p class="text-muted text-xs">Total a pagar</p>
-            <p class="font-medium tabular-nums">{{ currency.format(viewingExpense.totalToPay) }}</p>
-          </div>
-          <div>
-            <p class="text-muted text-xs">Pagado</p>
-            <p class="font-medium tabular-nums text-success">
-              {{ currency.format(viewingExpense.totalPaid) }}
-            </p>
-          </div>
-          <div>
-            <p class="text-muted text-xs">Saldo pendiente</p>
-            <p class="font-medium tabular-nums text-error">
-              {{ currency.format(viewingExpense.balance) }}
-            </p>
-          </div>
-        </div>
-
-        <!-- Historial de pagos -->
-        <div>
-          <h3 class="text-sm font-semibold mb-2">Historial de pagos</h3>
-          <p v-if="loadingPayments" class="text-sm text-muted py-4 text-center">Cargando…</p>
-          <p v-else-if="!payments.length" class="text-sm text-muted py-4 text-center">
-            Sin pagos registrados todavía.
-          </p>
-          <ul v-else class="divide-y divide-default text-sm">
-            <li
-              v-for="p in payments"
-              :key="p.id"
-              class="flex items-center justify-between gap-3 py-2"
-            >
-              <div>
-                <p class="font-medium">{{ currency.format(Number(p.amount)) }}</p>
-                <p class="text-xs text-muted">
-                  {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
-                  <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
-                </p>
-                <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+              <div class="flex items-center justify-between gap-2">
+                <div>
+                  <p class="text-muted text-xs">IVA (16%)</p>
+                  <p class="font-medium tabular-nums text-warning">{{ currency.format(formIva) }}</p>
+                </div>
+                <UButton
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  :icon="showRetentions ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                  @click="showRetentions = !showRetentions"
+                >
+                  Retenciones
+                </UButton>
               </div>
-            </li>
-          </ul>
-        </div>
 
-        <USeparator v-if="viewingExpense.balance > 0" />
+              <div v-if="showRetentions" class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-default">
+                <UFormField label="Retención IVA">
+                  <UInputNumber
+                    v-model="form.retentionIVA"
+                    :min="0"
+                    :step="0.01"
+                    :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                    placeholder="0"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField label="Retención ISR">
+                  <UInputNumber
+                    v-model="form.retentionISR"
+                    :min="0"
+                    :step="0.01"
+                    :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                    placeholder="0"
+                    class="w-full"
+                  />
+                </UFormField>
+              </div>
 
-        <!-- Registrar nuevo pago -->
-        <div v-if="viewingExpense.balance > 0" class="space-y-3">
-          <h3 class="text-sm font-semibold">Registrar pago</h3>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <UFormField label="Monto">
-              <UInputNumber
-                v-model="paymentForm.amount"
-                :min="0"
-                :max="viewingExpense.balance"
-                :step="0.01"
-                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-                :placeholder="`máx. ${viewingExpense.balance.toFixed(2)}`"
-                class="w-full"
+              <div class="pt-2 border-t border-default">
+                <p class="text-muted text-xs">Total (IVA − retenciones)</p>
+                <p class="font-medium tabular-nums text-success">{{ currency.format(formTotalConIva) }}</p>
+              </div>
+            </div>
+
+            <UFormField label="Motivo" required>
+              <UInput v-model="form.reason" placeholder="Renta, luz, mantenimiento…" class="w-full" />
+            </UFormField>
+            <UFormField label="Nota">
+              <UTextarea v-model="form.note" placeholder="Observaciones (opcional)" class="w-full" />
+            </UFormField>
+            <div class="flex justify-end gap-2 pt-2">
+              <UButton type="button" variant="ghost" color="neutral" @click="showModal = false">
+                Cancelar
+              </UButton>
+              <UButton type="submit" color="primary" :loading="submitting" :disabled="!canSubmit">
+                Guardar
+              </UButton>
+            </div>
+          </form>
+        </UCard>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="showPaymentsModal">
+      <template #content>
+        <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-wallet" class="size-5 text-primary" />
+              <h2 class="font-semibold">{{ viewingExpense?.supplier }}</h2>
+              <UBadge
+                v-if="viewingExpense"
+                :label="
+                  viewingExpense.paymentStatus === 'pagado'
+                    ? 'Pagado'
+                    : viewingExpense.paymentStatus === 'parcial'
+                      ? 'Parcial'
+                      : 'Pendiente'
+                "
+                :color="
+                  viewingExpense.paymentStatus === 'pagado'
+                    ? 'success'
+                    : viewingExpense.paymentStatus === 'parcial'
+                      ? 'warning'
+                      : 'error'
+                "
+                variant="subtle"
+                class="ml-auto"
               />
-            </UFormField>
-            <UFormField label="Fecha de pago">
-              <UInput v-model="paymentForm.paidAt" type="date" class="w-full" />
-            </UFormField>
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <UFormField label="Método">
-              <USelect v-model="paymentForm.method" :items="paymentMethodItems" class="w-full" />
-            </UFormField>
-            <UFormField label="Nota (opcional)">
-              <UInput v-model="paymentForm.note" placeholder="Referencia, folio…" class="w-full" />
-            </UFormField>
-          </div>
-          <div class="flex justify-end">
-            <UButton
-              icon="i-lucide-plus"
-              color="primary"
-              :loading="submittingPayment"
-              :disabled="!canSubmitPayment"
-              @click="submitPayment"
-            >
-              Agregar pago
-            </UButton>
-          </div>
-        </div>
-        <UAlert
-          v-else
-          color="success"
-          variant="soft"
-          icon="i-lucide-circle-check"
-          title="Gasto completamente pagado"
-        />
-      </div>
+            </div>
+          </template>
 
-      <div class="flex justify-end pt-4">
-        <UButton variant="ghost" color="neutral" @click="showPaymentsModal = false">Cerrar</UButton>
-      </div>
-    </UCard>
-  </template>
-</UModal>
+          <div v-if="viewingExpense" class="space-y-5">
+            <!-- Resumen -->
+            <div class="grid gap-3 sm:grid-cols-3 text-sm rounded-lg bg-elevated/40 px-4 py-3">
+              <div>
+                <p class="text-muted text-xs">Total a pagar</p>
+                <p class="font-medium tabular-nums">{{ currency.format(viewingExpense.totalToPay) }}</p>
+              </div>
+              <div>
+                <p class="text-muted text-xs">Pagado</p>
+                <p class="font-medium tabular-nums text-success">
+                  {{ currency.format(viewingExpense.totalPaid) }}
+                </p>
+              </div>
+              <div>
+                <p class="text-muted text-xs">Saldo pendiente</p>
+                <p class="font-medium tabular-nums text-error">
+                  {{ currency.format(viewingExpense.balance) }}
+                </p>
+              </div>
+            </div>
+
+            <!-- Historial de pagos -->
+            <div>
+              <h3 class="text-sm font-semibold mb-2">Historial de pagos</h3>
+              <p v-if="loadingPayments" class="text-sm text-muted py-4 text-center">Cargando…</p>
+              <p v-else-if="!payments.length" class="text-sm text-muted py-4 text-center">
+                Sin pagos registrados todavía.
+              </p>
+              <ul v-else class="divide-y divide-default text-sm">
+                <li
+                  v-for="p in payments"
+                  :key="p.id"
+                  class="flex items-center justify-between gap-3 py-2"
+                >
+                  <div>
+                    <p class="font-medium">{{ currency.format(Number(p.amount)) }}</p>
+                    <p class="text-xs text-muted">
+                      {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
+                      <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
+                    </p>
+                    <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+                  </div>
+                </li>
+              </ul>
+            </div>
+
+            <USeparator v-if="viewingExpense.balance > 0" />
+
+            <!-- Registrar nuevo pago -->
+            <div v-if="viewingExpense.balance > 0" class="space-y-3">
+              <h3 class="text-sm font-semibold">Registrar pago</h3>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <UFormField label="Monto">
+                  <UInputNumber
+                    v-model="paymentForm.amount"
+                    :min="0"
+                    :max="viewingExpense.balance"
+                    :step="0.01"
+                    :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                    :placeholder="`máx. ${viewingExpense.balance.toFixed(2)}`"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField label="Fecha de pago">
+                  <UInput v-model="paymentForm.paidAt" type="date" class="w-full" />
+                </UFormField>
+              </div>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <UFormField label="Método">
+                  <USelect v-model="paymentForm.method" :items="paymentMethodItems" class="w-full" />
+                </UFormField>
+                <UFormField label="Nota (opcional)">
+                  <UInput v-model="paymentForm.note" placeholder="Referencia, folio…" class="w-full" />
+                </UFormField>
+              </div>
+              <div class="flex justify-end">
+                <UButton
+                  icon="i-lucide-plus"
+                  color="primary"
+                  :loading="submittingPayment"
+                  :disabled="!canSubmitPayment"
+                  @click="submitPayment"
+                >
+                  Agregar pago
+                </UButton>
+              </div>
+            </div>
+            <UAlert
+              v-else
+              color="success"
+              variant="soft"
+              icon="i-lucide-circle-check"
+              title="Gasto completamente pagado"
+            />
+          </div>
+
+          <div class="flex justify-end pt-4">
+            <UButton variant="ghost" color="neutral" @click="showPaymentsModal = false">Cerrar</UButton>
+          </div>
+        </UCard>
+      </template>
+    </UModal>
   </UContainer>
 </template>

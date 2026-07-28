@@ -30,6 +30,19 @@ export default defineEventHandler(async (event) => {
   if (fromDate) filters.push(gte(expenses.paidAt, fromDate))
   if (toDate) filters.push(lt(expenses.paidAt, toDate))
 
+  // ─── NUEVO: búsqueda por proveedor, número de factura o motivo ───
+  const q = String(query.q ?? '').trim()
+  if (q) {
+    const like = `%${q}%`
+    filters.push(
+      or(
+        ilike(expenses.supplier, like),
+        ilike(expenses.supplierInvoiceNumber, like),
+        ilike(expenses.reason, like)
+      )!
+    )
+  }
+  // ─── fin del bloque nuevo ───
 
   // ── Paginación: SOLO se activa si viene ?page en la query ──
   const whereClause = filters.length ? and(...filters) : undefined
@@ -49,40 +62,38 @@ export default defineEventHandler(async (event) => {
     }
   })
 
+  const mapped = rows.map((e) => {
+    const totalToPay = Math.round(Number(e.amount) * 100) / 100
+    const totalPaid = Math.round(e.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
+    const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
 
-  
+    let paymentStatus: 'pendiente' | 'parcial' | 'pagado' = 'pendiente'
+    if (totalPaid >= totalToPay && totalToPay > 0) paymentStatus = 'pagado'
+    else if (totalPaid > 0) paymentStatus = 'parcial'
 
-const mapped = rows.map((e) => {
-  const totalToPay = Math.round(Number(e.amount) * 100) / 100
-  const totalPaid = Math.round(e.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
-  const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
+    return {
+      id: e.id,
+      storeId: e.storeId,
+      storeCode: e.store?.code ?? null,
+      storeName: e.store?.name ?? null,
+      supplier: e.supplier,
+      supplierInvoiceNumber: e.supplierInvoiceNumber,
+      reason: e.reason,
+      amount: e.amount,
+      retentionIva: e.retentionIva,
+      retentionIsr: e.retentionIsr,
+      totalToPay,
+      totalPaid,
+      balance,
+      paymentStatus,
+      paidAt: e.paidAt,
+      note: e.note,
+      createdByName: e.createdBy?.fullName ?? null,
+      createdAt: e.createdAt
+    }
+  })
 
-  let paymentStatus: 'pendiente' | 'parcial' | 'pagado' = 'pendiente'
-  if (totalPaid >= totalToPay && totalToPay > 0) paymentStatus = 'pagado'
-  else if (totalPaid > 0) paymentStatus = 'parcial'
-
-  return {
-    id: e.id,
-    storeId: e.storeId,
-    storeCode: e.store?.code ?? null,
-    storeName: e.store?.name ?? null,
-    supplier: e.supplier,
-    supplierInvoiceNumber: e.supplierInvoiceNumber,
-    reason: e.reason,
-    amount: e.amount,
-    retentionIva: e.retentionIva,
-    retentionIsr: e.retentionIsr,
-    totalToPay,
-    totalPaid,
-    balance,
-    paymentStatus,
-    paidAt: e.paidAt,
-    note: e.note,
-    createdByName: e.createdBy?.fullName ?? null,
-    createdAt: e.createdAt
-  }
-})
- if (!paginate) return mapped
+  if (!paginate) return mapped
 
   const [{ value: totalCount }] = await db
     .select({ value: count() })
