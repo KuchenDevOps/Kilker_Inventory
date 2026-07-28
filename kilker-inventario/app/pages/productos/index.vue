@@ -58,7 +58,7 @@ const filtered = computed(() => {
 
 // Paginación client-side sobre el resultado ya filtrado.
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(100)
 const total = computed(() => filtered.value.length)
 const paged = computed(() => {
   const start = (page.value - 1) * pageSize.value
