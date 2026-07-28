@@ -5,7 +5,7 @@ useHead({ title: 'Nueva transferencia · Inventario Kilker' })
 
 const toast = useToast()
 const { me } = useMe()
-const { data: products } = useProducts()
+const { products } = useAllProducts()   // ← antes: const { data: products } = useProducts()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
@@ -63,9 +63,9 @@ async function onSubmit() {
   if (!canSubmit.value) return
   submitting.value = true
   try {
-        let issuedAt: string | undefined
+    let issuedAt: string | undefined
 
-       if (issueDate.value) {
+    if (issueDate.value) {
       const now = new Date()
       const [year, month, day] = issueDate.value.split('-').map(Number)
       const combined = new Date(
@@ -127,7 +127,7 @@ async function onSubmit() {
         </div>
         <div>
           <UFormField
-            label="Fecha de la venta"
+            label="Fecha de la transferencia"
             name="issuedAt"
             help="Déjalo vacío para usar hoy."
           >

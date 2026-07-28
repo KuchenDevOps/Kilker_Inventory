@@ -5,7 +5,7 @@ useHead({ title: 'Entrada de stock · Inventario Kilker' })
 
 const toast = useToast()
 const { me } = useMe()
-const { data: products } = useProducts()
+const { products } = useAllProducts()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
@@ -85,7 +85,7 @@ async function onSubmit() {
         supplierInvoiceDate: state.supplierInvoiceDate || undefined
       }
     })
-    await refreshNuxtData('products')
+await refreshNuxtData('all-products')
     toast.add({
       title: 'Entrada registrada',
       description: `+${state.quantity} de ${selectedProduct.value?.sku} en ${targetStore.value?.code}`,
