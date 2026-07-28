@@ -11,9 +11,9 @@ useHead({ title: 'Nueva venta · Inventario Kilker' })
 
 const toast = useToast()
 const { me } = useMe()
-const { data: products } = useProducts()
+const { products } = useAllProducts()   // ← antes: const { data: products } = useProducts()
 const { data: stores } = useStores()
-const { data: customers, refresh: refreshCustomers } = useCustomers()
+const { customers, total, page, pageSize, pending, error, refresh } = useCustomers()
 
 const apiFetch = useApiFetch()
 
@@ -50,7 +50,6 @@ const issuedAt = ref('')
 // Fecha de la venta (solo día). Vacío = hoy (el backend usa defaultNow()).
 const saleDate = ref('')
 
-
 // Límite superior para el input: no permitir seleccionar una fecha futura.
 const maxIssuedAt = computed(() => new Date().toISOString().slice(0, 16))
 const lines = reactive<Line[]>([{ productId: undefined, quantity: undefined, unitPrice: undefined }])
@@ -86,7 +85,7 @@ function productOf(id: number | undefined) {
 
 /** Existencia del producto de una línea en la tienda elegida. */
 function stockInStore(productId: number | undefined) {
-   // El catálogo solo trae stock total; mostramos el total como referencia.
+  // El catálogo solo trae stock total; mostramos el total como referencia.
   return productOf(productId)?.totalStock ?? 0
 }
 
@@ -213,7 +212,7 @@ async function quickCreateCustomer() {
       method: 'POST',
       body: { name: newCustomerName.value.trim(), phone: newCustomerPhone.value.trim() || undefined }
     })
-    await refreshCustomers()
+    await refresh()
     customerId.value = created.id
     creatingCustomer.value = false
     newCustomerName.value = ''
@@ -298,62 +297,60 @@ async function quickCreateCustomer() {
         </div>
 
         <div class="grid gap-4 sm:grid-cols-2">
-
-
-  <UFormField label="Canal de venta" name="channel" required>
-    <USelect v-model="channel" :items="channelItems" :disabled="!canOperate" class="w-full" />
-  </UFormField>
-
-<UFormField
-  label="Fecha de la venta"
-  name="saleDate"
-  help="Déjalo vacío para usar hoy."
->
-  <UInput
-    v-model="saleDate"
-    type="date"
-    :disabled="!canOperate"
-    class="w-full"
-  />
-</UFormField>
-
- <UFormField label="Cliente" name="customerId">
-  <div class="flex gap-2">
-    <USelectMenu
-      v-model="customerId"
-      :items="customerItems" 
-      value-key="value"
-      :disabled="!canOperate"
-      searchable
-      placeholder="Buscar cliente por nombre…"
-      class="w-full"
-    />
-    <UButton
-      type="button"
-      icon="i-lucide-user-plus"
-      variant="soft"
-      :disabled="!canOperate"
-      @click="creatingCustomer = true"
-    />
-  </div>
-</UFormField>
-</div>
-
-      <!-- Panel inline de alta rápida de cliente -->
-      <UCard v-if="creatingCustomer" class="bg-elevated/30">
-        <div class="flex flex-wrap items-end gap-3">
-          <UFormField label="Nombre" class="flex-1 min-w-48">
-            <UInput v-model="newCustomerName" placeholder="Nombre del cliente" class="w-full" />
+          <UFormField label="Canal de venta" name="channel" required>
+            <USelect v-model="channel" :items="channelItems" :disabled="!canOperate" class="w-full" />
           </UFormField>
-          <UFormField label="Teléfono (opcional)" class="flex-1 min-w-40">
-            <UInput v-model="newCustomerPhone" placeholder="55..." class="w-full" />
+
+          <UFormField
+            label="Fecha de la venta"
+            name="saleDate"
+            help="Déjalo vacío para usar hoy."
+          >
+            <UInput
+              v-model="saleDate"
+              type="date"
+              :disabled="!canOperate"
+              class="w-full"
+            />
           </UFormField>
-          <UButton :loading="savingCustomer" :disabled="!newCustomerName.trim()" @click="quickCreateCustomer">
-            Guardar
-          </UButton>
-          <UButton variant="ghost" color="neutral" @click="creatingCustomer = false">Cancelar</UButton>
+
+          <UFormField label="Cliente" name="customerId">
+            <div class="flex gap-2">
+              <USelectMenu
+                v-model="customerId"
+                :items="customerItems"
+                value-key="value"
+                :disabled="!canOperate"
+                searchable
+                placeholder="Buscar cliente por nombre…"
+                class="w-full"
+              />
+              <UButton
+                type="button"
+                icon="i-lucide-user-plus"
+                variant="soft"
+                :disabled="!canOperate"
+                @click="creatingCustomer = true"
+              />
+            </div>
+          </UFormField>
         </div>
-      </UCard>
+
+        <!-- Panel inline de alta rápida de cliente -->
+        <UCard v-if="creatingCustomer" class="bg-elevated/30">
+          <div class="flex flex-wrap items-end gap-3">
+            <UFormField label="Nombre" class="flex-1 min-w-48">
+              <UInput v-model="newCustomerName" placeholder="Nombre del cliente" class="w-full" />
+            </UFormField>
+            <UFormField label="Teléfono (opcional)" class="flex-1 min-w-40">
+              <UInput v-model="newCustomerPhone" placeholder="55..." class="w-full" />
+            </UFormField>
+            <UButton :loading="savingCustomer" :disabled="!newCustomerName.trim()" @click="quickCreateCustomer">
+              Guardar
+            </UButton>
+            <UButton variant="ghost" color="neutral" @click="creatingCustomer = false">Cancelar</UButton>
+          </div>
+        </UCard>
 
         <UFormField label="Nota" name="note">
           <UInput
@@ -387,16 +384,17 @@ async function quickCreateCustomer() {
             :key="i"
             class="grid items-end gap-3 sm:grid-cols-12 rounded-lg border border-default p-3"
           >
-            <UFormField label="Producto" class="sm:col-span-5">
-              <USelect
-                v-model="line.productId"
-                :items="productItems"
-                :disabled="!canOperate"
-                placeholder="Producto"
-                class="w-full"
-              />
-            </UFormField>
-
+           <UFormField label="Producto" class="sm:col-span-5">
+            <USelectMenu
+              v-model="line.productId"
+              :items="productItems"
+              value-key="value"
+              :disabled="!canOperate"
+              searchable
+              placeholder="Buscar producto por SKU o nombre…"
+              class="w-full"
+            />
+          </UFormField>
             <UFormField label="Cantidad" class="sm:col-span-2">
               <UInputNumber
                 v-model="line.quantity"
@@ -464,34 +462,24 @@ async function quickCreateCustomer() {
 
         <!-- Total -->
         <div class="flex items-center justify-between">
-
           <span class="text-sm text-muted"></span>
 
-
           <div class="text-right">
-            <div v-if="discount"  class="flex justify-between gap-20">
+            <div v-if="discount" class="flex justify-between gap-20">
               <span>Total Original</span>
-               <p >               
-              {{ currency.format(subtotal) }}
-            </p>
+              <p>{{ currency.format(subtotal) }}</p>
             </div>
-            <div v-if="discount"  class="flex justify-between gap-20">
+            <div v-if="discount" class="flex justify-between gap-20">
               <span>Descuento</span>
-               <p> 
-              -{{ currency.format(discountTotal) }}
-            </p>
+              <p>-{{ currency.format(discountTotal) }}</p>
             </div>
-           <div class="flex justify-between gap-20 text-xl font-semibold tabular-nums">
+            <div class="flex justify-between gap-20 text-xl font-semibold tabular-nums">
               <span v-if="!discount">Total</span>
               <span v-else="discount">Total Final</span>
-
-               <p> 
-              {{ currency.format(grandTotal) }}
-            </p>
+              <p>{{ currency.format(grandTotal) }}</p>
             </div>
-           
           </div>
-          </div>
+        </div>
 
         <div class="flex justify-end">
           <UButton
