@@ -174,6 +174,9 @@ export default defineEventHandler(async (event) => {
     const discountAmount = subTotal * (discountPct / 100)
     const totalAmount = subTotal - discountAmount
 
+    await tx.execute(sql`SELECT id FROM ${stores} WHERE id = ${storeId} FOR UPDATE`)
+
+
     const [folioRow] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(invoices)
