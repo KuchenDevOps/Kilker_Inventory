@@ -1,18 +1,35 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/expenses/:id — editar gasto
+//  PATCH /api/expenses/:id — editar gasto y sus líneas de concepto
 // ───────────────────────────────────────────────
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { expenses, stores } from '../../db/schema'
+import { expenses, expenseItems, stores } from '../../db/schema'
+
+const IVA_RATE = 0.16
+
+const EXPENSE_TYPES = ['Fijo', 'Operativo'] as const
+type ExpenseTypeValue = (typeof EXPENSE_TYPES)[number]
+
+function parseExpenseType(v: unknown): ExpenseTypeValue {
+  if (typeof v === 'string' && (EXPENSE_TYPES as readonly string[]).includes(v)) {
+    return v as ExpenseTypeValue
+  }
+  throw createError({ statusCode: 400, statusMessage: 'type inválido (Fijo | Operativo)' })
+}
+
+interface ExpenseItemBody {
+  reason?: string
+  amount?: number | string
+}
 
 interface ExpenseUpdateBody {
   storeId?: number
   supplier?: string
+  type?: string
   supplierInvoiceNumber?: string
-  reason?: string
+  items?: ExpenseItemBody[]
   retentionIva?: number | string
   retentionIsr?: number | string
-  amount?: number | string
   paidAt?: string
   note?: string | null
 }
@@ -27,7 +44,7 @@ function cleanText(v: unknown): string | null | undefined {
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
   const id = Number(getRouterParam(event, 'id'))
-  
+
   if (!id || isNaN(id)) {
     throw createError({ statusCode: 400, statusMessage: 'ID inválido' })
   }
@@ -35,163 +52,125 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<ExpenseUpdateBody>(event)
   const db = useDb()
 
-  // Verificar que existe el gasto
-  const existing = await db.query.expenses.findFirst({ 
-    where: eq(expenses.id, id) 
+  const existing = await db.query.expenses.findFirst({
+    where: eq(expenses.id, id),
+    with: { items: true }
   })
-  
+
   if (!existing) {
     throw createError({ statusCode: 404, statusMessage: 'Gasto no existe' })
   }
 
-  // El empleado solo puede editar gastos de su propia tienda
   if (profile.role === 'empleado' && existing.storeId !== profile.storeId) {
-    throw createError({ 
-      statusCode: 403, 
-      statusMessage: 'No puedes editar gastos de otra sucursal' 
-    })
+    throw createError({ statusCode: 403, statusMessage: 'No puedes editar gastos de otra sucursal' })
   }
 
   const values: Partial<typeof expenses.$inferInsert> = {}
 
-  // Validar storeId - solo admin puede cambiar
   if (body.storeId !== undefined) {
     if (profile.role !== 'admin') {
-      throw createError({ 
-        statusCode: 403, 
-        statusMessage: 'Solo un admin puede cambiar la sucursal' 
-      })
+      throw createError({ statusCode: 403, statusMessage: 'Solo un admin puede cambiar la sucursal' })
     }
-
     const storeId = Number(body.storeId)
     if (!storeId || isNaN(storeId)) {
       throw createError({ statusCode: 400, statusMessage: 'storeId inválido' })
     }
-
-    const store = await db.query.stores.findFirst({ 
-      where: eq(stores.id, storeId) 
-    })
-    
-    if (!store) {
-      throw createError({ statusCode: 404, statusMessage: 'Sucursal no existe' })
-    }
-    
+    const store = await db.query.stores.findFirst({ where: eq(stores.id, storeId) })
+    if (!store) throw createError({ statusCode: 404, statusMessage: 'Sucursal no existe' })
     values.storeId = storeId
   }
 
-  // Validar supplier
   if (body.supplier !== undefined) {
     const supplier = cleanText(body.supplier)
-    if (!supplier) {
-      throw createError({ 
-        statusCode: 400, 
-        statusMessage: 'El proveedor no puede quedar vacío' 
-      })
-    }
+    if (!supplier) throw createError({ statusCode: 400, statusMessage: 'El proveedor no puede quedar vacío' })
     values.supplier = supplier
   }
 
-  // Validar supplierInvoiceNumber
   if (body.supplierInvoiceNumber !== undefined) {
     const num = cleanText(body.supplierInvoiceNumber)
-    if (!num) {
-      throw createError({ 
-        statusCode: 400, 
-        statusMessage: 'El número de factura no puede quedar vacío' 
-      })
-    }
+    if (!num) throw createError({ statusCode: 400, statusMessage: 'El número de factura no puede quedar vacío' })
     values.supplierInvoiceNumber = num
   }
 
-  // Validar reason
-  if (body.reason !== undefined) {
-    const reason = cleanText(body.reason)
-    if (!reason) {
-      throw createError({ 
-        statusCode: 400, 
-        statusMessage: 'El motivo no puede quedar vacío' 
-      })
-    }
-    values.reason = reason
+  if (body.type !== undefined) {
+    values.type = parseExpenseType(body.type)
   }
+
+  // ─── Líneas de concepto: si vienen, reemplazan por completo las existentes ───
+  let newItems: { reason: string; amount: number }[] | null = null
+  if (body.items !== undefined) {
+    const rawItems = Array.isArray(body.items) ? body.items : []
+    newItems = rawItems
+      .map((it) => ({ reason: cleanText(it?.reason) ?? '', amount: Number(it?.amount) }))
+      .filter((it) => it.reason && Number.isFinite(it.amount) && it.amount > 0)
+
+    if (newItems.length === 0) {
+      throw createError({ statusCode: 400, statusMessage: 'Agrega al menos un concepto con monto válido' })
+    }
+  }
+
+  let retentionIva: number | null | undefined = undefined
   if (body.retentionIva !== undefined) {
-    const retentionIva = Number(body.retentionIva)
+    retentionIva = Number(body.retentionIva)
     if (!Number.isFinite(retentionIva) || retentionIva < 0) {
-      throw createError({ 
-        statusCode: 400, 
-        statusMessage: 'retentionIva inválido' 
-      })
+      throw createError({ statusCode: 400, statusMessage: 'retentionIva inválido' })
     }
     values.retentionIva = String(retentionIva)
   }
+
+  let retentionIsr: number | null | undefined = undefined
   if (body.retentionIsr !== undefined) {
-    const retentionIsr = Number(body.retentionIsr)
+    retentionIsr = Number(body.retentionIsr)
     if (!Number.isFinite(retentionIsr) || retentionIsr < 0) {
-      throw createError({ 
-        statusCode: 400, 
-        statusMessage: 'retentionIsr inválido' 
-      })
+      throw createError({ statusCode: 400, statusMessage: 'retentionIsr inválido' })
     }
     values.retentionIsr = String(retentionIsr)
   }
 
-  // Validar amount
-  if (body.amount !== undefined) {
-    const amount = Number(body.amount)
-    if (!Number.isFinite(amount) || amount < 0) {
-      throw createError({ 
-        statusCode: 400, 
-        statusMessage: 'Monto inválido' 
-      })
-    }
-      values.amount = String(amount)
-  }
-
-  // Validar paidAt
   if (body.paidAt !== undefined) {
     const paidAt = cleanText(body.paidAt)
-    if (!paidAt) {
-      throw createError({ 
-        statusCode: 400, 
-        statusMessage: 'La fecha de pago no puede quedar vacía' 
-      })
-    }
+    if (!paidAt) throw createError({ statusCode: 400, statusMessage: 'La fecha de pago no puede quedar vacía' })
     values.paidAt = paidAt
   }
 
-  // Validar note (puede ser null)
   if (body.note !== undefined) {
     values.note = cleanText(body.note)
   }
+  
 
-  // Si no hay nada para actualizar
-  if (Object.keys(values).length === 0) {
-    throw createError({ 
-      statusCode: 400, 
-      statusMessage: 'No hay datos para actualizar' 
-    })
+  // ─── Recalcular el total si cambiaron items o retenciones ───
+    if (newItems) {
+    const subtotal = Math.round(newItems.reduce((sum, it) => sum + it.amount, 0) * 100) / 100
+    values.amount = String(subtotal)
+  }
+
+  if (Object.keys(values).length === 0 && !newItems) {
+    throw createError({ statusCode: 400, statusMessage: 'No hay datos para actualizar' })
   }
 
   try {
-    const [updated] = await db
-      .update(expenses)
-      .set(values)
-      .where(eq(expenses.id, id))
-      .returning()
+    const updated = await db.transaction(async (tx) => {
+      let expense = existing
+      if (Object.keys(values).length > 0) {
+        const [row] = await tx.update(expenses).set(values).where(eq(expenses.id, id)).returning()
+        expense = { ...existing, ...row }
+      }
 
-    if (!updated) {
-      throw createError({ 
-        statusCode: 404, 
-        statusMessage: 'No se pudo actualizar el gasto' 
-      })
-    }
+      let items = existing.items
+      if (newItems) {
+        await tx.delete(expenseItems).where(eq(expenseItems.expenseId, id))
+        items = await tx
+          .insert(expenseItems)
+          .values(newItems.map((it) => ({ expenseId: id, reason: it.reason, amount: String(it.amount) })))
+          .returning()
+      }
+
+      return { ...expense, items }
+    })
 
     return updated
   } catch (error) {
     console.error('Error updating expense:', error)
-    throw createError({ 
-      statusCode: 500, 
-      statusMessage: 'Error al actualizar el gasto' 
-    })
+    throw createError({ statusCode: 500, statusMessage: 'Error al actualizar el gasto' })
   }
 })

@@ -46,13 +46,37 @@ const {
   refresh: refreshExpenses
 } = useExpenses()
 
-const totalExpensesPaid = computed(() =>
-  expenses.value.reduce((sum, e) => sum + Number(e.totalPaid), 0)
+// ───────────────────────────────────────────────
+//  GASTOS: subtotal (a pagar), pagado y pendiente — agrupado por tipo
+// ───────────────────────────────────────────────
+const expensesByType = computed(() => {
+  const result = {
+    Fijo: { subtotal: 0, totalPaid: 0, balance: 0 },
+    Operativo: { subtotal: 0, totalPaid: 0, balance: 0 }
+  }
+  for (const e of expenses.value) {
+    result[e.type].subtotal += e.subtotal
+    result[e.type].totalPaid += Number(e.totalPaid)
+    result[e.type].balance += Number(e.balance)
+  }
+  return result
+})
+
+const totalExpensesFijo = computed(() => expensesByType.value.Fijo.subtotal)
+const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.subtotal)
+
+const totalExpensesPaid = computed(
+  () => expensesByType.value.Fijo.totalPaid + expensesByType.value.Operativo.totalPaid
+)
+const totalExpensesPending = computed(
+  () => expensesByType.value.Fijo.balance + expensesByType.value.Operativo.balance
 )
 
-const totalExpensesPending = computed(() =>
-  expenses.value.reduce((sum, e) => sum + Number(e.balance), 0)
-)
+// Si también quieres el desglose pagado/pendiente POR tipo (no solo el total combinado):
+const totalExpensesPaidFijo = computed(() => expensesByType.value.Fijo.totalPaid)
+const totalExpensesPaidOperativo = computed(() => expensesByType.value.Operativo.totalPaid)
+const totalExpensesPendingFijo = computed(() => expensesByType.value.Fijo.balance)
+const totalExpensesPendingOperativo = computed(() => expensesByType.value.Operativo.balance)
 
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -219,14 +243,11 @@ function stockFor(p: (typeof products.value)[number]) {
 
 
 
-
-
-
-
-
 // --- VALOR DE ENTRADAS Y SALIDAS ---
 const entryValue = computed(() =>
-  movements.value.reduce((sum, m) => sum + Number(m.totalValue), 0)
+  movements.value
+    .filter((m) => m.supplierInvoiceNumber?.trim().toUpperCase() !== 'II')
+    .reduce((sum, m) => sum + Number(m.totalValue), 0)
 )
 
 const salesValue = computed(() =>
@@ -359,19 +380,20 @@ const metricsSection2 = computed(() => {
     })
   }
 
- all.push({
-  label: 'Gastos',
-  value: currency.format(totalExpenses.value),
-  hint: 'en el periodo',
-  icon: 'i-lucide-credit-card',
+
+all.push({
+  label: 'Gastos fijos',
+  value: currency.format(totalExpensesFijo.value),
+  hint: 'sin IVA/retenciones · en el periodo',
+  icon: 'i-lucide-home',
   color: 'text-warning',
   loading: loadingExpenses.value,
   globalOnly: false
 })
 
 all.push({
-  label: 'Gastos pagados',
-  value: currency.format(totalExpensesPaid.value),
+  label: 'Gastos Fijos pagados',
+  value: currency.format(totalExpensesPaidFijo.value),
   hint: 'en el periodo',
   icon: 'i-lucide-circle-check',
   color: 'text-success',
@@ -380,14 +402,48 @@ all.push({
 })
 
 all.push({
-  label: 'Gastos pendientes',
-  value: currency.format(totalExpensesPending.value),
+  label: 'Gastos Fijos pendientes',
+  value: currency.format(totalExpensesPendingFijo.value),
   hint: 'por pagar',
   icon: 'i-lucide-clock',
   color: 'text-error',
   loading: loadingExpenses.value,
   globalOnly: false
 })
+
+all.push({
+  label: 'Gastos operativos',
+  value: currency.format(totalExpensesOperativo.value),
+  hint: 'sin IVA/retenciones · en el periodo',
+  icon: 'i-lucide-wrench',
+  color: 'text-warning',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+all.push({
+  label: 'Gastos Operativos pagados',
+  value: currency.format(totalExpensesPaidOperativo.value),
+  hint: 'en el periodo',
+  icon: 'i-lucide-circle-check',
+  color: 'text-success',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+all.push({
+  label: 'Gastos Operativos pendientes',
+  value: currency.format(totalExpensesPendingOperativo.value),
+  hint: 'por pagar',
+  icon: 'i-lucide-clock',
+  color: 'text-error',
+  loading: loadingExpenses.value,
+  globalOnly: false
+})
+
+
+
+
 
 return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 

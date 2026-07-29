@@ -1,6 +1,6 @@
-import type { ApiExpense, ApiExpensesPage } from '~/types/inventario'
-
 /** Gastos operativos por sucursal. */
+import type { ApiExpense, ApiExpensesPage, ExpenseType } from '~/types/inventario'
+
 export function useExpenses() {
   const expenses = useState<ApiExpense[]>('expenses', () => [])
   const total = useState('expenses-history-total', () => 0)
@@ -9,9 +9,10 @@ export function useExpenses() {
   const pending = useState('expenses-pending', () => false)
   const error = useState<string | null>('expenses-error', () => null)
   const storeId = useState<number | undefined>('expenses-store', () => undefined)
+  const type = useState<ExpenseType | undefined>('expenses-type', () => undefined)   // ← nuevo
   const from = useState<string | undefined>('expenses-from', () => undefined)
   const to = useState<string | undefined>('expenses-to', () => undefined)
-  const search = useState('expenses-search', () => '')   // ← NUEVO
+  const search = useState('expenses-search', () => '')
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
@@ -31,9 +32,10 @@ export function useExpenses() {
       }
       const q = new URLSearchParams()
       if (storeId.value) q.set('storeId', String(storeId.value))
+      if (type.value) q.set('type', type.value)   // ← nuevo
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
-      if (search.value.trim()) q.set('q', search.value.trim())   // ← NUEVO
+      if (search.value.trim()) q.set('q', search.value.trim())
       q.set('page', String(page.value))
       q.set('pageSize', String(pageSize.value))
       const qs = q.toString()
@@ -58,17 +60,15 @@ export function useExpenses() {
     }
   }
 
-  // ─── NUEVO: reset a página 1 cuando cambian los filtros ───
   const watching = useState('expenses-watching', () => false)
   if (import.meta.client && !watching.value) {
     watching.value = true
-    watch([storeId, from, to, search], () => {
+    watch([storeId, type, from, to, search], () => {   // ← type agregado al watch
       page.value = 1
       void refresh()
     })
     watch(page, () => void refresh())
   }
-  // ─── fin del bloque nuevo ───
 
-  return { expenses, total, page, pageSize, pending, error, storeId, from, to, search, refresh }
+  return { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, refresh }
 }
