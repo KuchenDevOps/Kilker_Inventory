@@ -2,20 +2,23 @@
 useHead({ title: 'Gastos · Inventario Kilker' })
 
 import type { ApiExpense, ApiExpensePayment, PaymentMethod } from '~/types/inventario'
-import { PAYMENT_LABELS } from '~/types/inventario'
-const { expenses, total, page, pageSize, pending, error, storeId, from, to, search, refresh } = useExpenses()
+import { PAYMENT_LABELS, EXPENSE_TYPE_LABELS, type ExpenseType } from '~/types/inventario'
+const { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 const toast = useToast()
 const apiFetch = useApiFetch()
 
+const expenseTypeItems = (Object.keys(EXPENSE_TYPE_LABELS) as ExpenseType[]).map((v) => ({
+  label: EXPENSE_TYPE_LABELS[v],
+  value: v
+}))
+
 const storeItems = computed(() =>
   stores.value.filter((s) => s.isActive).map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 )
 
-// Filtro de sucursal: 0 = todas (solo visible para admin; empleado ya está
-// forzado a su tienda desde el backend).
 const storeFilterItems = computed(() => [
   { label: 'Todas las sucursales', value: 0 },
   ...storeItems.value
@@ -26,10 +29,11 @@ const storeFilter = computed({
     storeId.value = v || undefined
   }
 })
+const expenseTypeFilterItems = computed(() => [
+  { label: 'Todos los tipos', value: undefined },
+  ...expenseTypeItems
+])
 
-// search del FiltroPeriodo no aplica aquí (usamos nuestro propio buscador de
-// texto conectado al composable, que ahora filtra server-side). Se deja este
-// ref suelto solo para el binding del componente de fechas, sin efecto real.
 const periodSearch = ref('')
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
@@ -40,15 +44,19 @@ function fmtDate(s: string) {
 
 const IVA_RATE = 0.16
 
-// Alta de gasto (modal)
+// ───────────────────────────────────────────────
+//  ALTA / EDICIÓN DE GASTO (con líneas de concepto)
+// ───────────────────────────────────────────────
+type ExpenseItemForm = { reason: string; amount: number | undefined }
+
 const showModal = ref(false)
 const submitting = ref(false)
 const form = reactive({
   storeId: undefined as number | undefined,
   supplier: '',
   supplierInvoiceNumber: '',
-  reason: '',
-  amount: undefined as number | undefined,
+  type: 'Operativo' as ExpenseType,
+  items: [{ reason: '', amount: undefined }] as ExpenseItemForm[],
   retentionIVA: 0,
   retentionISR: 0,
   paidAt: '',
@@ -56,8 +64,19 @@ const form = reactive({
 })
 
 const showRetentions = ref(false)
+const editingId = ref<number | null>(null)
 
-const editingId = ref<number | null>(null) // null = alta nueva, number = editando ese id
+function emptyItem(): ExpenseItemForm {
+  return { reason: '', amount: undefined }
+}
+
+function addItem() {
+  form.items.push(emptyItem())
+}
+function removeItem(i: number) {
+  form.items.splice(i, 1)
+  if (form.items.length === 0) addItem()
+}
 
 function openCreate() {
   editingId.value = null
@@ -66,8 +85,8 @@ function openCreate() {
     storeId: undefined,
     supplier: '',
     supplierInvoiceNumber: '',
-    reason: '',
-    amount: undefined,
+    type: 'Operativo',
+    items: [emptyItem()],
     retentionIVA: 0,
     retentionISR: 0,
     paidAt: '',
@@ -76,19 +95,18 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(e: (typeof expenses.value)[number]) {
+function openEdit(e: ApiExpense) {
   editingId.value = e.id
-  // Requiere que el backend guarde retentionIva/retentionIsr en el gasto;
-  // sin eso no se puede reconstruir el subtotal de forma confiable.
   const retIVA = Number(e.retentionIva ?? 0)
   const retISR = Number(e.retentionIsr ?? 0)
   Object.assign(form, {
     storeId: e.storeId,
     supplier: e.supplier,
     supplierInvoiceNumber: e.supplierInvoiceNumber,
-    reason: e.reason,
-    // e.amount = subtotal + iva - retIVA - retISR  →  despejamos subtotal
-    amount: Number(((Number(e.amount) + retIVA + retISR) / (1 + IVA_RATE)).toFixed(2)),
+    type: e.type,
+    items: e.items.length
+      ? e.items.map((it) => ({ reason: it.reason, amount: Number(it.amount) }))
+      : [emptyItem()],
     retentionIVA: retIVA,
     retentionISR: retISR,
     paidAt: e.paidAt,
@@ -98,14 +116,41 @@ function openEdit(e: (typeof expenses.value)[number]) {
   showModal.value = true
 }
 
+// ───────────────────────────────────────────────
+//  TOTALES: subtotal (a pagar) vs. con IVA, por tipo
+// ───────────────────────────────────────────────
+const totalsSummary = computed(() => {
+  const base = {
+    Fijo: { subtotal: 0, total: 0 },
+    Operativo: { subtotal: 0, total: 0 }
+  }
+  for (const e of expenses.value) {
+    base[e.type].subtotal += e.subtotal
+    base[e.type].total += Number(e.amount)
+  }
+  const subtotalAll = base.Fijo.subtotal + base.Operativo.subtotal
+  const totalAll = base.Fijo.total + base.Operativo.total
+  return { ...base, all: { subtotal: subtotalAll, total: totalAll } }
+})
+
+const validItems = computed(() =>
+  form.items.filter((it) => it.reason.trim().length > 0 && (it.amount ?? 0) > 0)
+)
+
+// Lo que se debe pagar es el subtotal. IVA y retenciones son informativos.
+const formSubtotal = computed(() => validItems.value.reduce((sum, it) => sum + (it.amount ?? 0), 0))
+const formIva = computed(() => formSubtotal.value * IVA_RATE)
+const formTotalWithTaxes = computed(
+  () => formSubtotal.value + formIva.value - (form.retentionIVA || 0) - (form.retentionISR || 0)
+)
+
 const canSubmit = computed(
   () =>
     (isAdmin.value ? form.storeId != null : true) &&
     form.supplier.trim().length > 0 &&
     form.supplierInvoiceNumber.trim().length > 0 &&
-    form.reason.trim().length > 0 &&
-    form.paidAt.length > 0 &&
-    (form.amount ?? -1) >= 0
+    validItems.value.length > 0 &&
+    form.paidAt.length > 0
 )
 
 async function onSubmit() {
@@ -116,8 +161,8 @@ async function onSubmit() {
       storeId: isAdmin.value ? form.storeId : undefined,
       supplier: form.supplier.trim(),
       supplierInvoiceNumber: form.supplierInvoiceNumber.trim(),
-      reason: form.reason.trim(),
-      amount: Number(formTotalConIva.value.toFixed(2)), // subtotal + IVA - retenciones
+      type: form.type,
+      items: validItems.value.map((it) => ({ reason: it.reason.trim(), amount: it.amount })),
       retentionIva: form.retentionIVA || 0,
       retentionIsr: form.retentionISR || 0,
       paidAt: form.paidAt,
@@ -146,13 +191,8 @@ async function onSubmit() {
   }
 }
 
-const formIva = computed(() => (form.amount ?? 0) * IVA_RATE)
-const formTotalConIva = computed(
-  () => (form.amount ?? 0) + formIva.value - (form.retentionIVA ?? 0) - (form.retentionISR ?? 0)
-)
-
 // ───────────────────────────────────────────────
-//  MODAL DE PAGOS
+//  MODAL DE PAGOS (muestra desglose de items)
 // ───────────────────────────────────────────────
 const viewingExpense = ref<ApiExpense | null>(null)
 const showPaymentsModal = ref(false)
@@ -227,8 +267,7 @@ async function submitPayment() {
     toast.add({ title: 'Pago registrado', color: 'success', icon: 'i-lucide-circle-check' })
     Object.assign(paymentForm, { amount: undefined, note: '' })
     await refreshPayments()
-    await refresh() // actualiza saldo/estado en la tabla principal de gastos
-    // Sincroniza el saldo mostrado en el header del modal con el gasto ya actualizado.
+    await refresh()
     const updated = expenses.value.find((x) => x.id === viewingExpense.value?.id)
     if (updated) viewingExpense.value = updated
   } catch (e) {
@@ -246,6 +285,23 @@ async function submitPayment() {
 const dayFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
 function fmtDay(s: string) {
   return dayFmt.format(new Date(`${s}T00:00:00`))
+}
+
+const viewingTotalWithTaxes = computed(() => {
+  if (!viewingExpense.value) return 0
+  return (
+    viewingExpense.value.subtotal +
+    viewingExpense.value.iva -
+    Number(viewingExpense.value.retentionIva ?? 0) -
+    Number(viewingExpense.value.retentionIsr ?? 0)
+  )
+})
+
+// Resumen de conceptos para la tabla (evita mostrar N filas por gasto).
+function reasonsSummary(e: ApiExpense) {
+  if (!e.items?.length) return '—'
+  if (e.items.length === 1) return e.items[0].reason
+  return `${e.items[0].reason} +${e.items.length - 1} más`
 }
 </script>
 
@@ -267,7 +323,10 @@ function fmtDay(s: string) {
         v-model:from="from"
         v-model:to="to"
       />
-      <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+      <div class="flex flex-wrap gap-3">
+        <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+        <USelect v-model="type" :items="expenseTypeFilterItems" placeholder="Tipo de gasto" class="w-48" />
+      </div>
     </div>
 
     <UAlert
@@ -282,9 +341,40 @@ function fmtDay(s: string) {
     <UInput
       v-model="search"
       icon="i-lucide-search"
-      placeholder="Buscar por proveedor, factura o motivo…"
+      placeholder="Buscar por proveedor, factura o concepto…"
       class="w-full sm:max-w-sm"
     />
+
+    <!-- Resumen de totales
+    <div class="grid gap-4 sm:grid-cols-3">
+      <UCard :ui="{ body: 'p-4' }">
+        <p class="text-xs text-muted">Total general</p>
+        <p class="mt-1 text-xl font-semibold">{{ currency.format(totalsSummary.all.subtotal) }}</p>
+        <p class="text-xs text-muted mt-1">
+          {{ currency.format(totalsSummary.all.total) }} con IVA (informativo)
+        </p>
+      </UCard>
+      <UCard :ui="{ body: 'p-4' }">
+        <div class="flex items-center gap-2">
+          <UBadge label="Fijo" color="info" variant="subtle" />
+          <p class="text-xs text-muted">gastos fijos</p>
+        </div>
+        <p class="mt-1 text-xl font-semibold">{{ currency.format(totalsSummary.Fijo.subtotal) }}</p>
+        <p class="text-xs text-muted mt-1">
+          {{ currency.format(totalsSummary.Fijo.total) }} con IVA (informativo)
+        </p>
+      </UCard>
+      <UCard :ui="{ body: 'p-4' }">
+        <div class="flex items-center gap-2">
+          <UBadge label="Operativo" color="neutral" variant="subtle" />
+          <p class="text-xs text-muted">gastos operativos</p>
+        </div>
+        <p class="mt-1 text-xl font-semibold">{{ currency.format(totalsSummary.Operativo.subtotal) }}</p>
+        <p class="text-xs text-muted mt-1">
+          {{ currency.format(totalsSummary.Operativo.total) }} con IVA (informativo)
+        </p>
+      </UCard>
+    </div> -->
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">
@@ -294,8 +384,9 @@ function fmtDay(s: string) {
               <th class="px-4 py-3 font-medium">Fecha de Factura</th>
               <th class="px-4 py-3 font-medium">Proveedor</th>
               <th class="px-4 py-3 font-medium">Factura</th>
-              <th class="px-4 py-3 font-medium">Motivo</th>
-              <th class="px-4 py-3 font-medium text-right">Monto</th>
+              <th class="px-4 py-3 font-medium">Tipo</th>
+              <th class="px-4 py-3 font-medium text-right">A pagar</th>
+              <th class="px-4 py-3 font-medium text-right">Con IVA</th>
               <th class="px-4 py-3 font-medium">Sucursal</th>
               <th class="px-4 py-3 font-medium">Fecha Registro</th>
               <th class="px-4 py-3 font-medium">Nota</th>
@@ -306,17 +397,22 @@ function fmtDay(s: string) {
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="11" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td colspan="12" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!expenses.length">
-              <td colspan="11" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
+              <td colspan="12" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
             </tr>
             <tr v-else v-for="e in expenses" :key="e.id" class="hover:bg-elevated/50">
               <td class="px-4 py-3 text-muted whitespace-nowrap">{{ e.paidAt }}</td>
               <td class="px-4 py-3 font-medium">{{ e.supplier }}</td>
               <td class="px-4 py-3 font-mono text-xs">{{ e.supplierInvoiceNumber }}</td>
-              <td class="px-4 py-3 text-muted">{{ e.reason }}</td>
+              <td class="px-4 py-3">
+                <UBadge :label="e.type" :color="e.type === 'Fijo' ? 'info' : 'neutral'" variant="subtle" />
+              </td>
               <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(Number(e.amount)) }}</td>
+              <td class="px-4 py-3 text-right tabular-nums text-muted">
+                {{ currency.format(Number(e.amount) + e.iva - Number(e.retentionIva ?? 0) - Number(e.retentionIsr ?? 0)) }}
+              </td>
               <td class="px-4 py-3 text-muted">{{ e.storeCode ?? '—' }}</td>
               <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(e.createdAt) }}</td>
               <td class="px-4 py-3 text-muted truncate max-w-48">{{ e.note ?? '—' }}</td>
@@ -357,14 +453,15 @@ function fmtDay(s: string) {
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
 
+    <!-- Alta / edición -->
     <UModal v-model:open="showModal">
       <template #content>
-        <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
+        <UCard :ui="{ body: 'max-h-[75vh] overflow-y-auto' }">
           <template #header>
             <h2 class="font-semibold">{{ editingId != null ? 'Editar gasto' : 'Nuevo gasto' }}</h2>
           </template>
 
-          <form class="space-y-2" @submit.prevent="onSubmit">
+          <form class="space-y-4" @submit.prevent="onSubmit">
             <UFormField v-if="isAdmin" label="Sucursal" required>
               <USelect v-model="form.storeId" :items="storeItems" placeholder="Selecciona una sucursal" class="w-full" />
             </UFormField>
@@ -372,33 +469,82 @@ function fmtDay(s: string) {
             <UFormField label="Fecha de Factura" required>
               <UInput v-model="form.paidAt" type="date" class="w-full" />
             </UFormField>
-            <UFormField label="Proveedor" required>
-              <UInput v-model="form.supplier" placeholder="Nombre del proveedor" class="w-full" />
-            </UFormField>
             <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Número de factura" required>
-                <UInput v-model="form.supplierInvoiceNumber" placeholder="A-12345" class="w-full" />
+              <UFormField label="Proveedor" required>
+                <UInput v-model="form.supplier" placeholder="Nombre del proveedor" class="w-full" />
               </UFormField>
-              <UFormField label="Monto (MXN)" required>
-                <UInputNumber
-                  v-model="form.amount"
-                  :min="0"
-                  :step="0.01"
-                  :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-                  placeholder="0"
-                  class="w-full"
-                />
+              <UFormField label="Tipo de gasto" required>
+                <USelect v-model="form.type" :items="expenseTypeItems" class="w-full" />
               </UFormField>
             </div>
+            <UFormField label="Número de factura" required>
+              <UInput v-model="form.supplierInvoiceNumber" placeholder="A-12345" class="w-full" />
+            </UFormField>
 
+            <USeparator />
+
+            <!-- Líneas de concepto -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="font-semibold text-sm">Conceptos</h3>
+                <UButton
+                  type="button"
+                  size="xs"
+                  variant="soft"
+                  icon="i-lucide-plus"
+                  @click="addItem"
+                >
+                  Agregar concepto
+                </UButton>
+              </div>
+
+              <div
+                v-for="(item, i) in form.items"
+                :key="i"
+                class="grid items-end gap-3 sm:grid-cols-12 rounded-lg border border-default p-3"
+              >
+                <UFormField label="Concepto" class="sm:col-span-7">
+                  <UInput v-model="item.reason" placeholder="Renta, luz, mantenimiento…" class="w-full" />
+                </UFormField>
+                <UFormField label="Monto (MXN)" class="sm:col-span-4">
+                  <UInputNumber
+                    v-model="item.amount"
+                    :min="0"
+                    :step="0.01"
+                    :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                    placeholder="0"
+                    class="w-full"
+                  />
+                </UFormField>
+                <div class="sm:col-span-1 flex justify-end">
+                  <UButton
+                    type="button"
+                    size="xs"
+                    color="error"
+                    variant="ghost"
+                    icon="i-lucide-trash-2"
+                    @click="removeItem(i)"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <USeparator />
+
+            <!-- IVA y retenciones: SOLO informativo, no afecta lo que se debe pagar -->
             <div
-              v-if="form.amount"
+              v-if="formSubtotal > 0"
               class="rounded-lg border border-default bg-elevated/40 px-4 py-3 space-y-3 text-sm"
             >
-              <div class="flex items-center justify-between gap-2">
+              <div class="flex justify-between font-medium">
+                <span>Total a pagar</span>
+                <span class="tabular-nums text-success">{{ currency.format(formSubtotal) }}</span>
+              </div>
+
+              <div class="flex items-center justify-between gap-2 pt-2 border-t border-default">
                 <div>
-                  <p class="text-muted text-xs">IVA (16%)</p>
-                  <p class="font-medium tabular-nums text-warning">{{ currency.format(formIva) }}</p>
+                  <p class="text-muted text-xs">IVA (16%) · informativo</p>
+                  <p class="text-sm tabular-nums text-muted">{{ currency.format(formIva) }}</p>
                 </div>
                 <UButton
                   size="xs"
@@ -412,7 +558,7 @@ function fmtDay(s: string) {
               </div>
 
               <div v-if="showRetentions" class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-default">
-                <UFormField label="Retención IVA">
+                <UFormField label="Retención IVA (informativo)">
                   <UInputNumber
                     v-model="form.retentionIVA"
                     :min="0"
@@ -422,7 +568,7 @@ function fmtDay(s: string) {
                     class="w-full"
                   />
                 </UFormField>
-                <UFormField label="Retención ISR">
+                <UFormField label="Retención ISR (informativo)">
                   <UInputNumber
                     v-model="form.retentionISR"
                     :min="0"
@@ -434,18 +580,16 @@ function fmtDay(s: string) {
                 </UFormField>
               </div>
 
-              <div class="pt-2 border-t border-default">
-                <p class="text-muted text-xs">Total (IVA − retenciones)</p>
-                <p class="font-medium tabular-nums text-success">{{ currency.format(formTotalConIva) }}</p>
+              <div class="flex justify-between font-semibold pt-2 border-t border-default">
+                <span>Total con IVA y retenciones</span>
+                <span class="tabular-nums">{{ currency.format(formTotalWithTaxes) }}</span>
               </div>
             </div>
 
-            <UFormField label="Motivo" required>
-              <UInput v-model="form.reason" placeholder="Renta, luz, mantenimiento…" class="w-full" />
-            </UFormField>
             <UFormField label="Nota">
               <UTextarea v-model="form.note" placeholder="Observaciones (opcional)" class="w-full" />
             </UFormField>
+
             <div class="flex justify-end gap-2 pt-2">
               <UButton type="button" variant="ghost" color="neutral" @click="showModal = false">
                 Cancelar
@@ -459,9 +603,10 @@ function fmtDay(s: string) {
       </template>
     </UModal>
 
+    <!-- Pagos -->
     <UModal v-model:open="showPaymentsModal">
       <template #content>
-        <UCard :ui="{ body: 'max-h-[70vh] overflow-y-auto' }">
+        <UCard :ui="{ body: 'max-h-[75vh] overflow-y-auto' }">
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-wallet" class="size-5 text-primary" />
@@ -489,7 +634,50 @@ function fmtDay(s: string) {
           </template>
 
           <div v-if="viewingExpense" class="space-y-5">
-            <!-- Resumen -->
+            <!-- Desglose de conceptos -->
+            <div>
+              <h3 class="text-sm font-semibold mb-2">Conceptos</h3>
+              <table class="w-full text-sm">
+                <thead class="text-muted border-b border-default">
+                  <tr class="text-left">
+                    <th class="py-2 font-medium">Concepto</th>
+                    <th class="py-2 font-medium text-right">Monto</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-default">
+                  <tr v-for="it in viewingExpense.items" :key="it.id">
+                    <td class="py-2">{{ it.reason }}</td>
+                    <td class="py-2 text-right tabular-nums">{{ currency.format(Number(it.amount)) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="pt-3 mt-2 border-t border-default space-y-1 text-sm">
+                <div class="flex justify-between font-medium">
+                  <span>Subtotal (a pagar)</span>
+                  <span class="tabular-nums">{{ currency.format(viewingExpense.subtotal) }}</span>
+                </div>
+                <div class="flex justify-between text-muted">
+                  <span>IVA (16%) · informativo</span>
+                  <span class="tabular-nums">{{ currency.format(viewingExpense.iva) }}</span>
+                </div>
+                <div v-if="Number(viewingExpense.retentionIva) > 0" class="flex justify-between text-muted">
+                  <span>Retención IVA · informativo</span>
+                  <span class="tabular-nums">-{{ currency.format(Number(viewingExpense.retentionIva)) }}</span>
+                </div>
+                <div v-if="Number(viewingExpense.retentionIsr) > 0" class="flex justify-between text-muted">
+                  <span>Retención ISR · informativo</span>
+                  <span class="tabular-nums">-{{ currency.format(Number(viewingExpense.retentionIsr)) }}</span>
+                </div>
+                <div class="flex justify-between font-semibold pt-2 mt-1 border-t border-default">
+  <span>Total con IVA y retenciones</span>
+  <span class="tabular-nums">{{ currency.format(viewingTotalWithTaxes) }}</span>
+</div>
+              </div>
+            </div>
+
+            <USeparator />
+
+            <!-- Resumen de pago -->
             <div class="grid gap-3 sm:grid-cols-3 text-sm rounded-lg bg-elevated/40 px-4 py-3">
               <div>
                 <p class="text-muted text-xs">Total a pagar</p>

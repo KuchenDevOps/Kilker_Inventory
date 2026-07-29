@@ -422,6 +422,10 @@ export const customers = pgTable(
   (t) => [unique('customers_rfc_uniq').on(t.rfc)]
 ).enableRLS()
 
+export const expenseType = pgEnum('expense_type', ['Fijo', 'Operativo'])
+
+
+/** Cabecera de gasto. `amount` queda como snapshot/total (igual que invoices.totalAmount). */
 export const expenses = pgTable(
   'expenses',
   {
@@ -433,13 +437,11 @@ export const expenses = pgTable(
       .references(() => stores.id),
     supplier: text('supplier').notNull(),
     supplierInvoiceNumber: text('supplier_invoice_number').notNull(),
-    reason: text('reason').notNull(),
+    type: expenseType('type').notNull().default('Operativo'),
     retentionIva: numeric('retention_iva', { precision: 14, scale: 2 }),
     retentionIsr: numeric('retention_isr', { precision: 14, scale: 2 }),
-    // Monto base (subtotal, sin IVA). El total a pagar se calcula:
-    // amount * 1.16 - retentionIva - retentionIsr.
+    // Suma de expense_items.amount al momento de crear/editar (snapshot, igual que invoices.totalAmount).
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
-    // Fecha de la factura del proveedor (no necesariamente cuándo se pagó).
     paidAt: date('paid_at').notNull(),
     note: text('note'),
     createdBy: uuid('created_by')
@@ -450,6 +452,25 @@ export const expenses = pgTable(
       .defaultNow()
   },
   (t) => [index('expenses_store_paid_idx').on(t.storeId, t.paidAt)]
+).enableRLS()
+
+/** Líneas de gasto: concepto + monto. Análogo a invoice_items pero sin producto/cantidad. */
+export const expenseItems = pgTable(
+  'expense_items',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    expenseId: bigint('expense_id', { mode: 'number' })
+      .notNull()
+      .references(() => expenses.id, { onDelete: 'cascade' }),
+    reason: text('reason').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [index('idx_expense_items_expense_id').on(t.expenseId)]
 ).enableRLS()
 
 /** Abonos/pagos de un gasto. Un gasto puede pagarse en parcialidades. */
@@ -688,7 +709,12 @@ export const cashCloseoutsRelations = relations(cashCloseouts, ({ one }) => ({
 export const expensesRelations = relations(expenses, ({ one, many }) => ({
   store: one(stores, { fields: [expenses.storeId], references: [stores.id] }),
   createdBy: one(profiles, { fields: [expenses.createdBy], references: [profiles.id] }),
+  items: many(expenseItems),
   payments: many(expensePayments)
+}))
+
+export const expenseItemsRelations = relations(expenseItems, ({ one }) => ({
+  expense: one(expenses, { fields: [expenseItems.expenseId], references: [expenses.id] })
 }))
 
 export const expensePaymentsRelations = relations(expensePayments, ({ one }) => ({
@@ -729,3 +755,5 @@ export type Expense = typeof expenses.$inferSelect
 export type NewExpense = typeof expenses.$inferInsert
 export type ExpensePayment = typeof expensePayments.$inferSelect
 export type NewExpensePayment = typeof expensePayments.$inferInsert
+export type ExpenseItem = typeof expenseItems.$inferSelect
+export type NewExpenseItem = typeof expenseItems.$inferInsert

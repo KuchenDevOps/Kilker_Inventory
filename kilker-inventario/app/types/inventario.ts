@@ -384,11 +384,26 @@ export interface CustomerInput {
   email?: string | null
   phone?: string | null
 }
+export type ExpenseType = 'Fijo' | 'Operativo'
+
+export const EXPENSE_TYPE_LABELS: Record<ExpenseType, string> = {
+  Fijo: 'Fijo',
+  Operativo: 'Operativo'
+}
+
 
 export type PaymentStatus = 'pendiente' | 'parcial' | 'pagado'
+/** @deprecated usa PaymentStatus */
+export type ExpensePaymentStatus = PaymentStatus
 
+/** Línea de concepto de un gasto. */
+export interface ApiExpenseItem {
+  id: number
+  reason: string
+  amount: string
+}
 
-/** Gasto operativo (`GET /api/expenses`). */
+/** Gasto operativo con su saldo calculado (`GET /api/expenses`). */
 export interface ApiExpense {
   id: number
   storeId: number
@@ -396,12 +411,22 @@ export interface ApiExpense {
   storeName: string | null
   supplier: string
   supplierInvoiceNumber: string
-  reason: string
+    type: ExpenseType          // ← nuevo
+  items: ApiExpenseItem[]
+  itemCount: number
+  /** Suma de items.amount, sin IVA. */
+  subtotal: number
+  /** subtotal * 16%. */
+  iva: number
   retentionIva: string | null
   retentionIsr: string | null
+  /** Total final: subtotal + iva - retenciones. */
   amount: string
+  /** Igual que amount, en number. */
   totalToPay: number
+  /** Suma de todos los pagos registrados. */
   totalPaid: number
+  /** totalToPay - totalPaid (nunca negativo). */
   balance: number
   paymentStatus: PaymentStatus
   paidAt: string
@@ -417,13 +442,20 @@ export interface ApiExpensesPage {
   pageSize: number
 }
 
+/** Línea de concepto para alta/edición (`POST` / `PATCH`). */
+export interface NewExpenseItemInput {
+  reason: string
+  amount: number
+}
+
 /** Cuerpo para registrar un gasto (`POST /api/expenses`). */
 export interface NewExpenseInput {
   storeId: number
   supplier: string
   supplierInvoiceNumber: string
-  reason: string
-  amount: number
+  items: NewExpenseItemInput[]
+  retentionIva?: number
+  retentionIsr?: number
   paidAt: string
   note?: string | null
 }
@@ -447,35 +479,6 @@ export interface NewExpensePaymentInput {
   method?: PaymentMethod
   note?: string
 }
-
-/** Estado de pago derivado (no persistido). */
-export type ExpensePaymentStatus = 'pendiente' | 'parcial' | 'pagado'
-
-/** Gasto con su saldo calculado. */
-export interface ApiExpense {
-  id: number
-  storeId: number
-  storeCode: string | null
-  storeName: string | null
-  supplier: string
-  supplierInvoiceNumber: string
-  reason: string
-  amount: string
-  retentionIva: string | null
-  retentionIsr: string | null
-  /** Total a pagar: amount*1.16 - retenciones. */
-  totalToPay: number
-  /** Suma de todos los pagos registrados. */
-  totalPaid: number
-  /** totalToPay - totalPaid (nunca negativo). */
-  balance: number
-  paymentStatus: ExpensePaymentStatus
-  paidAt: string
-  note: string | null
-  createdByName: string | null
-  createdAt: string
-}
-
 export type TransferStatus = 'pendiente' | 'en_transito' | 'recibida' | 'cancelada'
 
 export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
