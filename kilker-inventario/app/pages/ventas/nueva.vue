@@ -13,8 +13,7 @@ const toast = useToast()
 const { me } = useMe()
 const { products } = useAllProducts()   // ← antes: const { data: products } = useProducts()
 const { data: stores } = useStores()
-const { customers, total, page, pageSize, pending, error, refresh } = useCustomers()
-
+const { customers, pending, error, refresh } = useAllCustomers()
 const apiFetch = useApiFetch()
 
 const isEmployee = computed(() => me.value?.role === 'empleado')
