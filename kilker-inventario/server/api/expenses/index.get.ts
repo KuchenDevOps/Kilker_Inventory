@@ -1,9 +1,11 @@
 // ───────────────────────────────────────────────
-//  GET /api/expenses — historial de gastos con estado de pago
+//  GET /api/expenses — historial de gastos con líneas y estado de pago
 // ───────────────────────────────────────────────
 import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { expenses } from '../../db/schema'
+import { expenses, expenseItems } from '../../db/schema'
+
+const IVA_RATE = 0.16
 
 function toDateOnly(v: unknown): string | null {
   const s = String(v ?? '')
@@ -25,28 +27,40 @@ export default defineEventHandler(async (event) => {
     if (storeId) filters.push(eq(expenses.storeId, storeId))
   }
 
+  const typeParam = String(query.type ?? '').trim()
+  if (typeParam === 'Fijo' || typeParam === 'Operativo') {
+    filters.push(eq(expenses.type, typeParam))
+  }
+
   const fromDate = toDateOnly(query.from)
   const toDate = toDateOnly(query.to)
   if (fromDate) filters.push(gte(expenses.paidAt, fromDate))
   if (toDate) filters.push(lt(expenses.paidAt, toDate))
 
-  // ─── NUEVO: búsqueda por proveedor, número de factura o motivo ───
+  // ─── Búsqueda: proveedor, número de factura, o concepto de alguna línea ───
   const q = String(query.q ?? '').trim()
   if (q) {
     const like = `%${q}%`
-    filters.push(
-      or(
-        ilike(expenses.supplier, like),
-        ilike(expenses.supplierInvoiceNumber, like),
-        ilike(expenses.reason, like)
-      )!
-    )
+
+    // Resolvemos el match de "reason" en items como una consulta aparte,
+    // en vez de un EXISTS correlacionado crudo (incompatible con el modo
+    // relacional de db.query, que re-aliasea las tablas y rompe la referencia).
+    const matchingItemRows = await db
+      .select({ expenseId: expenseItems.expenseId })
+      .from(expenseItems)
+      .where(ilike(expenseItems.reason, like))
+
+    const matchingExpenseIds = [...new Set(matchingItemRows.map((r) => r.expenseId))]
+
+    const searchConditions = [ilike(expenses.supplier, like), ilike(expenses.supplierInvoiceNumber, like)]
+    if (matchingExpenseIds.length) {
+      searchConditions.push(inArray(expenses.id, matchingExpenseIds))
+    }
+    filters.push(or(...searchConditions)!)
   }
-  // ─── fin del bloque nuevo ───
+  // ─── fin del bloque de búsqueda ───
 
-  // ── Paginación: SOLO se activa si viene ?page en la query ──
   const whereClause = filters.length ? and(...filters) : undefined
-
   const paginate = query.page != null
   const page = Math.max(1, Number(query.page) || 1)
   const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
@@ -58,7 +72,8 @@ export default defineEventHandler(async (event) => {
     with: {
       store: { columns: { code: true, name: true } },
       createdBy: { columns: { fullName: true } },
-      payments: { columns: { amount: true } }
+      payments: { columns: { amount: true } },
+      items: { columns: { id: true, reason: true, amount: true } }
     }
   })
 
@@ -71,6 +86,9 @@ export default defineEventHandler(async (event) => {
     if (totalPaid >= totalToPay && totalToPay > 0) paymentStatus = 'pagado'
     else if (totalPaid > 0) paymentStatus = 'parcial'
 
+    const subtotal = Math.round(e.items.reduce((sum, it) => sum + Number(it.amount), 0) * 100) / 100
+    const iva = Math.round(subtotal * IVA_RATE * 100) / 100
+
     return {
       id: e.id,
       storeId: e.storeId,
@@ -78,10 +96,14 @@ export default defineEventHandler(async (event) => {
       storeName: e.store?.name ?? null,
       supplier: e.supplier,
       supplierInvoiceNumber: e.supplierInvoiceNumber,
-      reason: e.reason,
-      amount: e.amount,
+      type: e.type,
+      items: e.items,
+      itemCount: e.items.length,
+      subtotal,
+      iva,
       retentionIva: e.retentionIva,
       retentionIsr: e.retentionIsr,
+      amount: e.amount,
       totalToPay,
       totalPaid,
       balance,
@@ -95,15 +117,7 @@ export default defineEventHandler(async (event) => {
 
   if (!paginate) return mapped
 
-  const [{ value: totalCount }] = await db
-    .select({ value: count() })
-    .from(expenses)
-    .where(whereClause)
+  const [{ value: totalCount }] = await db.select({ value: count() }).from(expenses).where(whereClause)
 
-  return {
-    data: mapped,
-    total: totalCount,
-    page,
-    pageSize
-  }
+  return { data: mapped, total: totalCount, page, pageSize }
 })
