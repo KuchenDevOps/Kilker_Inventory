@@ -2,7 +2,7 @@
 //  POST /api/sales — registrar una venta
 // ───────────────────────────────────────────────
 // En transacción: crea factura + líneas, movimientos de venta y baja inventario.
-import { and, eq, lte, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import {
   customers,
@@ -133,11 +133,16 @@ export default defineEventHandler(async (event) => {
       // entrado según el kardex — el mismo desfase que causó los shortfalls
       // detectados en el reporte mensual).
       if (isBackdated) {
+        // Trae TODOS los movimientos de este producto/tienda, sin filtrar por
+        // created_at en SQL — el filtro real ocurre abajo usando la fecha
+        // EFECTIVA (supplier_invoice_date para entradas cuando existe,
+        // created_at en caso contrario). Filtrar por created_at aquí
+        // excluiría entradas capturadas tarde en el sistema pero con
+        // factura de fecha anterior a la venta.
         const priorMovements = await tx.query.stockMovements.findMany({
           where: and(
             eq(stockMovements.productId, productId),
-            eq(stockMovements.storeId, storeId),
-            lte(stockMovements.createdAt, effectiveDate)
+            eq(stockMovements.storeId, storeId)
           ),
           columns: { quantity: true, type: true, supplierInvoiceDate: true, createdAt: true }
         })
@@ -153,6 +158,8 @@ export default defineEventHandler(async (event) => {
           if (effective > effectiveDate) return sum
           return sum + Number(m.quantity)
         }, 0)
+
+        
 
         if (netAtDate < quantity) {
           throw createError({
@@ -175,7 +182,6 @@ export default defineEventHandler(async (event) => {
     const totalAmount = subTotal - discountAmount
 
     await tx.execute(sql`SELECT id FROM ${stores} WHERE id = ${storeId} FOR UPDATE`)
-
 
     const [folioRow] = await tx
       .select({ count: sql<number>`count(*)::int` })
