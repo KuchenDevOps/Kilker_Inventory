@@ -98,9 +98,13 @@ function lineTotal(line: Line): number {
   return effectivePrice(line) * (line.quantity ?? 0)
 }
 
+const IVA_RATE = 0.16
+
 const subtotal = computed(() => lines.reduce((sum, l) => sum + lineTotal(l), 0))
 const grandTotal = computed(() => subtotal.value * (1 - discount.value / 100))
 const discountTotal = computed(() => subtotal.value - grandTotal.value)
+
+const saleIva = computed(() => grandTotal.value * IVA_RATE)
 
 function addLine() {
   lines.push({ productId: undefined, quantity: undefined, unitPrice: undefined })
@@ -477,6 +481,16 @@ async function quickCreateCustomer() {
               <span v-else="discount">Total Final</span>
               <p>{{ currency.format(grandTotal) }}</p>
             </div>
+            <div v-if="grandTotal > 0" class="flex justify-between gap-20 text-xs text-muted mt-1">
+              <span>IVA (16%) · informativo</span>
+              <p>{{ currency.format(saleIva) }}</p>
+            </div>
+            <div class="flex justify-between gap-20 text-lg font-semibold tabular-nums">
+                <span>Total con IVA: </span>
+                <p>{{ currency.format(saleIva + grandTotal) }}</p>
+            </div>
+
+            
           </div>
         </div>
 
