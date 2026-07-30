@@ -8,6 +8,7 @@ import { expensePayments, expenses } from '../../../../db/schema'
 interface NewPaymentBody {
   amount?: number | string
   paidAt?: string
+  paidBy?: string
   method?: string
   note?: string
 }
@@ -23,6 +24,10 @@ export default defineEventHandler(async (event) => {
   const amount = Number(body?.amount)
   if (!Number.isFinite(amount) || amount <= 0) {
     throw createError({ statusCode: 400, statusMessage: 'Monto inválido' })
+  }
+  const paidBy = String(body?.paidBy ?? '').trim()
+  if(!paidBy){
+    throw createError({ statusCode: 400, statusMessage: 'Coloca la empresa que genero el pago'})
   }
   const paidAt = String(body?.paidAt ?? '').trim()
   if (!paidAt) {
@@ -44,17 +49,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'No puedes pagar gastos de otra sucursal' })
   }
 
-  // No permitir sobrepagar el saldo pendiente.
-  const totalToPay =
-    Number(expense.amount) * 1.16 - Number(expense.retentionIva ?? 0) - Number(expense.retentionIsr ?? 0)
+// El monto a pagar es el subtotal puro (sin IVA ni retenciones — esos son
+  // solo informativos y ya no afectan lo que se cobra).
+  const totalToPay = Number(expense.amount)
   const alreadyPaid = expense.payments.reduce((sum, p) => sum + Number(p.amount), 0)
   const remaining = Math.round((totalToPay - alreadyPaid) * 100) / 100
-  if (amount > remaining + 0.01) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: `El monto excede el saldo pendiente (${remaining.toFixed(2)})`
-    })
-  }
 
   const [created] = await db
     .insert(expensePayments)
@@ -62,6 +61,7 @@ export default defineEventHandler(async (event) => {
       expenseId,
       amount: String(amount),
       paidAt,
+      paidBy,
       method,
       note: body?.note?.trim() || null,
       createdBy: profile.id

@@ -1,0 +1,1 @@
+ALTER TABLE "expense_payments" ALTER COLUMN "paid_by" SET DEFAULT 'Sin especificar';

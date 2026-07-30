@@ -207,6 +207,7 @@ const paymentMethodItems = (Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map(
 const paymentForm = reactive({
   amount: undefined as number | undefined,
   paidAt: '',
+  paidBy: '',
   method: 'efectivo' as PaymentMethod,
   note: ''
 })
@@ -217,6 +218,7 @@ async function openPayments(e: ApiExpense) {
   showPaymentsModal.value = true
   Object.assign(paymentForm, {
     amount: undefined,
+  paidBy: '', 
     paidAt: new Date().toISOString().slice(0, 10),
     method: 'efectivo',
     note: ''
@@ -248,6 +250,7 @@ const canSubmitPayment = computed(
     (paymentForm.amount ?? 0) > 0 &&
     paymentForm.paidAt.length > 0 &&
     !!viewingExpense.value &&
+    paymentForm.paidBy != '' &&
     (paymentForm.amount ?? 0) <= viewingExpense.value.balance + 0.01
 )
 
@@ -260,6 +263,7 @@ async function submitPayment() {
       body: {
         amount: paymentForm.amount,
         paidAt: paymentForm.paidAt,
+        paidBy: paymentForm.paidBy,
         method: paymentForm.method,
         note: paymentForm.note.trim() || undefined
       }
@@ -303,6 +307,10 @@ function reasonsSummary(e: ApiExpense) {
   if (e.items.length === 1) return e.items[0].reason
   return `${e.items[0].reason} +${e.items.length - 1} más`
 }
+
+onMounted(() => {
+  refresh()
+})
 </script>
 
 <template>
@@ -344,37 +352,6 @@ function reasonsSummary(e: ApiExpense) {
       placeholder="Buscar por proveedor, factura o concepto…"
       class="w-full sm:max-w-sm"
     />
-
-    <!-- Resumen de totales
-    <div class="grid gap-4 sm:grid-cols-3">
-      <UCard :ui="{ body: 'p-4' }">
-        <p class="text-xs text-muted">Total general</p>
-        <p class="mt-1 text-xl font-semibold">{{ currency.format(totalsSummary.all.subtotal) }}</p>
-        <p class="text-xs text-muted mt-1">
-          {{ currency.format(totalsSummary.all.total) }} con IVA (informativo)
-        </p>
-      </UCard>
-      <UCard :ui="{ body: 'p-4' }">
-        <div class="flex items-center gap-2">
-          <UBadge label="Fijo" color="info" variant="subtle" />
-          <p class="text-xs text-muted">gastos fijos</p>
-        </div>
-        <p class="mt-1 text-xl font-semibold">{{ currency.format(totalsSummary.Fijo.subtotal) }}</p>
-        <p class="text-xs text-muted mt-1">
-          {{ currency.format(totalsSummary.Fijo.total) }} con IVA (informativo)
-        </p>
-      </UCard>
-      <UCard :ui="{ body: 'p-4' }">
-        <div class="flex items-center gap-2">
-          <UBadge label="Operativo" color="neutral" variant="subtle" />
-          <p class="text-xs text-muted">gastos operativos</p>
-        </div>
-        <p class="mt-1 text-xl font-semibold">{{ currency.format(totalsSummary.Operativo.subtotal) }}</p>
-        <p class="text-xs text-muted mt-1">
-          {{ currency.format(totalsSummary.Operativo.total) }} con IVA (informativo)
-        </p>
-      </UCard>
-    </div> -->
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">
@@ -669,9 +646,9 @@ function reasonsSummary(e: ApiExpense) {
                   <span class="tabular-nums">-{{ currency.format(Number(viewingExpense.retentionIsr)) }}</span>
                 </div>
                 <div class="flex justify-between font-semibold pt-2 mt-1 border-t border-default">
-  <span>Total con IVA y retenciones</span>
-  <span class="tabular-nums">{{ currency.format(viewingTotalWithTaxes) }}</span>
-</div>
+                  <span>Total con IVA y retenciones</span>
+                  <span class="tabular-nums">{{ currency.format(viewingTotalWithTaxes) }}</span>
+                </div>
               </div>
             </div>
 
@@ -711,9 +688,9 @@ function reasonsSummary(e: ApiExpense) {
                   class="flex items-center justify-between gap-3 py-2"
                 >
                   <div>
-                    <p class="font-medium">{{ currency.format(Number(p.amount)) }}</p>
+                    <p class="font-medium">{{ currency.format(Number(p.amount)) }} pagado por {{ p.paidBy }}</p>
                     <p class="text-xs text-muted">
-                      {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
+                      {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }} 
                       <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
                     </p>
                     <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
@@ -739,8 +716,14 @@ function reasonsSummary(e: ApiExpense) {
                     class="w-full"
                   />
                 </UFormField>
+               <div class="grid gap-3 sm:grid-cols-1">
                 <UFormField label="Fecha de pago">
                   <UInput v-model="paymentForm.paidAt" type="date" class="w-full" />
+                </UFormField>
+             
+                </div>
+                   <UFormField label="Empresa que realiza el pago">
+                  <UInput v-model="paymentForm.paidBy" placeholder="empresa..." class="w-full" />
                 </UFormField>
               </div>
               <div class="grid gap-3 sm:grid-cols-2">

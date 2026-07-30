@@ -453,6 +453,7 @@ export interface NewExpenseInput {
   storeId: number
   supplier: string
   supplierInvoiceNumber: string
+  type: ExpenseType         
   items: NewExpenseItemInput[]
   retentionIva?: number
   retentionIsr?: number
@@ -466,6 +467,7 @@ export interface ApiExpensePayment {
   expenseId: number
   amount: string
   paidAt: string
+  paidBy: string
   method: PaymentMethod
   note: string | null
   createdByName: string | null
@@ -476,6 +478,7 @@ export interface ApiExpensePayment {
 export interface NewExpensePaymentInput {
   amount: number
   paidAt: string
+    paidBy: string
   method?: PaymentMethod
   note?: string
 }

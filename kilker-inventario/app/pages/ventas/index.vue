@@ -293,6 +293,10 @@ async function exportAll() {
     exportingAll.value = false
   }
 }
+
+const IVA_RATE = 0.16
+
+const detailIva = computed(() => (detail.value ? Number(detail.value.totalAmount) * IVA_RATE : 0))
 </script>
 
 <template>
@@ -371,6 +375,7 @@ async function exportAll() {
               <th class="px-4 py-3 font-medium">Fecha</th>
               <th class="px-4 py-3 font-medium text-right">Prod.</th>
               <th class="px-4 py-3 font-medium text-right">Total</th>
+              <th class="px-4 py-3 font-medium text-right">Total con IVA</th>
               <th class="px-4 py-3 font-medium text-center">Canal</th>
               <th class="px-4 py-3 font-medium text-center">Estado</th>
               <th class="px-4 py-3 font-medium">Creó</th>
@@ -395,6 +400,9 @@ async function exportAll() {
                 <td class="px-4 py-3 text-right tabular-nums">{{ s.itemCount }}</td>
                 <td class="px-4 py-3 text-right tabular-nums">
                   {{ currency.format(Number(s.totalAmount)) }}
+                </td>
+                <td class="px-4 py-3 text-right tabular-nums">
+                  {{ currency.format(Number(s.totalAmount) * (1 + IVA_RATE)) }}
                 </td>
                 <td class="px-4 py-3 text-center">
                   <UBadge
@@ -456,7 +464,7 @@ async function exportAll() {
               </tr>
               <!-- Panel: empleado solicita anulación (abre ticket) -->
               <tr v-if="!isAdmin && requestingId === s.id" class="bg-elevated/40">
-                <td :colspan="10" class="px-4 py-3">
+                <td :colspan="11" class="px-4 py-3">
                   <div class="flex flex-wrap items-start gap-3">
                     <div class="flex-1">
                       <p class="text-xs text-muted mb-1">
@@ -492,7 +500,7 @@ async function exportAll() {
               </tr>
               <!-- Panel de confirmación de anulación (admin) -->
               <tr v-if="isAdmin && voidingId === s.id" class="bg-elevated/40">
-                <td :colspan="10" class="px-4 py-3">
+                <td :colspan="11" class="px-4 py-3">
                   <div class="flex flex-wrap items-start gap-3">
                     <div class="flex-1">
                       <p class="text-xs text-muted mb-1">
@@ -626,7 +634,14 @@ async function exportAll() {
               <span>Total</span>
               <span class="tabular-nums">{{ currency.format(Number(detail.totalAmount)) }}</span>
             </div>
-
+            <div class="flex justify-between text-xs text-muted">
+              <span>IVA (16%) · informativo</span>
+              <span class="tabular-nums">{{ currency.format(detailIva) }}</span>
+            </div>
+            <div class="flex justify-between text-xs text-muted">
+              <span>Total con IVA</span>
+              <span class="tabular-nums">{{ currency.format(detailIva + Number(detail.totalAmount)) }}</span>
+            </div>
             <div class="space-y-1 text-sm">
               <div v-if="Number(detail.discountAmount) > 0" class="flex justify-between text-muted">
                 <span>Subtotal</span>
