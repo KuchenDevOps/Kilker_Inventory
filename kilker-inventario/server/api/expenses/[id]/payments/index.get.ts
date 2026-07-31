@@ -22,6 +22,7 @@ export default defineEventHandler(async (event) => {
     expenseId: p.expenseId,
     amount: p.amount,
     paidAt: p.paidAt,
+    paidBy: p.paidBy,
     method: p.method,
     note: p.note,
     createdByName: p.createdBy?.fullName ?? null,

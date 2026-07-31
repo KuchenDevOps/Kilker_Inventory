@@ -484,6 +484,7 @@ export const expensePayments = pgTable(
       .notNull()
       .references(() => expenses.id, { onDelete: 'cascade' }),
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    paidBy: text('paid_by').notNull().default('Sin especificar'),
     paidAt: date('paid_at').notNull(),
     method: paymentMethod('method').notNull().default('efectivo'),
     note: text('note'),

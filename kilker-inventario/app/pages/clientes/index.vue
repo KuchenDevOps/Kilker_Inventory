@@ -150,7 +150,7 @@ async function toggleActive(c: ApiCustomer) {
         <h1 class="text-2xl font-semibold">Clientes</h1>
         <p class="text-sm text-muted">{{ total }} cliente(s)</p>
       </div>
-      <UButton v-if="isAdmin" icon="i-lucide-plus" color="primary" @click="openCreate">
+      <UButton icon="i-lucide-plus" color="primary" @click="openCreate">
         Nuevo cliente
       </UButton>
     </header>
@@ -228,7 +228,7 @@ async function toggleActive(c: ApiCustomer) {
                       @click="confirmingId = null"
                     />
                   </template>
-                  <template v-else-if="isAdmin">
+                  <template v-else>
                     <UButton
                       size="xs"
                       color="neutral"
