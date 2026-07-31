@@ -222,6 +222,7 @@ export function useMovements() {
   const pending = useState('movements-pending', () => false)
   const error = useState<string | null>('movements-error', () => null)
   const storeId = useState<number | undefined>('movements-store', () => undefined)
+  const supplierInvoiceNumber = useState<string | null>('supplier-invoice-number', () => null)
   const from = useState<string | undefined>('movements-from', () => undefined)
   const to = useState<string | undefined>('movements-to', () => undefined)
   const search = useState('movements-search', () => '')

@@ -95,6 +95,7 @@ const {
   refresh: refreshTopProducts
 } = useTopProducts()
 
+
 // --- DEFINIR PERIODFROM Y PERIODTO ---
 const periodFrom = ref<string | undefined>(undefined)
 const periodTo = ref<string | undefined>(undefined)
@@ -339,7 +340,7 @@ const metricsSection1 = computed(() => {
 const metricsSection2 = computed(() => {
   const all = [
     {
-      label: 'Valor de entradas',
+      label: 'Compras',
       value: currency.format(entryValue.value),
       hint: 'en el periodo',
       icon: 'i-lucide-arrow-up-right',
@@ -348,7 +349,7 @@ const metricsSection2 = computed(() => {
       globalOnly: false
     },
     {
-      label: 'Valor de salidas',
+      label: 'Ventas',
       value: currency.format(salesValue.value),
       hint: 'en el periodo',
       icon: 'i-lucide-arrow-down-right',
@@ -461,6 +462,17 @@ const isLoading = computed(
     loadingTopProducts.value ||
     loadingExpenses.value
 )
+
+/**
+ * Porcentaje que ocupa el COSTO dentro de la barra (0-100). El resto es
+ * utilidad. Si el costo supera la venta (pérdida en ese producto), se topa
+ * en 100% rojo — no hay "utilidad negativa" que representar visualmente.
+ */
+function costSharePct(p: (typeof topProducts.value)[number]) {
+  if (p.totalRevenue <= 0) return 100
+  const pct = (p.totalCost / p.totalRevenue) * 100
+  return Math.min(100, Math.max(0, pct))
+}
 </script>
 
 <template>
@@ -592,27 +604,48 @@ const isLoading = computed(
 
   <!-- Lista de productos -->
   <ul v-else class="space-y-3">
-    <!-- Calcular el máximo para las barras -->
-    <template v-if="topProducts.length">
-      <li v-for="p in topProducts" :key="p.productId">
-        <div class="flex items-center justify-between gap-3 mb-1">
-          <p class="text-sm font-medium truncate">{{ p.productName }}</p>
-          <p class="text-xs text-muted shrink-0">
-            {{ number.format(p.totalQuantity) }} {{ UNIT_LABELS[p.unit] }}(s) ·
-            {{ currency.format(p.totalRevenue) }}
-          </p>
-        </div>
-        <div class="h-2 rounded-full bg-elevated overflow-hidden">
-          <div
-            class="h-full rounded-full bg-primary transition-all duration-500"
-            :style="{ 
-              width: `${(p.totalQuantity / topProducts.reduce((max, item) => Math.max(max, item.totalQuantity), 0)) * 100}%` 
-            }"
-          />
-        </div>
-      </li>
-    </template>
-  </ul>
+  <template v-if="topProducts.length">
+<li
+  v-for="(p, index) in topProducts"
+  :key="p.productId"
+>
+  <div class="flex items-center justify-between gap-3 mb-1">
+    <p class="text-sm font-medium truncate"> {{ p.productName }} - {{ p.productSku }}</p>
+    <p class="text-xs text-muted shrink-0">
+      {{ number.format(p.totalQuantity) }} {{ UNIT_LABELS[p.unit] }}(s)
+    </p>
+  </div>
+  <div class="flex items-center justify-between gap-3 text-xs mb-1.5">
+    <span class="text-muted">
+      Costo: {{ currency.format(p.totalCost) }}
+    </span>
+    <span class="text-muted">
+      Venta: {{ currency.format(p.totalRevenue) }}
+    </span>
+    <span :class="p.profit >= 0 ? 'text-success' : 'text-error'" class="font-medium">
+      Utilidad: {{ currency.format(p.profit) }} ({{ p.profitPct.toFixed(1) }}%)
+    </span>
+  </div>
+  <div
+    class="h-2 rounded-full bg-elevated overflow-hidden"
+    :style="{
+      width: `${(p.totalQuantity / topProducts.reduce((max, item) => Math.max(max, item.totalQuantity), 0)) * 100}%`
+    }"
+  >
+    <div class="h-full flex">
+      <div
+        class="h-full bg-error transition-all duration-500"
+        :style="{ width: `${costSharePct(p)}%` }"
+      />
+      <div
+        class="h-full bg-success transition-all duration-500"
+        :style="{ width: `${100 - costSharePct(p)}%` }"
+      />
+    </div>
+  </div>
+</li>
+  </template>
+</ul>
 </UCard>
 
 

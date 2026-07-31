@@ -384,10 +384,10 @@ const detailIva = computed(() => (detail.value ? Number(detail.value.totalAmount
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td :colspan="10" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td :colspan="11" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!sales.length">
-              <td :colspan="10" class="px-4 py-8 text-center text-muted">
+              <td :colspan="11" class="px-4 py-8 text-center text-muted">
                 Sin ventas para el filtro actual.
               </td>
             </tr>

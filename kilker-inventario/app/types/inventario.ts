@@ -478,7 +478,7 @@ export interface ApiExpensePayment {
 export interface NewExpensePaymentInput {
   amount: number
   paidAt: string
-    paidBy: string
+  paidBy: string
   method?: PaymentMethod
   note?: string
 }
