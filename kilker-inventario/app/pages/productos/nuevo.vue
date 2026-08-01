@@ -14,9 +14,7 @@ useHead({ title: 'Nuevo producto · Inventario Kilker' })
 const toast = useToast()
 const { me } = useMe()
 const { data: categories } = useCategories()
-const { data: products } = useProducts()
-const apiFetch = useApiFetch()
-
+const { products } = useProducts()  
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 type FormState = {
