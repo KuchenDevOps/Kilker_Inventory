@@ -9,7 +9,7 @@ export function useExpenses() {
   const pending = useState('expenses-pending', () => false)
   const error = useState<string | null>('expenses-error', () => null)
   const storeId = useState<number | undefined>('expenses-store', () => undefined)
-  const type = useState<ExpenseType | undefined>('expenses-type', () => undefined)   // ← nuevo
+  const type = useState<ExpenseType | undefined>('expenses-type', () => undefined)   
   const from = useState<string | undefined>('expenses-from', () => undefined)
   const to = useState<string | undefined>('expenses-to', () => undefined)
   const search = useState('expenses-search', () => '')
@@ -32,7 +32,7 @@ export function useExpenses() {
       }
       const q = new URLSearchParams()
       if (storeId.value) q.set('storeId', String(storeId.value))
-      if (type.value) q.set('type', type.value)   // ← nuevo
+      if (type.value) q.set('type', type.value)   
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       if (search.value.trim()) q.set('q', search.value.trim())
