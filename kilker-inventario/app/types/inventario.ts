@@ -358,16 +358,15 @@ export interface ApiTopProduct {
   totalCost: number
   profit: number
   profitPct: number
+  hasSales: boolean
 }
 
 export interface ApiUnsoldProduct {
   productId: number
-  productName: string
-  productSku: string
-  unit: string
-  totalEntradas: number
-  totalEntradasValue: number
-  currentStock: number
+  productName: string | null
+  productSku: string | null
+  unit: ProductUnit
+  category: number | null
 }
 
 /** Canal de la venta (enum sale_channel). */
