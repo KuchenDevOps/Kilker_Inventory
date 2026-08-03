@@ -350,11 +350,23 @@ export interface ApiMonthlyInventory {
 
 export interface ApiTopProduct {
   productId: number
-  productName: string
-  productSku: string
+  productName: string | null
+  productSku: string | null
   unit: ProductUnit
   totalQuantity: number
   totalRevenue: number
+  totalCost: number
+  profit: number
+  profitPct: number
+  hasSales: boolean
+}
+
+export interface ApiUnsoldProduct {
+  productId: number
+  productName: string | null
+  productSku: string | null
+  unit: ProductUnit
+  category: number | null
 }
 
 /** Canal de la venta (enum sale_channel). */
@@ -478,7 +490,7 @@ export interface ApiExpensePayment {
 export interface NewExpensePaymentInput {
   amount: number
   paidAt: string
-    paidBy: string
+  paidBy: string
   method?: PaymentMethod
   note?: string
 }

@@ -2,7 +2,7 @@
 //  GET /api/sales — historial de ventas
 // ───────────────────────────────────────────────
 // Empleado: su tienda. Admin: todas (filtros ?storeId/?status/?productId).
-import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { customers, invoiceItems, invoices, profiles, stores, tickets } from '../../db/schema'
 
@@ -26,18 +26,16 @@ export default defineEventHandler(async (event) => {
   }
 
   // Filtro por producto: ventas que contienen ese productId en alguna línea.
-  if (query.productId) {
-    const productId = Number(query.productId)
-    if (productId) {
-      const matchingInvoiceIds = await db
-        .select({ invoiceId: invoiceItems.invoiceId })
-        .from(invoiceItems)
-        .where(eq(invoiceItems.productId, productId))
-      const ids = matchingInvoiceIds.map((r) => r.invoiceId)
-      if (ids.length === 0) return []
-      filters.push(inArray(invoices.id, ids))
-    }
+ if (query.productId) {
+  const productId = Number(query.productId)
+  if (productId) {
+    filters.push(sql`exists (
+      select 1 from invoice_items ii
+      where ii.invoice_id = invoices.id
+        and ii.product_id = ${productId}
+    )`)
   }
+}
 
   if (query.from) filters.push(gte(invoices.issuedAt, new Date(String(query.from))))
   if (query.to) filters.push(lt(invoices.issuedAt, new Date(String(query.to))))
