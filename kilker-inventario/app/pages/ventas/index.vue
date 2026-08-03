@@ -24,9 +24,7 @@ const loadingDetail = ref(false)
 const showDetailModal = ref(false)
 
 // Estado compartido: refrescamos al entrar para no mostrar datos viejos.
-onMounted(() => {
-  refresh()
-})
+
 
 if (import.meta.client) {
   document.addEventListener('visibilitychange', () => {
@@ -297,6 +295,14 @@ async function exportAll() {
 const IVA_RATE = 0.16
 
 const detailIva = computed(() => (detail.value ? Number(detail.value.totalAmount) * IVA_RATE : 0))
+
+const route = useRoute()
+
+const queryProductId = Number(route.query.productId)
+if (Number.isFinite(queryProductId) && queryProductId > 0) {
+  productId.value = queryProductId
+}
+
 </script>
 
 <template>

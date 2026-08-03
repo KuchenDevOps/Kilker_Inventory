@@ -32,6 +32,8 @@ export function useTopProducts() {
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       q.set('limit', String(limit.value))
+      q.set('includeUnsold', 'true') 
+      
       topProducts.value = await $fetch<ApiTopProduct[]>(`/api/reports/top-products?${q}`, {
         headers: { Authorization: `Bearer ${token}` }
       })

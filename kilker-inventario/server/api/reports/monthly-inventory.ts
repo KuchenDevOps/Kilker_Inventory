@@ -347,11 +347,11 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    if (shortfall > 0) {
-      console.warn(
-        `[monthly-inventory] Faltante de capas FIFO para llave "${key}": ${shortfall} unidad(es) sin entrada que las respalde antes de ${month}.`
-      )
-    }
+    // if (shortfall > 0) {
+    //   console.warn(
+    //     `[monthly-inventory] Faltante de capas FIFO para llave "${key}": ${shortfall} unidad(es) sin entrada que las respalde antes de ${month}.`
+    //   )
+    // }
 
     let productInventoryValue = 0
     for (const layer of inventoryLayers) productInventoryValue += layer.qty * layer.unitCost

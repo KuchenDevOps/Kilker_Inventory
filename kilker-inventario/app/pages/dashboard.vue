@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { UNIT_LABELS } from '~/types/inventario'
 import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
-
+const apiFetch = useApiFetch()
 
 
 useHead({ title: 'Dashboard · Inventario Kilker' })
@@ -9,14 +9,12 @@ useHead({ title: 'Dashboard · Inventario Kilker' })
 const { products, pending: loadingProducts, error: productsError, refresh: refreshProducts } = useAllProducts()
 const { data: stores, refresh: refreshStores } = useStores()
 const {
-  averageCosts,
   pending: loadingAverageCosts,
   storeId: averageCostsStoreId,
   refresh: refreshAverageCosts,
-  getAverageCost
 } = useAverageCosts()
 
-const { me } = useMe()   // ← NUEVO
+const { me } = useMe()   
 const isEmployee = computed(() => me.value?.role === 'empleado')   // ← NUEVO
 
 const {
@@ -96,6 +94,47 @@ const {
 } = useTopProducts()
 
 
+
+interface TopProductRow {
+  productId: number
+  totalRevenue: number
+  totalCost: number
+  profit: number
+}
+
+const allProductsTotals = ref<{ totalCost: number; totalRevenue: number; totalProfit: number } | null>(null)
+const loadingAllProductsTotals = ref(false)
+
+async function refreshAllProductsTotals() {
+  loadingAllProductsTotals.value = true
+  try {
+    const query: Record<string, any> = { limit: 0 }
+    if (selectedStoreId.value) query.storeId = selectedStoreId.value
+    if (periodFrom.value) query.from = periodFrom.value
+    if (periodTo.value) query.to = periodTo.value
+
+    const rows = await apiFetch<TopProductRow[]>('/api/reports/top-products', { query })
+
+    const totalRevenue = rows.reduce((sum, r) => sum + r.totalRevenue, 0)
+    const totalCost = rows.reduce((sum, r) => sum + r.totalCost, 0)
+    allProductsTotals.value = {
+      totalCost,
+      totalRevenue,
+      totalProfit: totalRevenue - totalCost
+    }
+  } catch (e) {
+    console.error('Error al cargar totales de productos:', e)
+    allProductsTotals.value = null
+  } finally {
+    loadingAllProductsTotals.value = false
+  }
+}
+
+const allProductsProfitPct = computed(() => {
+  if (!allProductsTotals.value || allProductsTotals.value.totalRevenue <= 0) return 0
+  return (allProductsTotals.value.totalProfit / allProductsTotals.value.totalRevenue) * 100
+})
+
 // --- DEFINIR PERIODFROM Y PERIODTO ---
 const periodFrom = ref<string | undefined>(undefined)
 const periodTo = ref<string | undefined>(undefined)
@@ -136,7 +175,7 @@ const refreshAllData = async () => {
     topProductsStoreId.value = storeId
     expensesStoreId.value = storeId
     monthlyStoreId.value = storeId
-
+    
     movementsFrom.value = periodFrom.value
     movementsTo.value = periodTo.value
     salesFrom.value = periodFrom.value
@@ -153,7 +192,8 @@ const refreshAllData = async () => {
       refreshAverageCosts(),
       refreshTopProducts(),
       refreshExpenses(),
-      refreshMonthly()
+      refreshMonthly(),
+      refreshAllProductsTotals()
     ])
   } catch (error) {
     console.error('Error al refrescar datos:', error)
@@ -210,7 +250,6 @@ let intervalId: ReturnType<typeof setInterval> | null = null
 
 // --- CICLO DE VIDA ---
 onMounted(async () => {
-  console.log(' Dashboard montado - cargando datos iniciales')
   await refreshAllData()
   lastRefreshTime.value = Date.now()
   document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -219,7 +258,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  console.log('🧹 Limpiando listeners y timeouts')
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   if (visibilityTimeoutId) {
     clearTimeout(visibilityTimeoutId)
@@ -380,7 +418,35 @@ const metricsSection2 = computed(() => {
       globalOnly: false
     })
   }
+ all.push({
+    label: 'Costo total',
+    value: currency.format(allProductsTotals.value?.totalCost ?? 0),
+    hint: 'de todos los productos vendidos',
+    icon: 'i-lucide-receipt',
+    color: 'text-warning',
+    loading: loadingAllProductsTotals.value,
+    globalOnly: false
+  })
 
+  all.push({
+    label: 'Venta total',
+    value: currency.format(allProductsTotals.value?.totalRevenue ?? 0),
+    hint: 'de todos los productos vendidos',
+    icon: 'i-lucide-trending-up',
+    color: 'text-info',
+    loading: loadingAllProductsTotals.value,
+    globalOnly: false
+  })
+
+   all.push({
+  label: 'Utilidad total',
+  value: currency.format(allProductsTotals.value?.totalProfit ?? 0),
+  hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
+  icon: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
+  color: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'text-success' : 'text-error',
+  loading: loadingAllProductsTotals.value,
+  globalOnly: false
+})
 
 all.push({
   label: 'Gastos fijos',
@@ -391,6 +457,10 @@ all.push({
   loading: loadingExpenses.value,
   globalOnly: false
 })
+
+
+
+
 
 all.push({
   label: 'Gastos Fijos pagados',
@@ -448,7 +518,6 @@ all.push({
 
 return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 
-  return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 })
 
 
@@ -460,7 +529,9 @@ const isLoading = computed(
     loadingSales.value ||
     loadingAverageCosts.value ||
     loadingTopProducts.value ||
-    loadingExpenses.value
+    loadingExpenses.value ||
+    loadingMonthly.value ||
+    loadingAllProductsTotals.value
 )
 
 /**
@@ -473,6 +544,16 @@ function costSharePct(p: (typeof topProducts.value)[number]) {
   const pct = (p.totalCost / p.totalRevenue) * 100
   return Math.min(100, Math.max(0, pct))
 }
+
+const topProductSearch = ref('')
+
+const filteredTopProducts = computed(() => {
+  if (!topProductSearch.value.trim()) return topProducts.value
+  const q = topProductSearch.value.trim().toLowerCase()
+  return topProducts.value.filter(
+    (p) => p.productName?.toLowerCase().includes(q) || p.productSku?.toLowerCase().includes(q)
+  )
+})
 </script>
 
 <template>
@@ -575,21 +656,24 @@ function costSharePct(p: (typeof topProducts.value)[number]) {
 
     <UCard>
   <template #header>
-    <div class="flex items-center gap-2">
-      <UIcon name="i-lucide-bar-chart-3" class="size-5 text-primary" />
-      <h2 class="font-semibold">Productos más vendidos</h2>
-      <USelect
-        v-model="topProductsLimit"
-        :items="[
-          { label: 'Top 5', value: 5 },
-          { label: 'Top 10', value: 10 },
-          { label: 'Todos', value: 0 }
-        ]"
-        class="ml-auto w-32"
-        @update:model-value="refreshTopProducts"
-      />
-    </div>
-  </template>
+  <div class="flex items-center gap-2 flex-wrap">
+    <UIcon name="i-lucide-bar-chart-3" class="size-5 text-primary" />
+    <h2 class="font-semibold">Productos más vendidos</h2>
+    <UInput
+      v-model="topProductSearch"
+      icon="i-lucide-search"
+      placeholder="Buscar producto…"
+      size="sm"
+      class="w-48"
+    />
+    <USelect
+      v-model="topProductsLimit"
+      :items="[{ label: 'Top 5', value: 5 }, { label: 'Top 10', value: 10 }, { label: 'Todos', value: 0 }]"
+      class="ml-auto w-32"
+      @update:model-value="refreshTopProducts"
+    />
+  </div>
+</template>
 
   <!-- Estado de carga -->
   <div v-if="loadingTopProducts" class="py-6 text-center">
@@ -603,48 +687,52 @@ function costSharePct(p: (typeof topProducts.value)[number]) {
   </p>
 
   <!-- Lista de productos -->
-  <ul v-else class="space-y-3">
-  <template v-if="topProducts.length">
-<li
-  v-for="(p, index) in topProducts"
-  :key="p.productId"
->
-  <div class="flex items-center justify-between gap-3 mb-1">
-    <p class="text-sm font-medium truncate"> {{ p.productName }} - {{ p.productSku }}</p>
-    <p class="text-xs text-muted shrink-0">
+ <ul v-else class="space-y-3">
+  <li v-for="p in filteredTopProducts" :key="p.productId">
+    <div class="flex items-center justify-between gap-3 mb-1">
+  <p class="text-sm font-medium truncate">
+    {{ p.productName }} - {{ p.productSku }}
+  </p>
+
+  <div class="flex items-center gap-1 shrink-0">
+    <p class="text-xs text-muted">
       {{ number.format(p.totalQuantity) }} {{ UNIT_LABELS[p.unit] }}(s)
     </p>
+
+    <UButton
+      :to="`/ventas?productId=${p.productId}`"
+      size="xs"
+      color="neutral"
+      variant="ghost"
+      icon="i-lucide-external-link"
+      title="Ver historial de ventas de este producto"
+    />
   </div>
-  <div class="flex items-center justify-between gap-3 text-xs mb-1.5">
-    <span class="text-muted">
-      Costo: {{ currency.format(p.totalCost) }}
-    </span>
-    <span class="text-muted">
-      Venta: {{ currency.format(p.totalRevenue) }}
-    </span>
-    <span :class="p.profit >= 0 ? 'text-success' : 'text-error'" class="font-medium">
-      Utilidad: {{ currency.format(p.profit) }} ({{ p.profitPct.toFixed(1) }}%)
-    </span>
-  </div>
-  <div
-    class="h-2 rounded-full bg-elevated overflow-hidden"
-    :style="{
-      width: `${(p.totalQuantity / topProducts.reduce((max, item) => Math.max(max, item.totalQuantity), 0)) * 100}%`
-    }"
-  >
-    <div class="h-full flex">
-      <div
-        class="h-full bg-error transition-all duration-500"
-        :style="{ width: `${costSharePct(p)}%` }"
-      />
-      <div
-        class="h-full bg-success transition-all duration-500"
-        :style="{ width: `${100 - costSharePct(p)}%` }"
-      />
+</div>
+
+    <!-- Con ventas: costo/venta/utilidad + barra roja/verde -->
+    <template v-if="p.hasSales">
+      <div class="flex items-center justify-between gap-3 text-xs mb-1.5">
+        <span class="text-muted">Costo: {{ currency.format(p.totalCost) }}</span>
+        <span class="text-muted">Venta: {{ currency.format(p.totalRevenue) }}</span>
+        <span :class="p.profit >= 0 ? 'text-success' : 'text-error'" class="font-medium">
+          Utilidad: {{ currency.format(p.profit) }} ({{ p.profitPct.toFixed(1) }}%)
+        </span>
+      </div>
+      <div class="h-2 rounded-full bg-elevated overflow-hidden" :style="{ width: `${(p.totalQuantity / topProducts.reduce((max, item) => Math.max(max, item.totalQuantity), 0)) * 100}%` }">
+        <div class="h-full flex">
+          <div class="h-full bg-error transition-all duration-500" :style="{ width: `${costSharePct(p)}%` }" />
+          <div class="h-full bg-success transition-all duration-500" :style="{ width: `${100 - costSharePct(p)}%` }" />
+        </div>
+      </div>
+    </template>
+
+    <!-- Sin ventas: solo costo de inventario, sin utilidad -->
+    <div v-else class="flex items-center justify-between gap-2">
+      <span class="text-xs text-muted">Sin ventas en el periodo</span>
+      <span class="text-xs text-warning">En existencia: {{ currency.format(p.totalCost) }}</span>
     </div>
-  </div>
-</li>
-  </template>
+  </li>
 </ul>
 </UCard>
 
