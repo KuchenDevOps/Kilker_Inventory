@@ -42,7 +42,7 @@ const {
   from: expensesFrom,
   to: expensesTo,
   refresh: refreshExpenses
-} = useExpenses()
+} = useAllExpenses()
 
 // ───────────────────────────────────────────────
 //  GASTOS: subtotal (a pagar), pagado y pendiente — agrupado por tipo

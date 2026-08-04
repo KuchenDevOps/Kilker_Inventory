@@ -72,3 +72,57 @@ export function useExpenses() {
 
   return { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, refresh }
 }
+
+// composables/useAllExpenses.ts
+/** Todos los gastos del filtro actual, SIN paginar — para agregados (dashboard, reportes). */
+
+export function useAllExpenses() {
+  const expenses = useState<ApiExpense[]>('all-expenses', () => [])
+  const pending = useState('all-expenses-pending', () => false)
+  const error = useState<string | null>('all-expenses-error', () => null)
+  const storeId = useState<number | undefined>('all-expenses-store', () => undefined)
+  const from = useState<string | undefined>('all-expenses-from', () => undefined)
+  const to = useState<string | undefined>('all-expenses-to', () => undefined)
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      expenses.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        expenses.value = []
+        return
+      }
+      const q = new URLSearchParams()
+      if (storeId.value) q.set('storeId', String(storeId.value))
+      if (from.value) q.set('from', from.value)
+      if (to.value) q.set('to', to.value)
+      // Sin page/pageSize: así el endpoint NO entra al modo paginado
+      // (paginate = query.page != null) y regresa el arreglo completo.
+      const qs = q.toString()
+
+      const result = await $fetch<ApiExpense[]>(
+        `/api/expenses${qs ? `?${qs}` : ''}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+
+      // Sin page, el endpoint siempre regresa un arreglo plano (mapped),
+      // nunca el objeto { data, total, page, pageSize }.
+      expenses.value = Array.isArray(result) ? result : []
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      expenses.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  return { expenses, pending, error, storeId, from, to, refresh }
+}
