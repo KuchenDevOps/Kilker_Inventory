@@ -2,8 +2,13 @@
 
 > Manual operativo para agentes (Claude Code) y desarrolladores que trabajen este repo.
 > **Idioma de toda la documentación del proyecto: español.**
-> Última actualización: 2026-06-21 · Estado: **Fase 1 — primeras pantallas** (specs aún
-> pendientes; UI inicial sobre datos mock en memoria).
+> Última actualización: 2026-08-04 · Estado: **app funcional end-to-end contra Supabase**
+> (inventario, ventas, transferencias, gastos, cortes y reportes). Sin specs formales:
+> los requisitos se han ido definiendo por QA con el cliente.
+>
+> ⚠️ **La fuente de verdad es el código**, no estos documentos. Ante cualquier duda:
+> `kilker-inventario/server/db/schema.ts` (esquema), `server/api/` (reglas de negocio)
+> y `app/` (UI).
 
 ---
 
@@ -17,8 +22,9 @@ Sistema de **inventario web** para una empresa de pinturas con **varias sucursal
 - **Multi-sucursal.** El stock se controla por sucursal; debe soportar varios usuarios y
   roles trabajando en paralelo.
 
-> ⚠️ Las **especificaciones funcionales aún no están definidas**. No inventes requisitos.
-> Cuando falte un dato, márcalo como **supuesto** y regístralo en
+> ⚠️ **No hay documento formal de especificaciones.** Los requisitos se han ido
+> definiendo en rondas de QA con el cliente y quedaron plasmados **en el código**.
+> No inventes requisitos: cuando falte un dato, márcalo como **supuesto** y regístralo en
 > [`docs/CONTEXTO.md`](docs/CONTEXTO.md) → "Preguntas abiertas".
 
 ---
@@ -29,11 +35,15 @@ Sistema de **inventario web** para una empresa de pinturas con **varias sucursal
 |------------------|------------------------------------------------------------------|
 | App (front+back) | **Nuxt 4 (Vue 3 + TypeScript)** — UI + servidor Nitro            |
 | Estado UI        | **Pinia** (`@pinia/nuxt`), Vue Router (incluido en Nuxt)         |
-| UI               | Librería por decidir (Nuxt UI / PrimeVue / Element Plus)         |
+| UI               | **Nuxt UI v4** (Tailwind v4) + iconos `@iconify-json/lucide`     |
 | ORM              | **Drizzle ORM** + `drizzle-kit` (migraciones)                    |
 | Base de datos    | **Supabase (PostgreSQL gestionado)**                             |
 | Auth             | **Supabase Auth** (módulo `@nuxtjs/supabase`) + roles propios    |
+| Exportación      | **SheetJS (`xlsx`)** para exportar a Excel desde el cliente      |
 | Hosting          | **Vercel** (despliegue del Nuxt)                                 |
+
+> `pdfmake` y `@canvasjs/charts` están instalados pero **hoy no se usan** en `app/`
+> (candidatos a limpiar o a usar cuando entren PDF/gráficas).
 
 ### Historia de la decisión (por qué este stack)
 
@@ -74,42 +84,52 @@ Supabase
 
 ---
 
-## 4. Estructura de carpetas (propuesta)
+## 4. Estructura de carpetas (real)
+
+La app Nuxt vive en el subdirectorio **`kilker-inventario/`** (no en la raíz del repo).
+Nuxt 4 usa `app/` como `srcDir`.
 
 ```
 Kilker_Inventory/
-├── CLAUDE.md                ← este archivo
+├── CLAUDE.md                    ← este archivo
 ├── docs/
-│   ├── CONTEXTO.md          ← negocio, decisiones (ADR), preguntas abiertas
-│   ├── MODELO-DATOS.md      ← borrador del modelo de datos (Drizzle/Postgres)
-│   └── ROADMAP.md           ← fases del proyecto
-├── nuxt.config.ts
-├── pages/                   ← rutas/páginas (Vue)
-├── components/              ← componentes de UI
-├── composables/  stores/    ← lógica reutilizable / estado Pinia
-├── server/
-│   ├── api/                 ← endpoints REST (lógica de negocio + Drizzle)
-│   ├── db/
-│   │   ├── schema.ts        ← schema Drizzle (fuente de verdad del esquema)
-│   │   └── index.ts         ← cliente Drizzle
-│   └── middleware/          ← verificación de auth/roles
-├── drizzle/                 ← migraciones SQL generadas por drizzle-kit
-└── drizzle.config.ts
+│   ├── CONTEXTO.md              ← negocio, decisiones (ADR), preguntas abiertas
+│   ├── MODELO-DATOS.md          ← modelo de datos real (resumen de schema.ts)
+│   ├── ROADMAP.md               ← fases del proyecto
+│   └── CONVENCIONES-AGENTE.md   ← acuerdos de trabajo agente ↔ usuario
+└── kilker-inventario/
+    ├── nuxt.config.ts  ·  drizzle.config.ts  ·  eslint.config.mjs
+    ├── app/
+    │   ├── pages/               ← rutas (productos, ventas, movimientos, transferencias,
+    │   │                          gastos, clientes, cortes, tickets, tiendas, empleados…)
+    │   ├── layouts/default.vue  ← sidebar + header (nav por rol, badge de sucursal)
+    │   ├── components/          ← FiltroPeriodo.vue, FiltroCortePeriodo.vue
+    │   ├── composables/         ← useInventoryApi.ts, usePages.ts, useExpenses.ts…
+    │   ├── middleware/auth.global.ts  ← guard de sesión/rol (solo cliente)
+    │   ├── types/               ← inventario.ts (contratos de la API), route.d.ts
+    │   └── assets/css/main.css
+    ├── server/
+    │   ├── api/                 ← endpoints REST (lógica de negocio + Drizzle)
+    │   ├── db/
+    │   │   ├── schema.ts        ← schema Drizzle (FUENTE DE VERDAD del esquema)
+    │   │   ├── index.ts         ← cliente Drizzle (useDb)
+    │   │   ├── migrations/      ← SQL generado por drizzle-kit (0000–0022)
+    │   │   └── seed.ts · seed-auth.ts
+    │   └── utils/               ← auth.ts, corrections.ts, inventoryFifo.ts,
+    │                              supabaseAdmin.ts
+    └── scripts/                 ← utilidades puntuales (fix-transfer-costs.ts)
 ```
 
-> **Ubicación real del código:** la app Nuxt vive en el subdirectorio
-> **`kilker-inventario/`** (no en la raíz del repo). Nuxt 4 usa `app/` como `srcDir`, así
-> que las páginas/componentes/stores van en **`kilker-inventario/app/`**
-> (`app/pages/`, `app/layouts/`, `app/components/`, `app/stores/`, `app/types/`,
-> `app/assets/css/main.css`) y el backend en **`kilker-inventario/server/`** (aún sin crear).
-> El esquema mostrado arriba es la organización lógica de referencia.
+> ⚠️ No hay `stores/` de Pinia en uso: el estado compartido se resuelve con `useState`
+> dentro de los composables. `@pinia/nuxt` sigue instalado pero sin stores propios.
+> Las migraciones **no** están en `drizzle/` sino en **`server/db/migrations/`**
+> (ver `drizzle.config.ts`).
 
 ---
 
 ## 5. Comandos de desarrollo
 
-> Ejecutar **dentro de `kilker-inventario/`** (es donde vive la app Nuxt). Los comandos de
-> Drizzle son placeholders hasta crear `server/db/` (pendiente).
+> Ejecutar **dentro de `kilker-inventario/`** (es donde vive la app Nuxt).
 
 ```bash
 cd kilker-inventario
@@ -119,10 +139,10 @@ npm run build                # build de producción
 npx eslint .                 # lint (config en eslint.config.mjs vía @nuxt/eslint)
 npm run typecheck            # chequeo de tipos (vue-tsc); eslint y dev NO chequean tipos
 
-# (pendientes hasta crear server/db/schema.ts)
-npx drizzle-kit generate     # genera SQL de migración desde server/db/schema.ts
-npx drizzle-kit migrate      # aplica migraciones a Supabase
-# (desarrollo rápido) npx drizzle-kit push
+npm run db:generate          # genera SQL de migración desde server/db/schema.ts
+npm run db:migrate           # aplica migraciones a Supabase (usa DIRECT_URL, puerto 5432)
+npm run db:seed              # datos de prueba          (server/db/seed.ts)
+npm run db:seed:auth         # usuarios de prueba en Auth (server/db/seed-auth.ts)
 ```
 
 **Despliegue:** conectar el repo a **Vercel** → deploy automático en cada push. Configurar
@@ -163,7 +183,16 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
   cliente (`/api/me` y todas las escrituras) adjuntan el Bearer tomado de la sesión viva de
   Supabase (`supabase.auth.getSession()`), que siempre está fresca. `requireProfile` acepta
   ambos paths. Las lecturas públicas (`/api/products`, `/api/stores`, `/api/categories`) no
-  requieren auth y se sirven por SSR con `useFetch`.
+  requieren auth; el resto de endpoints sí (`requireProfile`).
+- **Reparto de permisos vigente (lo que hace el código hoy):**
+  - **Solo admin:** alta/edición/borrado de productos y categorías, alta/edición de
+    sucursales y usuarios, anulación de ventas (`POST /api/sales/:id/void`), resolución de
+    tickets, edición/anulación de entradas de stock (`PATCH|POST /api/movements/:id…`).
+  - **Admin + empleado:** vender, registrar entradas, crear/recibir/cancelar
+    transferencias, gastos y sus pagos, clientes, cortes de caja y abrir tickets.
+  - **Aislamiento por sucursal:** el empleado solo opera y solo ve la suya (el backend
+    ignora el `storeId` del body y usa `profile.storeId`); el admin ve todas y puede
+    filtrar por `?storeId`.
 
 ---
 
@@ -178,7 +207,9 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
   conexiones; usar la **conexión directa (5432)** para `drizzle-kit migrate`.
 - **Región:** elegir región de Vercel y de Supabase **cercana a México** para menor latencia.
 - **Variables de entorno** en Vercel (nunca commitear `.env`): `SUPABASE_URL`,
-  `SUPABASE_KEY` (anon/pública), `SUPABASE_SERVICE_KEY` (solo servidor), `DATABASE_URL`.
+  `SUPABASE_KEY` (anon/pública), `SUPABASE_SERVICE_KEY` (solo servidor), `DATABASE_URL`
+  (runtime, pooler 6543) y **`DIRECT_URL`** (5432, la que consume `drizzle.config.ts`
+  para generar/aplicar migraciones).
 
 ---
 
@@ -197,163 +228,99 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 ---
 
-## 10. Estado actual
+## 10. Estado actual (agosto 2026)
 
-- **Fase 0:** documentación y decisiones de arquitectura — **completada**.
-- **Fase 1 (en curso):** UI conectada al backend real (specs aún pendientes).
-  - Scaffold Nuxt 4 + Pinia + **Nuxt UI v4** (Tailwind v4) en `kilker-inventario/`.
-  - **BD migrada y sembrada en Supabase** (12 tablas, enums, RLS, kardex append-only;
-    incluye `cash_closeouts` para cortes de caja, migración `0003`).
-  - **El mock de Pinia fue eliminado.** La UI consume el backend real:
-    - **Lecturas públicas** vía `useFetch` (SSR): `GET /api/products`, `/api/stores`,
-      `/api/categories`. Composables en `app/composables/useInventoryApi.ts`.
-    - **Pantallas**: dashboard (`app/pages/dashboard.vue`), catálogo
-      (`app/pages/productos/index.vue`), alta de producto (`app/pages/productos/nuevo.vue`),
-      **entrada de stock** (`app/pages/movimientos/entrada.vue`) y **venta**
-      (`app/pages/ventas/nueva.vue`).
-    - **Layout responsivo** en `app/layouts/default.vue`: sidebar fija en desktop (md+);
-      en móvil se oculta fuera de pantalla y se abre/cierra con un botón hamburguesa
-      (overlay semitransparente, cierre al navegar o pulsar X). No hay nav compacta
-      en el header: la sidebar es el único punto de navegación en todos los breakpoints.
-      **Nav en secciones plegables** (2026-06-30): Dashboard suelto + secciones acordeón
-      (Productos, Entradas de stock, Ventas, Caja, Administración) con encabezado
-      clicable (chevron), **acordeón estricto (una sola sección abierta a la vez**, ref
-      `openSection: string | null`) y auto-apertura de la sección de la página actual. La estructura
-      es `NavEntry = NavLink | NavSection`; el filtrado por rol se aplica a los hijos y
-      omite la sección si queda vacía. El ítem activo se detecta sobre los enlaces
-      aplanados (`allLinks`) por prefijo más largo.
-    - Tipos alineados al backend en `app/types/inventario.ts` (ids numéricos; `unit`
-      ∈ litro|galon|cubeta; los `numeric` llegan como **string** desde la API).
-    - **Categorías (CRUD, admin)**: `app/pages/categorias/index.vue` (tabla con
-      nombre/padre/nº productos + alta/edición inline + borrado con confirmación).
-    - **Historial de ventas**: `app/pages/ventas/index.vue` (listado con filtros de
-      estado y sucursal; empleado ve solo su tienda, admin todas; admin **anula** directo,
-      empleado **solicita anulación** (abre ticket) o ve **"Esperando corrección"** si la
-      venta ya tiene un ticket abierto — `GET /api/sales` expone `pendingCorrection`).
-    - **Tickets de corrección**: `app/pages/tickets/index.vue` (empleado ve/solicita,
-      admin aprueba→anula o rechaza). Composable `useTickets()`.
-    - **Cortes de caja**: `app/pages/cortes/index.vue` (historial + "Hacer corte" +
-      detalle/estado de cuenta del periodo). La venta (`ventas/nueva.vue`) ahora pide
-      **método de pago** (efectivo/tarjeta). Composable `useCortes()`.
-  - **Endpoints añadidos**: `GET /api/me` (perfil/rol; 204 si no hay sesión),
-    `GET /api/categories` (enriquecido: `productCount`+`parentName`), `POST /api/products`
-    (admin). Ya existían `POST /api/movements/entrada` (admin) y `POST /api/sales`
-    (empleado/admin).
-  - **Categorías (endpoints, admin)**: `POST /api/categories`, `PATCH /api/categories/:id`
-    (valida ciclos de jerarquía), `DELETE /api/categories/:id` (bloquea 409 si tiene
-    productos o subcategorías).
-  - **Ventas / anulación (endpoints)**: `GET /api/sales` (lista; empleado→su tienda,
-    admin→todas, filtros `status`/`storeId`), `GET /api/sales/:id` (detalle con líneas),
-    `POST /api/sales/:id/void` (**solo admin**): en una transacción inserta movimientos
-    `anulacion` que revierten cada `venta` (`reversesMovementId`), repone `inventory` y
-    marca la factura `anulada` (`voidedAt/By/Reason`). Kardex append-only: el original no
-    se toca. La lógica vive en `server/utils/corrections.ts` (`voidInvoiceTx`), compartida
-    con la aprobación de tickets. El empleado **sí vende** (restringido a su tienda).
-  - **Tickets de corrección (endpoints)**: `POST /api/tickets` (empleado/admin abre un
-    ticket de anulación sobre una factura de su tienda; valida factura emitida y sin ticket
-    abierto duplicado), `GET /api/tickets` (empleado→su tienda, admin→todos, filtro
-    `status`), `POST /api/tickets/:id/resolve` (**solo admin**): `aprobar` ejecuta
-    `voidInvoiceTx` y marca el ticket `aprobado` en una transacción; `rechazar` solo cierra
-    el ticket. El empleado NO anula directo (403); abre ticket → admin resuelve. v1 solo
-    target `factura` (target `movimiento` queda para después).
-  - **Corte de caja (endpoints + esquema)**: enum `payment_method` (efectivo|tarjeta) +
-    columna `invoices.payment_method` (default efectivo) + tabla `cash_closeouts`
-    (migración `0003`). `POST /api/sales` guarda el método de pago. `POST /api/cortes`
-    (empleado→su tienda, admin→cualquiera): toma la ventana **desde el corte anterior** de
-    esa tienda (turnos) hasta ahora, suma las ventas EMITIDAS separando efectivo/tarjeta y
-    cuenta las anuladas, y guarda el **snapshot** (resumen automático, sin conteo físico de
-    efectivo). `GET /api/cortes` (lista) y `GET /api/cortes/:id` (detalle: snapshot + ventas
-    del periodo). ⚠️ Los totales del corte son **inmutables** (foto al cierre); el detalle
-    re-consulta el estado ACTUAL de cada venta (puede diferir si se anula después del corte).
-  - **Productos — edición/borrado (hecho):** `PATCH /api/products/:id` (admin; el **SKU no
-    se edita**), `DELETE /api/products/:id` (admin; **409 si tiene historial** de
-    movimientos/ventas/transferencias → desactivar en su lugar), `GET /api/products/:id`
-    (detalle con `barcode`). UI: `app/pages/productos/[id]/editar.vue` + botones editar/borrar
-    (con confirmación) en el catálogo.
-  - **QA del cliente (migraciones 0004-0006):** método de pago `transferencia` (enum); `products.
-    max_quantity`; `cash_closeouts.total_transferencia` (el corte separa efectivo/tarjeta/
-    transferencia); `stock_movements.supplier_invoice_number/date` (factura del proveedor en
-    entradas); decimales en inputs de precio/costo. **Costo estándar de la marca:** se quitó la
-    captura manual de "Costo unitario" en la entrada (toma `products.cost` automático); no hay
-    costeo por lote (FIFO/promedio).
-  - **Typecheck (hecho):** `npm run typecheck` (vue-tsc). ⚠️ Ni eslint ni el dev server
-    chequean tipos; usar este comando antes de dar por bueno un cambio.
-  - **Auth en la UI (Bearer, no cookie):** ver §7 — el path por cookie de
-    `serverSupabaseUser` NO resuelve aquí; las llamadas autenticadas (`/api/me` y
-    escrituras) van con `Authorization: Bearer <access_token>` desde la sesión viva.
-  - **Protección de rutas por rol (hecho):** guard global **solo-cliente** en
-    `app/middleware/auth.global.ts` (la auth es client-only, el SSR no resuelve sesión).
-    Sin sesión → `/login`; con sesión en `/login` → `/dashboard`; rutas marcadas con
-    `definePageMeta({ requiresRole: 'admin' })` (alta de producto y entrada de stock)
-    redirigen a `/dashboard` si el rol no coincide (carga el perfil con Bearer, reusa el
-    estado `me`). Defensa en profundidad: los endpoints siguen exigiendo auth/rol
-    (401/403). `RouteMeta.requiresRole` tipado en `app/types/route.d.ts`. ⚠️ Costo
-    conocido: en cargas SSR de una ruta protegida **sin** sesión, el servidor renderiza
-    la página y el cliente redirige → *hydration mismatch* + flash breve (solo afecta
-    accesos sin sesión, que terminan en login igual). Se elimina si se pasa la app a
-    SPA (`ssr:false`) — decisión pendiente del usuario.
-  - **Multi-sucursal (hecho, 2026-06-30):** trabajo por capas guiado/implementado con el usuario.
-    - **Catálogo — desglose por sucursal:** `GET /api/products` ahora expone `byStore`
-      (`[{storeId, quantity}]`) además del `totalStock`. En `productos/index.vue` cada fila
-      tiene un botón (ícono `store`) al final de Acciones que despliega una sub-fila con una
-      mini-tabla (Código · Sucursal · Existencia), mismo diseño que la tabla principal. La UI
-      resuelve el nombre de la tienda cruzando `byStore` con `useStores()`.
-    - **Entrada de stock por empleado:** `POST /api/movements/entrada` dejó de ser admin-only
-      (`requireProfile(event)` sin rol). El admin elige la tienda desde el body; **el empleado
-      siempre usa `profile.storeId`** (no puede falsearla). En `movimientos/entrada.vue` el
-      empleado ve su sucursal en un campo de solo lectura; el admin conserva el selector. Nav
-      "Entrada de stock" ahora visible para `['admin','empleado']`.
-    - **Badge de sucursal en el header** (`layouts/default.vue`): junto al badge de rol,
-      muestra la tienda del empleado (ícono `store`) o "Todas las sucursales" para admin
-      (ícono `globe`). Resuelto por `useStores()` cruzado con `me.storeId` (sin tocar backend).
-    - **Gestión de sucursales (CRUD admin, sin borrado físico):** `GET /api/stores` enriquecido
-      con `employeeCount`; `POST /api/stores` (name+code obligatorios, code único→409);
-      `PATCH /api/stores/:id` (edita name/address/isActive; **el `code` NO se edita**, se usa en
-      folios). Decisión del cliente: **solo desactivar** (`isActive`), no hay `DELETE`. Página
-      `tiendas/index.vue` + nav "Sucursales" (admin). Tipos `NewStoreInput`/`StoreUpdateInput`.
-    - **Gestión de empleados / cuentas (CRUD admin):** `server/utils/supabaseAdmin.ts` (cliente
-      service_role, solo servidor). `GET /api/users` (perfiles + email de Auth + sucursal),
-      `POST /api/users` (crea usuario en Auth con contraseña definida por el admin + `email_confirm`,
-      luego el `profile`; si el profile falla **revierte** el usuario de Auth; email duplicado→409),
-      `PATCH /api/users/:id` (nombre/rol/sucursal/estado/contraseña; **guardas anti-lockout**: no
-      quitarte tu propio admin ni desactivarte). Decisiones del cliente: **el admin define la
-      contraseña** (sin invitación por email) y **puede crear empleados y admins**. **Dar de baja =
-      `isActive=false`** (ya bloquea el acceso: `requireProfile`/`getOptionalProfile` lo checan; el
-      usuario de Auth no se borra). Página `empleados/index.vue` + `useUsers()` + nav "Empleados"
-      (admin). Tipos `ApiUser`/`NewUserInput`/`UserUpdateInput`.
-    - **Sucursales inactivas — filtro + bloqueo:** los selectores de tienda en `entrada.vue` y
-      `ventas/nueva.vue` filtran `isActive`. Bloqueo real en backend: `POST /api/movements/entrada`
-      y `POST /api/sales` cargan la tienda y lanzan **400 "La sucursal está inactiva"** si no está
-      activa (aplica a admin y empleado). UI: el empleado con sucursal inactiva ve alerta "Sucursal
-      inactiva" y el formulario queda bloqueado.
-    - **Cascada tienda→empleados (simétrica):** `PATCH /api/stores/:id` propaga el cambio de
-      `isActive` a los empleados de esa tienda (en transacción), en ambos sentidos: desactivar la
-      tienda desactiva sus empleados, reactivarla los reactiva. **Solo si el estado realmente
-      cambia** (editar nombre/dirección no toca a los empleados). Devuelve el nº de empleados
-      afectados; la UI lo muestra en el toast.
-    - Verificado: eslint + typecheck limpios; endpoints exigen auth (401) y el desglose/entrada
-      probados en vivo. El alta real de usuarios (crea cuenta en Auth) la prueba el usuario.
-  - **Historial de entradas de stock (hecho, 2026-06-30, el AGENTE, SIN migración):**
-    nuevo `GET /api/movements` (calcado de `sales/index.get.ts`: empleado→su tienda,
-    admin→todas con `?storeId`; solo `type='entrada'`). Filtros de fecha `?from/?to`
-    (rango sobre `created_at`, from inclusivo/to exclusivo) y búsqueda `?q` (producto
-    name/sku/barcode, nº factura proveedor, sucursal, empleado; se pre-resuelven ids en
-    tablas relacionadas y se filtra con `inArray` para no abandonar el `findMany`
-    relacional). Página `app/pages/movimientos/index.vue` + nav "Entradas (historial)" +
-    composable `useMovements()` + tipo `ApiMovement`. **La misma barra de filtros se agregó
-    al historial de ventas**: `GET /api/sales` ahora acepta `?from/?to` (sobre `issued_at`)
-    y `?q` (folio, método de pago, sucursal, empleado); `useSales()` ganó `from/to/search`.
-    Componente compartido `app/components/FiltroPeriodo.vue` (botones Todo/Día/Semana/Mes que
-    calculan el rango del periodo CONCRETO elegido — no relativo — + input date/month +
-    barra de búsqueda). Verificado en vivo: búsqueda por folio (11→1) y filtro por mes
-    (junio 2026 = 11 ventas, julio = 0) sobre ventas; typecheck + eslint limpios.
-- **Decidido:** Nuxt 4 + Drizzle + Supabase, desplegado en Vercel.
-- **Pendiente / bloqueante:** especificaciones funcionales; movimientos de **ajuste** y
-  **transferencia** entre sucursales (tablas `transfers`/`transfer_items` ya en el esquema);
-  **vista de kardex completo** (ya hay historial de **entradas** en `/movimientos`; falta
-  mostrar ventas/anulaciones/ajustes/transferencias en una vista unificada); tickets target
-  `movimiento` (v1 solo `factura`); folio secuencial formal; reportes
-  y exportación; (opcional) corte con conteo físico de efectivo y detalle congelado;
-  confirmación de planes/regiones. **Hardening:** RLS policies (solo si hay acceso directo del
-  cliente; hoy todo es server-side), migrar `SUPABASE_SERVICE_KEY`→`NUXT_SUPABASE_SECRET_KEY`.
-- Ver el plan completo por fases en [`docs/ROADMAP.md`](docs/ROADMAP.md).
+La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
+clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
+datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022` en
+`server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
+
+> Este apartado es un **resumen**, no un changelog. La verdad está en el código:
+> `server/db/schema.ts`, `server/api/**` y `app/**`.
+
+### 10.1 Módulos implementados
+
+| Módulo | Pantallas | Endpoints |
+|--------|-----------|-----------|
+| **Catálogo** | `productos/index`, `productos/nuevo`, `productos/[id]/editar` | `GET/POST /api/products`, `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
+| **Categorías** | `categorias/index` | `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id` |
+| **Entradas de stock** | `movimientos/entrada`, `movimientos/index` | `POST /api/movements/entrada`, `GET /api/movements`, `PATCH /api/movements/:id`, `POST /api/movements/:id/void` |
+| **Ventas** | `ventas/nueva`, `ventas/index` | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void` |
+| **Transferencias** | `transferencias/nueva`, `transferencias/index` | `POST/GET /api/transfers`, `GET /api/transfers/:id`, `POST /api/transfers/:id/receive`, `POST /api/transfers/:id/cancel` |
+| **Clientes** | `clientes/index` | `GET/POST /api/customers`, `PATCH/DELETE /api/customers/:id` |
+| **Gastos** | `gastos/index` | `GET/POST /api/expenses`, `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments` |
+| **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id` |
+| **Tickets de corrección** | `tickets/index` | `GET/POST /api/tickets`, `POST /api/tickets/:id/resolve` |
+| **Administración** | `tiendas/index`, `empleados/index` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id` |
+| **Reportes / Dashboard** | `dashboard` | `GET /api/reports/monthly-inventory`, `/api/reports/top-products`, `/api/reports/inventory-value`, `/api/average-costs` |
+
+- **Auth/UI:** login por Supabase Auth, guard global solo-cliente
+  (`app/middleware/auth.global.ts`), nav en secciones plegables filtrada por rol y badge de
+  sucursal en el header (`app/layouts/default.vue`). Layout responsivo (sidebar fija en
+  desktop, drawer en móvil).
+- **Paginación** (`?page&pageSize`, respuesta `{data,total,page,pageSize}`) en products,
+  movements, sales, transfers, tickets, cortes, customers, expenses y users. Sin `page` en
+  la query, esos endpoints devuelven el arreglo completo (lo usan las exportaciones).
+- **Filtros compartidos:** `app/components/FiltroPeriodo.vue` y `FiltroCortePeriodo.vue`
+  (Todo/Día/Semana/Mes sobre el periodo concreto elegido + búsqueda `?q`).
+- **Exportación a Excel** (SheetJS, en el cliente) desde catálogo (valor de inventario),
+  historial de entradas e historial de ventas (hoja resumen + hoja de líneas), con dos
+  variantes: "Exportar todo" y "Exportar con filtro".
+
+### 10.2 Reglas de negocio implementadas (lo no obvio)
+
+- **Kardex append-only.** `stock_movements` nunca se actualiza ni se borra (trigger en la
+  migración `0001`); toda corrección es una fila nueva `anulacion` ligada por
+  `reverses_movement_id`. `inventory.quantity` es el saldo materializado que se mueve en la
+  misma transacción.
+- **Costeo FIFO** (`server/utils/inventoryFifo.ts`): reconstruye capas de costo desde el
+  histórico completo (entradas, transferencias, ajustes, anulaciones y ventas emitidas,
+  ordenadas por fecha efectiva —`supplier_invoice_date` cuando existe—). Lo usan las
+  transferencias (para valuar la salida) y los reportes de valuación/utilidad. **No hay
+  costeo por lote en la captura**: la entrada toma `products.cost` (costo estándar de la
+  marca) salvo que se mande `unitValue` explícito.
+- **Folios.** Ventas: `<CODE_TIENDA>-0001`, correlativo por tienda (`count(*)+1` bajo
+  `SELECT … FOR UPDATE` de la tienda). Entradas: `<CODE_TIENDA>-E-0001`, con contador
+  dedicado `entry_folio_counters` (upsert atómico).
+- **Ventas.** Método de pago (efectivo/tarjeta/transferencia), canal (mostrador/en línea),
+  cliente opcional, **descuento en % a nivel factura** (`discount_pct`/`discount_amount`).
+  Admiten **fecha retroactiva**: si la fecha es pasada, además del stock actual se valida
+  que **a esa fecha** el kardex ya tuviera existencia suficiente. La anulación revierte
+  kardex e inventario y marca la factura `anulada`.
+- **IVA (16%) es informativo y se calcula en la app**, no se guarda en la BD: en el detalle
+  de venta y en gastos. Las ventas se registran sin desglose fiscal (no hay CFDI/SAT).
+- **Transferencias en dos fases.** Al crearlas descuentan el origen y quedan
+  `en_transito`; el destino (o un admin) confirma la recepción y ahí se suma el inventario
+  destino; cancelar repone el origen. Un empleado solo despacha desde su tienda y solo
+  recibe en la suya.
+- **Gastos.** Cabecera + `expense_items` (conceptos) + `expense_payments` (parcialidades,
+  con `paid_by` y método). Tipo `Fijo|Operativo`, retenciones IVA/ISR opcionales; el
+  endpoint deriva `subtotal`, `iva`, `totalToPay`, `totalPaid`, `balance` y
+  `paymentStatus` (pendiente/parcial/pagado).
+- **Bajas suaves en todo:** productos, sucursales, clientes y empleados se **desactivan**
+  (`is_active`), no se borran. El único `DELETE` duro es de productos sin historial y de
+  categorías sin hijos ni productos (si no, 409). Desactivar una sucursal **propaga** el
+  estado a sus empleados (y reactivarla los reactiva).
+
+### 10.3 Pendiente / deuda técnica
+
+- **Movimientos de `ajuste`:** el enum y el soporte en los cálculos FIFO existen, pero
+  **no hay endpoint ni pantalla** para capturarlos.
+- **Vista de kardex unificado:** `/movimientos` solo lista `type='entrada'`. Faltan
+  ventas/anulaciones/transferencias/ajustes en una sola vista.
+- **`GET /api/reports/unsold-products` es un stub** (devuelve `'Hello Nitro'`); la UI cubre
+  el caso vía `?includeUnsold` de `top-products`.
+- **Limpieza:** `console.log('[DEBUG] …')` en `server/api/reports/top-products.get.ts`;
+  `pdfmake` y `@canvasjs/charts` instalados sin uso; `MODELO-DATOS.md` se mantiene como
+  resumen del esquema real.
+- **Caché de reportes:** `top-products` cachea 60 s **en memoria del proceso**; con varias
+  instancias en Vercel cada una tendrá la suya (mover a Redis si hace falta coherencia).
+- **Tickets:** solo `target='factura'`; `movimiento` sigue sin implementarse.
+- **Hardening:** policies de RLS (hoy innecesarias: todo el acceso es server-side),
+  migrar `SUPABASE_SERVICE_KEY` → `NUXT_SUPABASE_SECRET_KEY`, confirmar planes/regiones de
+  Vercel y Supabase, backups.
+- **Conocido:** en cargas SSR de una ruta protegida sin sesión hay *hydration mismatch* +
+  flash breve (el guard es solo-cliente). Se elimina pasando la app a SPA (`ssr: false`).
+
+- Ver el plan por fases en [`docs/ROADMAP.md`](docs/ROADMAP.md) y el modelo de datos en
+  [`docs/MODELO-DATOS.md`](docs/MODELO-DATOS.md).

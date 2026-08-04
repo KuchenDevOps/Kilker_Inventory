@@ -1,7 +1,11 @@
 # CONTEXTO — Inventario Kilker
 
 > Contexto de negocio y técnico, decisiones de arquitectura y preguntas abiertas.
-> Idioma: español. Última actualización: 2026-06-19.
+> Idioma: español. Última actualización: 2026-08-04.
+>
+> ⚠️ Nunca llegó un documento formal de specs: los requisitos se resolvieron por **QA con
+> el cliente** y viven en el código. Las respuestas de §5 se marcan como **resueltas por
+> implementación** cuando se dedujeron de lo construido, no de un documento firmado.
 
 ---
 
@@ -18,10 +22,15 @@ hay un sistema centralizado. Se requiere una herramienta que:
 
 ## 2. Usuarios y contexto de uso
 
-- **Sucursales:** varias (número exacto **pendiente de specs**).
+- **Sucursales:** varias, administrables desde la app (alta/edición/desactivación); el
+  número exacto lo define el cliente al capturarlas.
 - **Equipos con bloqueo de instalación:** solo se puede usar el **navegador**. No se
   pueden instalar programas de escritorio ni desplegar app por app → **app web central**.
-- **Roles (preliminar, a confirmar):** administrador, bodega/almacén, ventas.
+- **Roles (implementados):** **`admin`** (acceso global a todas las sucursales, gestiona
+  catálogo, usuarios, sucursales y autoriza anulaciones) y **`empleado`** (atado a una
+  sucursal: vende, registra entradas, transfiere, captura gastos/clientes y hace cortes;
+  no anula, solo **solicita** correcciones vía ticket). Se descartó el desglose
+  bodega/ventas del planteamiento inicial.
 
 ---
 
@@ -80,41 +89,66 @@ Vercel.**
 
 ## 5. Preguntas abiertas
 
-> No bloquean la Fase 0 (documentación). Resolver al llegar las specs / Fase 1.
+> Lo marcado **[x]** ya está **resuelto por implementación** (así funciona el código hoy).
+> Lo marcado **[ ]** sigue sin confirmar.
 
-### Plataforma / costos
+### Plataforma / costos — **siguen pendientes, hoy son lo bloqueante**
 - [ ] **Vercel Pro** confirmado para uso comercial (~$20 USD/mes/usuario)?
 - [ ] **Plan de Supabase**: ¿Free para arrancar y Pro (~$25/mes) en producción? Límites.
 - [ ] **Región** de Vercel y Supabase más cercana a México (latencia).
 - [ ] Dominio propio para la app.
 
 ### Auth
-- [ ] ¿Proveedores de login? (email/contraseña, invitaciones por admin, etc.)
-- [ ] **Roles** concretos y sus **permisos** (admin, bodega, ventas…).
+- [x] **Proveedor de login:** email + contraseña de Supabase Auth. **No hay invitación por
+      correo**: el admin crea la cuenta y **define la contraseña** (`POST /api/users`, con
+      `email_confirm`). Dar de baja = `is_active = false` (no se borra el usuario de Auth).
+- [x] **Roles y permisos:** `admin` y `empleado` (detalle en §2 y en `CLAUDE.md` §7).
 
 ### Negocio / dominio
-- [ ] **Nº de sucursales** y de **usuarios**.
+- [x] **Atributos del catálogo:** se descartaron `base`/`acabado`/`volumen`/`marca`. El
+      producto tiene `color` (texto libre) + `unit` ∈ **{litro, galon, cubeta, pieza,
+      cuarto, tambo}** (se ampliaron por QA), `price`, `cost`, `min_quantity`,
+      `max_quantity` y `barcode`. Un producto = **una variante vendible (1 SKU)**.
+- [x] **Transferencias entre sucursales:** **sí**, implementadas en dos fases (despacho →
+      recepción/cancelación).
+- [x] **Reportes y exportación:** **sí**, hay reportes de valuación, costo promedio y
+      utilidad por producto, con **exportación a Excel**. PDF sigue sin hacerse.
+- [x] **Facturación:** el comprobante es **interno** (folio propio por sucursal), **sin
+      CFDI/SAT**. El IVA (16%) se muestra como dato informativo calculado en la app.
+- [x] **Costeo:** **FIFO calculado sobre el kardex** para valuación y utilidad; la captura
+      de entradas usa el **costo estándar** del producto (`products.cost`), sin costeo por
+      lote.
+- [x] **Alcance más allá del stock:** además de inventario se maneja **caja** (cortes por
+      turno), **clientes** y **gastos** (con parcialidades y retenciones IVA/ISR).
+- [x] **Idioma de la interfaz:** español.
+- [ ] **Nº de sucursales** y de **usuarios** reales en producción.
 - [ ] **Estabilidad de internet** en sucursales → ¿se necesita **offline/PWA**?
-- [ ] **Atributos reales del catálogo** de pinturas (color, código de color, base,
-      acabado, tamaño/litros, marca, línea).
-- [x] **Atributos de catálogo v1 (congelados en el plan v1):** se descartaron
-      `base`/`acabado`/`volumen`/`marca` del mock. El catálogo v1 solo tiene `color` (texto
-      libre) y `unit` ∈ **{litro, galon, cubeta}** (enum `product_unit`). Tipos en
-      `kilker-inventario/app/types/inventario.ts` (`PRODUCT_UNITS`, `UNIT_LABELS`). Sigue el
-      supuesto: un producto = **una variante vendible (1 SKU)**. (Confirmar con specs si
-      hace falta reintroducir base/acabado/tamaño.)
-- [ ] ¿Manejo de **lotes/caducidad**? ¿**Códigos de barras**?
-- [ ] ¿**Transferencias** entre sucursales? ¿**Órdenes de compra/venta** o solo stock?
-- [ ] ¿**Reportes** y exportación (Excel/PDF)? ¿Integración con **facturación/POS**?
-- [ ] **Idioma de la interfaz** (se asume español).
+- [ ] ¿Manejo de **lotes/caducidad**? (hoy no) ¿Uso real de **códigos de barras**? (el
+      campo existe, falta lectura/impresión)
+- [ ] ¿**Órdenes de compra** o basta con las entradas de stock?
+- [ ] ¿Hace falta capturar **movimientos de ajuste** de inventario? (enum listo, sin UI)
+- [ ] ¿El corte de caja debe incluir **conteo físico de efectivo** (hoy es solo el resumen
+      automático de ventas)?
 
 ---
 
-## 6. Glosario (preliminar)
+## 6. Glosario
 
-- **Sucursal (location):** punto físico con su propio stock.
-- **Movimiento (stock movement):** entrada, salida, ajuste o transferencia que cambia el
-  stock de un producto en una sucursal.
-- **Transferencia (transfer):** movimiento de existencias de una sucursal a otra.
+- **Sucursal (`stores`):** punto físico con su propio stock. Su `code` se usa en los folios.
+- **Movimiento (`stock_movements`):** cualquier cambio de stock (venta, entrada, ajuste,
+  transferencia de salida/entrada, anulación) en un producto y sucursal.
+- **Kardex:** el libro de movimientos. Es **append-only**: no se edita ni se borra; corregir
+  significa agregar un movimiento de `anulacion` que apunta al original.
+- **Transferencia (`transfers`):** envío de existencias de una sucursal a otra. Descuenta al
+  despachar y suma al **recibir**.
+- **Ticket de corrección (`tickets`):** solicitud del empleado para anular una venta; solo
+  el admin la aprueba (y ahí se ejecuta la anulación) o la rechaza.
+- **Corte de caja (`cash_closeouts`):** resumen inmutable de las ventas de una sucursal
+  desde el corte anterior, separando efectivo / tarjeta / transferencia.
+- **Folio:** consecutivo interno por sucursal. Ventas `<CODE>-0001`; entradas
+  `<CODE>-E-0001`. No es un folio fiscal.
+- **FIFO:** método de costeo (primeras entradas, primeras salidas) con el que se valúa el
+  inventario y se calcula la utilidad. Se reconstruye desde el kardex, no se guarda.
 - **SKU:** identificador único de un producto/variante.
-- **RLS (Row Level Security):** reglas de acceso a nivel de fila en Postgres/Supabase.
+- **RLS (Row Level Security):** reglas de acceso a nivel de fila en Postgres/Supabase. Aquí
+  está **habilitado sin policies**: nadie entra desde el cliente, todo pasa por el servidor.

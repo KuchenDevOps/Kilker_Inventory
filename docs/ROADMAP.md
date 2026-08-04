@@ -1,152 +1,115 @@
 # ROADMAP — Inventario Kilker
 
 > Cómo dirigir el proyecto por fases. Idioma: español.
-> Última actualización: 2026-06-21 · Fase actual: **Fase 1**.
+> Última actualización: 2026-08-04 · Fase actual: **Fase 5 (hardening y producción)**.
+>
+> ⚠️ El proyecto **no siguió el orden original de fases**: al no llegar specs formales, se
+> construyó producto directamente con QA del cliente. Este documento ya refleja lo que
+> **realmente está hecho** (fuente: el código, no los docs).
 
 ---
 
 ## Visión
 
 Entregar un sistema de inventario web, multi-sucursal, accesible solo por navegador.
-Stack: **Nuxt 4 (Vue 3 + TS) + Drizzle + Supabase**, desplegado en **Vercel**. Construir
-por fases, validando specs, planes y capacidades antes de escribir código de producto.
+Stack: **Nuxt 4 (Vue 3 + TS) + Drizzle + Supabase**, desplegado en **Vercel**.
 
 ---
 
-## Fase 0 — Documentación y decisiones · **(completada)**
+## Fase 0 — Documentación y decisiones · **completada**
 
-**Objetivo:** dejar por escrito stack, arquitectura, modelo de datos preliminar y plan.
-
-**Entregables:**
-- `CLAUDE.md`, `docs/CONTEXTO.md`, `docs/MODELO-DATOS.md`, `docs/ROADMAP.md`.
-
-**Hecho cuando:**
-- Los 4 documentos existen, son consistentes entre sí y el usuario los aprueba.
+`CLAUDE.md`, `docs/CONTEXTO.md`, `docs/MODELO-DATOS.md`, `docs/ROADMAP.md` escritos y
+consistentes. Stack decidido (ADR en `CONTEXTO.md`).
 
 ---
 
-## Fase 1 — Specs, planes y entorno · **(en curso)**
+## Fase 1 — Specs y entorno · **parcial (no bloquea)**
 
-**Objetivo:** convertir las preguntas abiertas en requisitos confirmados.
-
-**Tareas:**
-- Recolectar **especificaciones funcionales** (flujos, roles, reportes).
-- **Validar el modelo de datos** (`MODELO-DATOS.md`) contra esas specs.
-- Confirmar **planes y regiones**: Vercel Pro (uso comercial), plan de Supabase, región
-  cercana a México; crear proyecto de Supabase y cuenta/equipo de Vercel.
-
-**Adelanto de UI + backend (ya conectados, mientras llegan las specs):**
-- Scaffold Nuxt 4 + Pinia + **Nuxt UI v4** en `kilker-inventario/`.
-- **BD migrada/sembrada en Supabase** + `server/api/` con Drizzle (ver §10 de `CLAUDE.md`).
-- **El mock de Pinia se eliminó**; la UI consume datos reales: dashboard, catálogo, alta de
-  producto, **entrada de stock** y **venta** llaman a `server/api/` (lecturas por SSR;
-  escrituras autenticadas con Bearer). Navegación por rol (admin/empleado).
-- Adelanta trabajo de **Fase 3** (núcleo de inventario): catálogo, entradas, ventas,
-  **categorías (CRUD)** e **historial+anulación de ventas** ya funcionan end-to-end contra
-  la BD. Falta validar contra specs y construir ajuste / transferencia / tickets.
-- **Protección de rutas por rol (hecho):** guard global solo-cliente
-  (`app/middleware/auth.global.ts`): sin sesión → `/login`; rutas admin marcadas con
-  `definePageMeta({ requiresRole: 'admin' })`. Ver §10 de `CLAUDE.md`.
-- **Categorías + historial/anulación de ventas (hecho):** CRUD de categorías (admin),
-  listado de ventas (empleado→su tienda, admin→todas) y anulación de factura (admin,
-  revierte kardex + repone inventario). El empleado vende; no anula. Ver §10 de `CLAUDE.md`.
-- **Tickets de corrección (hecho):** empleado solicita la anulación de una venta (abre
-  ticket); el admin aprueba (ejecuta la anulación reusando `voidInvoiceTx`) o rechaza.
-  Endpoints `POST/GET /api/tickets`, `POST /api/tickets/:id/resolve`. Ver §10 de `CLAUDE.md`.
-- **Corte de caja (hecho):** método de pago efectivo/tarjeta en la venta + cortes por turno
-  (`cash_closeouts`, migración 0003). Cada corte resume las ventas de la tienda desde el
-  corte anterior, separando efectivo/tarjeta (snapshot). Endpoints `POST/GET /api/cortes`,
-  `GET /api/cortes/:id`. Pantalla `app/pages/cortes/index.vue`. Ver §10 de `CLAUDE.md`.
-- **Productos — edición y borrado (hecho):** `PATCH /api/products/:id` (admin, SKU no
-  editable) y `DELETE /api/products/:id` (admin; bloquea 409 si el producto tiene historial
-  → desactivar). UI: página de edición + botones en el catálogo. Ver §10 de `CLAUDE.md`.
-- **QA del cliente (hecho):** método de pago `transferencia`; stock máximo; factura del
-  proveedor (número/fecha) en entradas; el corte separa efectivo/tarjeta/transferencia;
-  decimales en precios/costos. **Costo estándar de la marca** (sin captura manual de costo
-  por entrada ni costeo por lote). Migraciones 0004-0006.
-- **Layout responsivo completo** (`app/layouts/default.vue`): sidebar fija en desktop,
-  drawer deslizable en móvil (hamburguesa → overlay → X o tap fuera para cerrar).
-- **Calidad:** `npm run typecheck` (vue-tsc) disponible; eslint + typecheck verdes.
-
-**Hecho cuando:**
-- Las "Preguntas abiertas" de `CONTEXTO.md` están resueltas y el modelo de datos está
-  congelado para v1.
+- ❌ **No hubo documento formal de especificaciones.** Los requisitos se definieron en
+  rondas de QA con el cliente y quedaron **codificados en la app**.
+- ✅ Modelo de datos validado en la práctica (22 migraciones de ajustes reales).
+- ⏳ **Pendiente:** confirmar planes y regiones (Vercel Pro para uso comercial, plan de
+  Supabase, región cercana a México) y dominio propio. Ver "Preguntas abiertas" de
+  [`CONTEXTO.md`](CONTEXTO.md).
 
 ---
 
-## Fase 2 — Scaffold y cimientos
+## Fase 2 — Scaffold y cimientos · **completada**
 
-**Objetivo:** dejar el esqueleto del proyecto listo para desarrollar features.
-
-**Tareas:**
-- Inicializar **Nuxt 4** (TS) + **Pinia** (`@pinia/nuxt`) + librería UI elegida.
-- Integrar **Supabase** (`@nuxtjs/supabase`) para Auth y cliente.
-- Configurar **Drizzle** + `drizzle-kit` (`server/db/schema.ts`, `drizzle.config.ts`,
-  cliente con pooler de Supabase).
-- **Esquema inicial:** primer `schema.ts` + migración (perfiles, roles, sucursales de
-  prueba) y seed básico.
-- Lint/format (ESLint+Prettier), variables de entorno, **deploy inicial a Vercel**.
-
-**Hecho cuando:**
-- Se levanta Nuxt en local, un usuario puede autenticarse (Supabase Auth) y una ruta
-  `server/api/` lee/escribe datos vía Drizzle. La app despliega en Vercel.
+- Nuxt 4 + TS + Pinia + **Nuxt UI v4** (Tailwind v4) en `kilker-inventario/`.
+- **Supabase Auth** vía `@nuxtjs/supabase` (login, guard de rutas por rol).
+- **Drizzle + drizzle-kit** configurados (`server/db/schema.ts`, migraciones en
+  `server/db/migrations/`, pooler en runtime / `DIRECT_URL` para migrar).
+- Esquema inicial + seeds (`db:seed`, `db:seed:auth`), ESLint y `npm run typecheck`.
 
 ---
 
-## Fase 3 — Núcleo del inventario
+## Fase 3 — Núcleo del inventario · **completada**
 
-**Objetivo:** funcionalidad central de control de stock.
-
-**Tareas:**
-- Catálogo de **productos** y **categorías**.
-- **Sucursales** y **stock por sucursal**.
-- **Movimientos**: entradas y salidas (transacciones Drizzle en `server/api/`).
-- **Auth + roles** aplicados a la UI y a las rutas del servidor.
-
-**Hecho cuando:**
-- Un usuario con rol adecuado puede dar de alta productos y registrar entradas/salidas que
-  actualizan correctamente las existencias por sucursal.
+- **Catálogo** de productos (alta/edición/borrado admin, unidades, precio, costo, mín/máx,
+  código de barras) y **categorías** (CRUD jerárquico).
+- **Sucursales** y **stock por sucursal** (desglose `byStore` en el catálogo).
+- **Movimientos:** entradas de stock (con folio interno y factura de proveedor) y ventas,
+  ambas transaccionales sobre el kardex append-only.
+- **Auth + roles** aplicados a UI (nav filtrada, guard) y a `server/api/` (401/403).
+- **Extras del núcleo:** clientes, métodos de pago, canal de venta, descuento por factura,
+  ventas con fecha retroactiva validada contra el kardex.
 
 ---
 
-## Fase 4 — Transferencias, reportes y auditoría
+## Fase 4 — Transferencias, reportes y auditoría · **casi completa**
 
-**Tareas:**
-- **Transferencias** entre sucursales (con estados).
-- **Ajustes** de inventario y **kardex**/historial (`stock_movements`).
-- **Reportes** básicos y exportación (Excel/PDF) — según specs.
+**Hecho:**
+- **Transferencias entre sucursales en dos fases** (despacho → `en_transito` → recepción o
+  cancelación), valuadas por FIFO.
+- **Anulación de ventas y de entradas** (admin) + **tickets de corrección** (el empleado
+  solicita, el admin aprueba/rechaza).
+- **Cortes de caja** por turno con snapshot inmutable (efectivo/tarjeta/transferencia).
+- **Gastos** con conceptos, retenciones IVA/ISR y pagos en parcialidades.
+- **Reportes:** valuación mensual de inventario, valor de inventario a una fecha, costo
+  promedio y productos más vendidos con **costo y utilidad FIFO**. Dashboard con filtros de
+  sucursal y periodo.
+- **Exportación a Excel** (SheetJS) de catálogo/valor de inventario, entradas y ventas.
 
-**Hecho cuando:**
-- Se puede transferir stock entre sucursales y consultar el historial/reportes.
+**Falta:**
+- Movimientos de **ajuste** de inventario (enum listo, sin endpoint ni pantalla).
+- **Kardex unificado**: hoy `/movimientos` solo muestra entradas.
+- `GET /api/reports/unsold-products` es un **stub**.
+- Exportación a **PDF** (`pdfmake` instalado, sin usar).
 
 ---
 
-## Fase 5 — Hardening y producción
+## Fase 5 — Hardening y producción · **en curso**
 
-**Tareas:**
-- Validaciones, manejo de errores, **permisos finos** (server middleware) y **RLS** en
-  Supabase donde aplique.
+- Policies de **RLS** (hoy innecesarias: todo el acceso es server-side; obligatorias si
+  algún día el cliente habla directo con Supabase).
+- Migrar `SUPABASE_SERVICE_KEY` → `NUXT_SUPABASE_SECRET_KEY`.
+- Quitar logs de depuración (`top-products`) y dependencias sin uso.
 - **Backups** de Supabase y estrategia de recuperación.
-- **Producción en Vercel**: plan Pro, dominio propio, variables de entorno, región.
-- **Capacitación** a usuarios de sucursales.
+- **Producción en Vercel:** plan Pro, dominio, variables de entorno, región.
+- Decidir si la app pasa a **SPA (`ssr: false`)** para eliminar el *hydration mismatch* del
+  guard solo-cliente.
+- **Capacitación** a los usuarios de sucursales.
 
-**Hecho cuando:**
-- La app corre en producción (Vercel + Supabase) y las sucursales la usan.
+**Hecho cuando:** la app corre en producción (Vercel + Supabase) y las sucursales la usan.
 
 ---
 
 ## Fase 6 — Mejoras (futuro)
 
 - **PWA / offline** si la conectividad de las sucursales lo exige.
-- **Códigos de barras** (lectura/impresión).
-- Integración con **facturación/POS** existente.
-- Lotes/caducidad si se confirman.
+- **Códigos de barras**: el campo existe en `products`; falta lectura/impresión.
+- Integración con **facturación/POS** (hoy el comprobante es interno, sin CFDI).
+- Lotes/caducidad y costeo por lote, si se confirman.
+- Descuentos por línea/combo (`discount_type` ya está declarado en el esquema).
 
 ---
 
 ## Cómo deben proceder los próximos agentes
 
 1. Leer primero [`../CLAUDE.md`](../CLAUDE.md) y [`CONTEXTO.md`](CONTEXTO.md).
-2. No avanzar de fase con preguntas abiertas sin resolver: registrarlas y/o consultarlas.
-3. Mantener los documentos sincronizados con cada decisión (regla 3 de `CLAUDE.md`).
-4. Todo el stack es TypeScript: backend en `server/` de Nuxt; esquema solo vía Drizzle.
+2. **La fuente de verdad es el código**, no estos `.md`. Verifica en
+   `server/db/schema.ts` y `server/api/` antes de asumir cualquier cosa.
+3. Registrar como supuesto en "Preguntas abiertas" lo que no esté confirmado.
+4. Mantener los documentos sincronizados con cada decisión (regla 3 de `CLAUDE.md`).
+5. Todo el stack es TypeScript: backend en `server/` de Nuxt; esquema solo vía Drizzle.

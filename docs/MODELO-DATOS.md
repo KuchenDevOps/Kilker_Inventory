@@ -1,144 +1,153 @@
-# MODELO DE DATOS (DRAFT) — Inventario Kilker
+# MODELO DE DATOS — Inventario Kilker
 
-> ⚠️ **BORRADOR DESACTUALIZADO.** Este documento es el boceto **pre-implementación** y ya
-> NO refleja el esquema real. La **fuente de verdad** es `server/db/schema.ts` (12 tablas,
-> aplicadas vía migraciones `0000`–`0003`). El esquema real implementado usa, entre otros:
-> `stores`, `profiles` (roles `admin|empleado`), `categories`, `products`, `inventory`,
-> `stock_movements` (kardex append-only), `invoices`/`invoice_items` (con `payment_method`
-> efectivo|tarjeta), `transfers`/`transfer_items`, `tickets` y **`cash_closeouts`** (cortes
-> de caja por turno). Ver `CLAUDE.md` §10 y el plan de BD para el detalle vigente.
-> Motor: **PostgreSQL (Supabase)**. Esquema definido con **Drizzle** (`server/db/schema.ts`).
-> Idioma: español. Última actualización: 2026-06-21.
+> **Fuente de verdad: [`kilker-inventario/server/db/schema.ts`](../kilker-inventario/server/db/schema.ts).**
+> Este documento es un **resumen legible** de ese archivo; si discrepan, manda el código.
+> Motor: **PostgreSQL (Supabase)**. Esquema definido y migrado **solo** con Drizzle +
+> `drizzle-kit` (migraciones en `kilker-inventario/server/db/migrations/`, `0000`–`0022`).
+> Idioma: español. Última actualización: 2026-08-04.
 
 ---
-
-## Supuestos (a confirmar con specs)
-
-- El stock se controla **por sucursal** (no un único almacén global).
-- Un "producto" es una **variante vendible concreta** (p. ej. "Esmalte X blanco brillante
-  1 L" = un SKU). Si la empresa maneja color/tamaño como combinaciones, se evaluará
-  separar `products` de `product_variants`.
-- Hay **movimientos** que registran toda variación de stock (auditable).
-- **Transferencias entre sucursales**: asumidas como necesarias (a confirmar).
-- **Lotes/caducidad y códigos de barras**: opcionales, dependen del alcance.
 
 ## Convenciones de esquema
 
-- **Autenticación:** la gestiona **Supabase Auth** en la tabla `auth.users` (id `uuid`).
-  La app usa una tabla **`profiles`** (1:1 con `auth.users`) para datos propios + rol.
-- **IDs de tablas de negocio:** `bigint generated always as identity` (autoincremental).
-- **Enums:** se usan **enums de Postgres** vía `pgEnum` de Drizzle (p. ej. tipo de
-  movimiento, estado de transferencia).
-- **Todo el esquema** se crea/modifica con **Drizzle + drizzle-kit**, nunca a mano.
+- **Autenticación:** la gestiona **Supabase Auth** (`auth.users`, id `uuid`). La app usa
+  **`profiles`** (1:1 con `auth.users`, FK con `ON DELETE CASCADE` añadida en la migración
+  manual `0001`) para datos propios + rol + sucursal.
+- **IDs de negocio:** `bigint generated always as identity`.
+- **Enums de Postgres** vía `pgEnum`.
+- **Dinero y cantidades:** `numeric(14,2)` para importes, `numeric(14,3)` para cantidades.
+  ⚠️ Los `numeric` llegan a la UI como **string** (usar `Number()`); ver
+  `app/types/inventario.ts`.
+- **RLS habilitado en todas las tablas, sin policies** → nadie accede desde el cliente; todo
+  pasa por `server/api/` (que usa la conexión de servicio y bypassa RLS).
+- **Bajas suaves:** productos, sucursales, clientes y empleados se desactivan
+  (`is_active`), no se borran.
+
+## Enums
+
+| Enum | Valores |
+|------|---------|
+| `user_role` | `admin`, `empleado` |
+| `movement_type` | `venta`, `entrada`, `ajuste`, `transferencia_salida`, `transferencia_entrada`, `anulacion` |
+| `invoice_status` | `emitida`, `anulada` |
+| `transfer_status` | `pendiente`, `en_transito`, `recibida`, `cancelada` |
+| `ticket_status` | `abierto`, `aprobado`, `rechazado` |
+| `ticket_target` | `factura`, `movimiento` (v1 solo usa `factura`) |
+| `product_unit` | `litro`, `galon`, `cubeta`, `pieza`, `cuarto`, `tambo` |
+| `payment_method` | `efectivo`, `tarjeta`, `transferencia` |
+| `sale_channel` | `mostrador`, `en_linea` |
+| `expense_type` | `Fijo`, `Operativo` |
+| `discount_type` | `porcentaje`, `combo` (declarado; el descuento vigente es por factura) |
 
 ---
 
-## Entidades principales
+## Tablas (17)
 
-### `profiles` (perfil de usuario)
-Extiende a los usuarios de Supabase Auth con datos de la app.
-- `id` (uuid, FK → `auth.users.id`), `full_name`, `role` (admin | bodega | ventas),
-  `is_active`, timestamps.
+### Base
 
-### `locations` (sucursales)
-- `id`, `name`, `code`, `address`, `is_active`, timestamps.
+| Tabla | Contenido |
+|-------|-----------|
+| `stores` | Sucursales. `name`, `code` (**único**, se usa en folios y **no se edita**), `address`, `is_active`. |
+| `profiles` | Perfil de app 1:1 con `auth.users`. `full_name`, `role`, `store_id` (null = admin global), `is_active` (desactivar = dar de baja el acceso). |
+| `categories` | Categorías/líneas con jerarquía opcional (`parent_id` → sí misma). |
+| `products` | Catálogo. `sku` (único), `name`, `category_id`, `color` (texto libre), `unit`, `price`, `cost` (**costo estándar de la marca**), `barcode`, `min_quantity`, `max_quantity`, `is_active`. |
+| `inventory` | Saldo materializado por **producto × sucursal**. Único `(product_id, store_id)` + `CHECK quantity >= 0`. |
 
-### `suppliers` (proveedores)
-- `id`, `name`, `contact`, `phone`, `email`, `is_active`, timestamps.
+### Movimientos (kardex)
 
-### `categories` (categorías / líneas de producto)
-- `id`, `name`, `parent_id` (opcional, jerarquía), timestamps.
+| Tabla | Contenido |
+|-------|-----------|
+| `stock_movements` | **Libro append-only**: un trigger (migración `0001`) rechaza UPDATE/DELETE. `type`, `quantity` **con signo** (+ entra / − sale), `unit_value`, `total_value`, `invoice_id`, `transfer_id`, `reverses_movement_id` (liga la reversa al original), `supplier_invoice_number`/`_date` (factura del proveedor en entradas) y `"Folio"` (folio interno de entrada, único por tienda). |
+| `entry_folio_counters` | Contador `last_seq` por tienda para el folio de entradas (`<CODE>-E-0001`). Upsert atómico. |
 
-### `products`
-Catálogo. Atributos de pintura marcados en **negrita** (validar con specs).
-- `id`, `sku`, `name`, `brand`, `category_id` (→ `categories`)
-- **`color`**, **`color_code`**, **`base`**, **`finish`** (acabado), **`volume`**/unidad
-- `barcode` (opcional), `unit` (L, gal, unidad…)
-- `price`, `cost` (opcionales), `is_active`, timestamps.
+### Ventas
 
-### `inventory` (stock por sucursal)
-Existencias actuales = producto × sucursal.
-- `id`, `product_id` (→ `products`), `location_id` (→ `locations`)
-- `quantity`, `min_quantity` (alerta de mínimo, opcional)
-- **único** (`product_id`, `location_id`), timestamps.
+| Tabla | Contenido |
+|-------|-----------|
+| `invoices` | Comprobante interno (sin CFDI/SAT). `folio` (único por tienda, `<CODE>-0001`), `store_id`, `customer_id`, `created_by`, `status`, `payment_method`, `channel`, `discount_pct`/`discount_amount`, `total_amount`, `issued_at` (admite fecha retroactiva) y `voided_at/by/reason`. |
+| `invoice_items` | Líneas. `quantity`, `unit_price` (**snapshot** al vender), `line_total`. `discount_type`/`discount_value`/`tax_rate` existen pero hoy no se llenan (el IVA se calcula en la app, 16% informativo). |
+| `customers` | Clientes. `name`, `rfc` (**único**), `address`, `email`, `phone`, `is_active`. |
 
-### `stock_movements` (kardex / auditoría)
-Todo cambio de stock queda registrado aquí.
-- `id`, `product_id`, `location_id`, `user_id` (→ `profiles`/`auth.users`)
-- `type` — **pgEnum** (`entrada` | `salida` | `ajuste` | `transferencia`)
-- `quantity`, `reason`, `reference`
-- `batch_id` (opcional → `batches`), `transfer_id` (opcional → `transfers`)
-- `created_at`.
+### Transferencias entre sucursales
 
-### `transfers` (transferencias entre sucursales)
-- `id`, `from_location_id`, `to_location_id`, `user_id`
-- `status` — **pgEnum** (`pendiente` | `en_transito` | `recibida` | `cancelada`)
-- timestamps.
+| Tabla | Contenido |
+|-------|-----------|
+| `transfers` | `from_store_id`, `to_store_id`, `status`, `created_by`, `issued_at`, `received_at`/`received_by`, `canceled_at`/`canceled_by`/`cancel_reason`. |
+| `transfer_items` | `product_id`, `quantity`. Generan salida en origen al crear y entrada en destino al recibir. |
 
-### `transfer_items`
-- `id`, `transfer_id` (→ `transfers`), `product_id`, `quantity`.
+### Correcciones, caja y gastos
 
----
-
-## Entidades opcionales (según alcance)
-
-### `batches` (lotes / caducidad)
-- `id`, `product_id`, `batch_code`, `expiry_date`, `quantity`, timestamps.
-
-### Referencias de compra/venta
-- Si se requiere: `purchase_orders` / `sales_orders` con sus `*_items`. **Fuera de
-  alcance hasta confirmar specs** (podría integrarse con un POS/facturación externo).
+| Tabla | Contenido |
+|-------|-----------|
+| `tickets` | Solicitudes de corrección: `raised_by`, `store_id`, `target`, `invoice_id`/`movement_id`, `reason`, `status`, `resolved_by`/`resolution_note`. |
+| `cash_closeouts` | Corte por turno: ventana (`period_from` → `period_to`) y **snapshot inmutable** de ventas emitidas: `sales_count`, `total_emitido`, `total_efectivo`, `total_tarjeta`, `total_transferencia`, `voided_count`, `total_voided`. |
+| `expenses` | Cabecera de gasto: `store_id`, `supplier`, `supplier_invoice_number`, `type`, `retention_iva`/`retention_isr`, `amount` (total snapshot), `paid_at`, `created_by`. |
+| `expense_items` | Conceptos del gasto: `reason`, `amount`. |
+| `expense_payments` | Abonos/parcialidades: `amount`, `paid_at`, `paid_by`, `method`, `note`. |
 
 ---
 
 ## Relaciones (resumen)
 
 ```
-auth.users 1───1 profiles
-profiles 1───* stock_movements
-profiles 1───* transfers
+auth.users 1───1 profiles ───* stock_movements / invoices / transfers / expenses / tickets
 
-locations 1───* inventory
-locations 1───* stock_movements
-locations 1───* transfers (from / to)
+stores 1───* inventory · stock_movements · invoices · transfers(from/to) · expenses · cash_closeouts
+       1───1 entry_folio_counters
+       1───* profiles
 
-products 1───* inventory
-products 1───* stock_movements
-products *───1 categories
-products *───* suppliers        (pivote, opcional)
-products 1───* batches          (opcional)
+categories 1───* categories (jerarquía)  ·  categories 1───* products
 
-transfers 1───* transfer_items *───1 products
-transfers 1───* stock_movements
+products 1───* inventory · stock_movements · invoice_items · transfer_items
+
+customers 1───* invoices 1───* invoice_items
+invoices  1───* stock_movements (type='venta' / 'anulacion')
+
+transfers 1───* transfer_items
+          1───* stock_movements (transferencia_salida / transferencia_entrada)
+
+expenses 1───* expense_items
+         1───* expense_payments
+
+stock_movements 1───1 stock_movements (reverses_movement_id → original)
 ```
 
 ```mermaid
 erDiagram
     AUTH_USERS ||--|| PROFILES : extiende
-    PROFILES ||--o{ STOCK_MOVEMENTS : registra
-    PROFILES ||--o{ TRANSFERS : crea
-    LOCATIONS ||--o{ INVENTORY : tiene
-    LOCATIONS ||--o{ STOCK_MOVEMENTS : afecta
+    STORES ||--o{ INVENTORY : tiene
+    STORES ||--o{ PROFILES : emplea
+    STORES ||--o{ INVOICES : emite
+    STORES ||--o{ CASH_CLOSEOUTS : corta
+    STORES ||--o{ EXPENSES : registra
+    CATEGORIES ||--o{ PRODUCTS : agrupa
     PRODUCTS ||--o{ INVENTORY : se_almacena
     PRODUCTS ||--o{ STOCK_MOVEMENTS : mueve
-    CATEGORIES ||--o{ PRODUCTS : agrupa
-    PRODUCTS ||--o{ BATCHES : opcional
+    CUSTOMERS ||--o{ INVOICES : compra
+    INVOICES ||--o{ INVOICE_ITEMS : contiene
+    INVOICES ||--o{ STOCK_MOVEMENTS : genera
     TRANSFERS ||--o{ TRANSFER_ITEMS : contiene
-    PRODUCTS ||--o{ TRANSFER_ITEMS : referencia
     TRANSFERS ||--o{ STOCK_MOVEMENTS : genera
+    EXPENSES ||--o{ EXPENSE_ITEMS : detalla
+    EXPENSES ||--o{ EXPENSE_PAYMENTS : abona
+    INVOICES ||--o{ TICKETS : corrige
 ```
 
 ---
 
 ## Notas de implementación
 
-- El esquema se define en **`server/db/schema.ts`** (Drizzle) y se aplica con
-  `drizzle-kit generate` + `drizzle-kit migrate` (ver [`../CLAUDE.md`](../CLAUDE.md)).
-- Las operaciones que afectan stock (entradas, salidas, transferencias) deben ser
-  **transaccionales** (`db.transaction(...)` de Drizzle), ejecutadas en las rutas
-  `server/api/`, para mantener consistencia con múltiples sucursales/usuarios concurrentes.
-- `inventory.quantity` es un **saldo derivado**: se actualiza junto con cada
-  `stock_movements` dentro de la misma transacción; `stock_movements` es la **fuente de
-  verdad auditable**.
-- **Seguridad:** las escrituras pasan por `server/api/` (con verificación de rol). Si se
-  permiten lecturas directas desde el cliente vía Supabase, protegerlas con **RLS**.
+- Toda operación que toca stock (entrada, venta, transferencia, anulación) corre en
+  `db.transaction(...)` dentro de `server/api/`: inserta en `stock_movements` **y** ajusta
+  `inventory` en el mismo commit.
+- **`stock_movements` es la fuente auditable**; `inventory.quantity` es un saldo derivado.
+  Si divergen, el kardex manda.
+- **Costeo FIFO** (`server/utils/inventoryFifo.ts`): las capas se reconstruyen sobre la
+  marcha desde el kardex + ventas emitidas, ordenadas por **fecha efectiva**
+  (`supplier_invoice_date` de la entrada si existe, si no `created_at`). **No hay tabla de
+  lotes/capas persistidas.**
+- **Anulaciones:** nunca se edita ni borra el movimiento original; se inserta uno de tipo
+  `anulacion` con `reverses_movement_id`. La lógica compartida de anulación de factura vive
+  en `server/utils/corrections.ts` (`voidInvoiceTx`), reusada por la aprobación de tickets.
+- **Sin implementar:** movimientos de `ajuste` (el enum existe, no hay endpoint), lotes y
+  caducidad, y órdenes de compra.
