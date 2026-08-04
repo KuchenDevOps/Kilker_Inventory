@@ -16,7 +16,7 @@ interface TransferBody {
   fromStoreId: number
   toStoreId: number
   note?: string
-    issuedAt?: string
+  issuedAt?: string
   items: TransferItem[]
 }
 
@@ -47,7 +47,8 @@ export default defineEventHandler(async (event) => {
   if (profile.role === 'empleado' && profile.storeId !== fromStoreId) {
     throw createError({ statusCode: 403, statusMessage: 'Solo puedes transferir desde tu sucursal' })
   }
-   let issuedAt: Date | undefined
+
+  let issuedAt: Date | undefined
   if (body.issuedAt) {
     const parsed = new Date(body.issuedAt)
     if (Number.isNaN(parsed.getTime())) {
@@ -71,7 +72,9 @@ export default defineEventHandler(async (event) => {
     if (!fromStore.isActive) throw createError({ statusCode: 400, statusMessage: 'La sucursal origen está inactiva' })
     if (!toStore.isActive) throw createError({ statusCode: 400, statusMessage: 'La sucursal destino está inactiva' })
 
-    // Validar stock disponible y resolver el costo unitario (para valuar la transferencia).
+    // Validar stock disponible y resolver el costo unitario REAL (FIFO) de
+    // las unidades que se transfieren — no el campo estático product.cost,
+    // que puede estar en 0 o desactualizado.
     const lines: { productId: number; quantity: number; unitValue: number }[] = []
     for (const it of items) {
       const productId = Number(it.productId)
@@ -89,7 +92,9 @@ export default defineEventHandler(async (event) => {
           statusMessage: `Stock insuficiente de ${product.sku} en ${fromStore.code}: hay ${available}, se piden ${quantity}`
         })
       }
-      lines.push({ productId, quantity, unitValue: Number(product.cost ?? 0) })
+
+      const unitValue = await getFifoUnitCost(tx, productId, fromStoreId, quantity)
+      lines.push({ productId, quantity, unitValue })
     }
 
     const [transfer] = await tx
@@ -100,8 +105,7 @@ export default defineEventHandler(async (event) => {
         status: 'en_transito',
         createdBy: profile.id,
         note: body.note?.trim() || null,
-        ...(issuedAt ? { issuedAt } : {}) // si no viene, usa el defaultNow()
-
+        ...(issuedAt ? { issuedAt } : {})
       })
       .returning()
     if (!transfer) throw createError({ statusCode: 500, statusMessage: 'No se pudo crear la transferencia' })
@@ -113,7 +117,6 @@ export default defineEventHandler(async (event) => {
         quantity: String(l.quantity)
       })
 
-      // Movimiento de salida en el origen (descuenta inventario ahí mismo).
       await tx.insert(stockMovements).values({
         productId: l.productId,
         storeId: fromStoreId,
