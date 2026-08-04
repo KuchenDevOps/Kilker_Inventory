@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { UNIT_LABELS } from '~/types/inventario'
+import * as XLSX from 'xlsx'
 
 useHead({ title: 'Catálogo · Inventario Kilker' })
 
@@ -67,6 +68,145 @@ const paged = computed(() => {
 
 // Si cambia la búsqueda, vuelve a la página 1 (si no, puedes quedar en una página vacía).
 watch(search, () => { page.value = 1 })
+
+interface InventoryValueByStore { storeId: number; endingUnits: number; endingValue: number }
+interface InventoryValueResult {
+  productId: number
+  byStore: InventoryValueByStore[]
+  totalEndingUnits: number
+  totalEndingValue: number
+}
+
+const inventoryValueCache = ref<Record<number, InventoryValueResult | 'loading' | 'error'>>({})
+
+async function loadInventoryValue(productId: number) {
+  if (inventoryValueCache.value[productId]) return // ya cargado o cargando
+  inventoryValueCache.value[productId] = 'loading'
+  try {
+    const result = await apiFetch<InventoryValueResult>(`/api/products/${productId}/inventory-value`)
+    inventoryValueCache.value[productId] = result
+  } catch {
+    inventoryValueCache.value[productId] = 'error'
+  }
+}
+
+watch(expandedId, (id) => {
+  if (id != null) loadInventoryValue(id)
+})
+
+const exportingInventoryValue = ref(false)
+
+async function exportInventoryValue() {
+  exportingInventoryValue.value = true
+  try {
+    const rows = await apiFetch<Array<{ productId: number; storeId: number; endingUnits: number; endingValue: number }>>(
+      '/api/reports/inventory-value'
+    )
+    if (!rows.length) {
+      toast.add({ title: 'Sin inventario para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
+    }
+
+    const productMap = new Map(products.value.map((p) => [p.id, p]))
+
+    // Agrupar por sucursal, ordenando cada grupo por valor descendente.
+    const rowsByStore = new Map<number, typeof rows>()
+    for (const r of rows) {
+      if (!rowsByStore.has(r.storeId)) rowsByStore.set(r.storeId, [])
+      rowsByStore.get(r.storeId)!.push(r)
+    }
+
+    // Orden de sucursales: por código, para que el Excel salga consistente
+    // entre exportaciones (no depende del orden en que llegó del API).
+    const storeIdsSorted = [...rowsByStore.keys()].sort((a, b) => {
+      const codeA = storeMap.value.get(a)?.code ?? ''
+      const codeB = storeMap.value.get(b)?.code ?? ''
+      return codeA.localeCompare(codeB)
+    })
+
+    type SheetRow = {
+      SKU: string
+      Producto: string
+      Categoría: string
+      Sucursal: string
+      Existencia: number
+      'Valor de inventario': number
+    }
+    const sheetRows: SheetRow[] = []
+
+    let grandTotalUnits = 0
+    let grandTotalValue = 0
+
+    for (const storeId of storeIdsSorted) {
+      const store = storeMap.value.get(storeId)
+      const storeLabel = store ? `${store.code} · ${store.name}` : `Sucursal ${storeId}`
+      const storeRows = rowsByStore.get(storeId)!.sort((a, b) => b.endingValue - a.endingValue)
+
+      let storeTotalUnits = 0
+      let storeTotalValue = 0
+
+      for (const r of storeRows) {
+        const product = productMap.get(r.productId)
+        sheetRows.push({
+          SKU: product?.sku ?? '',
+          Producto: product?.name ?? `Producto ${r.productId}`,
+          Categoría: product?.category ?? '',
+          Sucursal: storeLabel,
+          Existencia: r.endingUnits,
+          'Valor de inventario': r.endingValue
+        })
+        storeTotalUnits += r.endingUnits
+        storeTotalValue += r.endingValue
+      }
+
+      // Subtotal de la sucursal.
+      sheetRows.push({
+        SKU: '',
+        Producto: '',
+        Categoría: '',
+        Sucursal: `Subtotal ${storeLabel}`,
+        Existencia: Math.round(storeTotalUnits * 1000) / 1000,
+        'Valor de inventario': Math.round(storeTotalValue * 100) / 100
+      })
+
+      // Fila en blanco como separador visual entre sucursales.
+      sheetRows.push({ SKU: '', Producto: '', Categoría: '', Sucursal: '', Existencia: null, 'Valor de inventario': null })
+
+      grandTotalUnits += storeTotalUnits
+      grandTotalValue += storeTotalValue
+    }
+
+    // Quita el separador en blanco final antes del total general.
+    sheetRows.pop()
+
+    sheetRows.push({
+      SKU: '',
+      Producto: '',
+      Categoría: '',
+      Sucursal: 'TOTAL GENERAL',
+      Existencia: Math.round(grandTotalUnits * 1000) / 1000,
+      'Valor de inventario': Math.round(grandTotalValue * 100) / 100
+    })
+
+    const workbook = XLSX.utils.book_new()
+    const sheet = XLSX.utils.json_to_sheet(sheetRows)
+    sheet['!cols'] = [{ wch: 14 }, { wch: 30 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 16 }]
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Inventario valorizado')
+
+    const fecha = new Date().toISOString().slice(0, 10)
+    XLSX.writeFile(workbook, `inventario-valorizado_${fecha}.xlsx`)
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo exportar',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exportingInventoryValue.value = false
+  }
+}
+
 </script>
 
 <template>
@@ -78,14 +218,26 @@ watch(search, () => { page.value = 1 })
           {{ total }} productos · existencias
         </p>
       </div>
-      <UButton
-        v-if="isAdmin"
-        to="/productos/nuevo"
-        icon="i-lucide-plus"
-        color="primary"
-      >
-        Nuevo producto
-      </UButton>
+       <div v-if="isAdmin" class="flex items-center gap-2">
+    <UButton
+      to="/productos/nuevo"
+      icon="i-lucide-plus"
+      color="primary"
+    >
+      Nuevo producto
+    </UButton>
+
+    <UButton
+      icon="i-lucide-file-spreadsheet"
+      color="neutral"
+      variant="subtle"
+      :loading="exportingInventoryValue"
+      @click="exportInventoryValue"
+    >
+      Exportar valor de inventario
+    </UButton>
+  </div>
+
     </header>
 
     <UAlert
@@ -208,14 +360,27 @@ watch(search, () => { page.value = 1 })
                           <th class="px-4 py-2 font-medium text-right">Existencia</th>
                         </tr>
                       </thead>
-                      <tbody class="divide-y divide-default">
+                     <tbody class="divide-y divide-default">
                         <tr v-if="!p.byStore.length">
-                          <td colspan="3" class="px-8 py-3 text-muted">Sin existencias registradas.</td>
+                          <td colspan="4" class="px-8 py-3 text-muted">Sin existencias registradas.</td>
                         </tr>
                         <tr v-for="b in p.byStore" :key="b.storeId">
                           <td class="px-8 py-3 font-mono text-xs">{{ storeMap.get(b.storeId)?.code ?? '?' }}</td>
                           <td class="px-4 py-3 text-muted">{{ storeMap.get(b.storeId)?.name ?? `Sucursal ${b.storeId}` }}</td>
                           <td class="px-4 py-3 text-right tabular-nums">{{ b.quantity }}</td>
+                          <td class="px-4 py-3 text-right tabular-nums">
+                            <template v-if="inventoryValueCache[p.id] === 'loading'">
+                              <USkeleton class="h-4 w-16 ml-auto" />
+                            </template>
+                            <template v-else-if="inventoryValueCache[p.id] === 'error'">
+                              <span class="text-xs text-error">Error</span>
+                            </template>
+                            <template v-else>
+                              {{ currency.format(
+                                (inventoryValueCache[p.id] as InventoryValueResult)?.byStore.find((s) => s.storeId === b.storeId)?.endingValue ?? 0
+                              ) }}
+                            </template>
+                          </td>
                         </tr>
                       </tbody>
                     </table>

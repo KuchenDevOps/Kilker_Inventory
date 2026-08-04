@@ -3,6 +3,7 @@ import { and, eq, lt, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, stockMovements } from '../../db/schema'
 
+
 interface Transaction {
   date: Date
   type: 'entrada' | 'salida'
@@ -27,6 +28,8 @@ const EMPTY_RESULT = {
   adjustmentsValue: 0,
   adjustmentsUnits: 0,
 }
+
+const EPSILON = 0.0005 
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -318,7 +321,7 @@ export default defineEventHandler(async (event) => {
 
     let remainingQty = 0
     const inventoryLayers: Array<{ qty: number; unitCost: number }> = []
-    let shortfall = 0 // cantidad que no se pudo consumir por falta de capas (dato inconsistente)
+    let shortfall = 0
 
     for (const txn of transactions) {
       if (txn.type === 'entrada') {
@@ -327,22 +330,19 @@ export default defineEventHandler(async (event) => {
       } else {
         let qtyToConsume = txn.quantity
         let index = 0
-        while (qtyToConsume > 0 && index < inventoryLayers.length) {
+        while (qtyToConsume > EPSILON && index < inventoryLayers.length) {
           const layer = inventoryLayers[index]
           if (!layer) break
           const consumeQty = Math.min(layer.qty, qtyToConsume)
           layer.qty -= consumeQty
           qtyToConsume -= consumeQty
           remainingQty -= consumeQty
-          if (layer.qty === 0) index++
+          if (layer.qty <= EPSILON) index++
         }
         inventoryLayers.splice(0, index)
-        if (qtyToConsume > 0) {
-          // Salida mayor a lo disponible en capas: dato inconsistente (mismo
-          // patrón de "stock fantasma" visto antes). Se registra pero no se
-          // detiene el cálculo del resto de productos.
+        if (qtyToConsume > EPSILON) {
           shortfall += qtyToConsume
-          remainingQty -= qtyToConsume // evita que quede negativo lógicamente
+          remainingQty -= qtyToConsume
         }
       }
     }
@@ -356,13 +356,19 @@ export default defineEventHandler(async (event) => {
     let productInventoryValue = 0
     for (const layer of inventoryLayers) productInventoryValue += layer.qty * layer.unitCost
 
+  const roundedRemainingQty = Math.round(remainingQty * 1000) / 1000
+    if (roundedRemainingQty === 0) {
+      productInventoryValue = 0
+    }
+
     endingInventoryValue += productInventoryValue
-    if (remainingQty > 0) {
+    if (remainingQty > EPSILON) {
       endingUnits += remainingQty
       productsWithStock++
     }
   }
 
+  
   return {
     month,
     entriesValue: Math.round(entriesValue * 100) / 100,
