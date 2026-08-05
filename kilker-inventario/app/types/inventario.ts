@@ -340,11 +340,13 @@ export interface ApiMonthlyInventory {
   entriesValue: number
   exitsValue: number
   endingInventoryValue: number
-   endingUnits: number 
-   transferOutValue: number
-   transferOutUnits: number
-   transfersInValue: number
-   transfersInUnits: number
+  endingUnits: number
+  // Ojo: el servidor devuelve `transfersOut*` (en plural). Antes el tipo decía
+  // `transferOut*` y nunca cuadraba con el payload real.
+  transfersOutValue: number
+  transfersOutUnits: number
+  transfersInValue: number
+  transfersInUnits: number
   productsWithStock: number
 }
 

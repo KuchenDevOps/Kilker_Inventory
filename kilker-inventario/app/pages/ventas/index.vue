@@ -18,6 +18,11 @@ const { data: stores } = useStores()
 const { products } = useAllProducts()
 const apiFetch = useApiFetch()
 
+// Exportaciones: useAllSales manda ?all=true. Antes pedían /api/sales sin ese
+// flag, y el endpoint recortaba a 200 facturas sin avisar — los Excel salían
+// truncados en cuanto el periodo pasaba de 200 ventas.
+const { refresh: fetchAllSales } = useAllSales()
+
 const viewingId = ref<number | null>(null)
 const detail = ref<ApiSaleDetail | null>(null)
 const loadingDetail = ref(false)
@@ -236,15 +241,14 @@ function downloadSalesWorkbook(sales: ApiSale[], filenamePrefix: string) {
 async function exportFiltered() {
   exportingFiltered.value = true
   try {
-    const query: Record<string, any> = {}
-    if (status.value !== 'todas') query.status = status.value
-    if (storeId.value) query.storeId = storeId.value
-    if (from.value) query.from = from.value
-    if (to.value) query.to = to.value
-    if (search.value) query.q = search.value
-    if (productId.value) query.productId = productId.value
-
-    const rows = await apiFetch<ApiSale[]>('/api/sales', { query })
+    const rows = await fetchAllSales({
+      status: status.value,
+      storeId: storeId.value,
+      productId: productId.value,
+      from: from.value,
+      to: to.value,
+      q: search.value
+    })
     if (!rows.length) {
       toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
       return
@@ -266,14 +270,14 @@ async function exportFiltered() {
 async function exportAll() {
   exportingAll.value = true
   try {
-    const query: Record<string, any> = {}
-    if (storeId.value) query.storeId = storeId.value
-    if (from.value) query.from = from.value
-    if (to.value) query.to = to.value
-    if (search.value) query.q = search.value
-    if (productId.value) query.productId = productId.value
-
-    const rows = await apiFetch<ApiSale[]>('/api/sales', { query })
+    // Igual que exportFiltered pero SIN el filtro de estado: sale todo.
+    const rows = await fetchAllSales({
+      storeId: storeId.value,
+      productId: productId.value,
+      from: from.value,
+      to: to.value,
+      q: search.value
+    })
     if (!rows.length) {
       toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
       return

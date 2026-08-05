@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
   const stateChanged = patch.isActive !== undefined && patch.isActive !== current.isActive
   if (stateChanged) {
     const nextActive = patch.isActive as boolean
-    return await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const [updated] = await tx
         .update(stores)
         .set(patch)
@@ -64,10 +64,16 @@ export default defineEventHandler(async (event) => {
         .set({ isActive: nextActive })
         .where(and(eq(profiles.storeId, id), eq(profiles.role, 'empleado')))
         .returning({ id: profiles.id })
-      return nextActive
-        ? { ...updated, reactivatedEmployees: affected.length }
-        : { ...updated, deactivatedEmployees: affected.length }
+      return { updated, affectedIds: affected.map((r) => r.id) }
     })
+
+    // La cascada tocó a varios empleados: hay que sacarlos del caché de
+    // perfiles para que la baja (o el alta) aplique de inmediato.
+    for (const employeeId of result.affectedIds) invalidateProfileCache(employeeId)
+
+    return nextActive
+      ? { ...result.updated, reactivatedEmployees: result.affectedIds.length }
+      : { ...result.updated, deactivatedEmployees: result.affectedIds.length }
   }
 
   const [updated] = await db
