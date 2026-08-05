@@ -1,64 +1,32 @@
 <script setup lang="ts">
 import { UNIT_LABELS } from '~/types/inventario'
-import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
-const apiFetch = useApiFetch()
-
 
 useHead({ title: 'Dashboard · Inventario Kilker' })
 
-const { products, pending: loadingProducts, error: productsError, refresh: refreshProducts } = useAllProducts()
-const { data: stores, refresh: refreshStores } = useStores()
-const {
-  pending: loadingAverageCosts,
-  storeId: averageCostsStoreId,
-  refresh: refreshAverageCosts,
-} = useAverageCosts()
+// Catálogo y sucursales: lecturas públicas, no cuestan verificación de token.
+// Se cargan una sola vez (no dependen del periodo ni de la sucursal elegida).
+const { products, pending: loadingProducts, error: productsError } = useAllProducts()
+const { data: stores } = useStores()
 
-const { me } = useMe()   
-const isEmployee = computed(() => me.value?.role === 'empleado')   // ← NUEVO
+const { me } = useMe()
+const isEmployee = computed(() => me.value?.role === 'empleado')
 
+// Todas las métricas agregadas en UNA petición (ver useDashboardSummary).
 const {
-  movements,
-  pending: loadingMovements,
-  storeId: movementsStoreId,
-  from: movementsFrom,
-  to: movementsTo,
-  refresh: refreshMovements
-} = useMovements()
-
-const {
-  sales,
-  pending: loadingSales,
-  storeId: salesStoreId,
-  from: salesFrom,
-  to: salesTo,
-  refresh: refreshSales
-} = useSales()
-
-const {
-  expenses,
-  pending: loadingExpenses,
-  storeId: expensesStoreId,
-  from: expensesFrom,
-  to: expensesTo,
-  refresh: refreshExpenses
-} = useAllExpenses()
+  data: summary,
+  pending: loadingSummary,
+  error: summaryError,
+  refresh: refreshSummary
+} = useDashboardSummary()
 
 // ───────────────────────────────────────────────
 //  GASTOS: subtotal (a pagar), pagado y pendiente — agrupado por tipo
 // ───────────────────────────────────────────────
-const expensesByType = computed(() => {
-  const result = {
-    Fijo: { subtotal: 0, totalPaid: 0, balance: 0 },
-    Operativo: { subtotal: 0, totalPaid: 0, balance: 0 }
-  }
-  for (const e of expenses.value) {
-    result[e.type].subtotal += e.subtotal
-    result[e.type].totalPaid += Number(e.totalPaid)
-    result[e.type].balance += Number(e.balance)
-  }
-  return result
-})
+const EMPTY_BUCKET = { subtotal: 0, totalPaid: 0, balance: 0 }
+
+const expensesByType = computed(
+  () => summary.value?.expenses ?? { Fijo: EMPTY_BUCKET, Operativo: EMPTY_BUCKET }
+)
 
 const totalExpensesFijo = computed(() => expensesByType.value.Fijo.subtotal)
 const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.subtotal)
@@ -66,11 +34,8 @@ const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.sub
 const totalExpensesPaid = computed(
   () => expensesByType.value.Fijo.totalPaid + expensesByType.value.Operativo.totalPaid
 )
-const totalExpensesPending = computed(
-  () => expensesByType.value.Fijo.balance + expensesByType.value.Operativo.balance
-)
 
-// Si también quieres el desglose pagado/pendiente POR tipo (no solo el total combinado):
+// Desglose pagado/pendiente por tipo de gasto.
 const totalExpensesPaidFijo = computed(() => expensesByType.value.Fijo.totalPaid)
 const totalExpensesPaidOperativo = computed(() => expensesByType.value.Operativo.totalPaid)
 const totalExpensesPendingFijo = computed(() => expensesByType.value.Fijo.balance)
@@ -83,6 +48,8 @@ const currency = new Intl.NumberFormat('es-MX', {
 })
 const number = new Intl.NumberFormat('es-MX')
 
+// Lista "productos más vendidos": sigue siendo su propia petición porque
+// tiene selector de Top N y búsqueda independientes del resto del dashboard.
 const {
   topProducts,
   pending: loadingTopProducts,
@@ -93,42 +60,9 @@ const {
   refresh: refreshTopProducts
 } = useTopProducts()
 
-
-
-interface TopProductRow {
-  productId: number
-  totalRevenue: number
-  totalCost: number
-  profit: number
-}
-
-const allProductsTotals = ref<{ totalCost: number; totalRevenue: number; totalProfit: number } | null>(null)
-const loadingAllProductsTotals = ref(false)
-
-async function refreshAllProductsTotals() {
-  loadingAllProductsTotals.value = true
-  try {
-    const query: Record<string, any> = { limit: 0 }
-    if (selectedStoreId.value) query.storeId = selectedStoreId.value
-    if (periodFrom.value) query.from = periodFrom.value
-    if (periodTo.value) query.to = periodTo.value
-
-    const rows = await apiFetch<TopProductRow[]>('/api/reports/top-products', { query })
-
-    const totalRevenue = rows.reduce((sum, r) => sum + r.totalRevenue, 0)
-    const totalCost = rows.reduce((sum, r) => sum + r.totalCost, 0)
-    allProductsTotals.value = {
-      totalCost,
-      totalRevenue,
-      totalProfit: totalRevenue - totalCost
-    }
-  } catch (e) {
-    console.error('Error al cargar totales de productos:', e)
-    allProductsTotals.value = null
-  } finally {
-    loadingAllProductsTotals.value = false
-  }
-}
+// Totales de lo vendido (costo/venta/utilidad): ya vienen en el resumen.
+// Antes eran una segunda llamada a top-products con limit=0.
+const allProductsTotals = computed(() => summary.value?.soldTotals ?? null)
 
 const allProductsProfitPct = computed(() => {
   if (!allProductsTotals.value || allProductsTotals.value.totalRevenue <= 0) return 0
@@ -163,109 +97,75 @@ watch(
   { immediate: true }
 )
 
-// --- FUNCIÓN CENTRAL DE REFRESH ---
-const refreshAllData = async () => {
-  try {
-    await Promise.all([refreshProducts(), refreshStores()])
+// ───────────────────────────────────────────────
+//  RECARGA
+// ───────────────────────────────────────────────
+// Una sola función y un solo disparador. Antes había tres caminos que llamaban
+// a refreshAllData (montaje, watcher de sucursal, watcher de periodo) y además
+// cada composable se auto-observaba, así que una carga del dashboard repetía
+// el mismo fetch 3-5 veces.
+const lastRefreshTime = ref(Date.now())
 
-    const storeId = selectedStoreId.value || undefined
-    movementsStoreId.value = storeId
-    salesStoreId.value = storeId
-    averageCostsStoreId.value = storeId
-    topProductsStoreId.value = storeId
-    expensesStoreId.value = storeId
-    monthlyStoreId.value = storeId
-    
-    movementsFrom.value = periodFrom.value
-    movementsTo.value = periodTo.value
-    salesFrom.value = periodFrom.value
-    salesTo.value = periodTo.value
-    topProductsFrom.value = periodFrom.value
-    topProductsTo.value = periodTo.value
-    expensesFrom.value = periodFrom.value
-    expensesTo.value = periodTo.value
-    monthlyMonth.value = derivedMonth.value
+async function refreshAllData() {
+  const storeId = selectedStoreId.value || undefined
 
-    await Promise.all([
-      refreshMovements(),
-      refreshSales(),
-      refreshAverageCosts(),
-      refreshTopProducts(),
-      refreshExpenses(),
-      refreshMonthly(),
-      refreshAllProductsTotals()
-    ])
-  } catch (error) {
-    console.error('Error al refrescar datos:', error)
-  }
+  topProductsStoreId.value = storeId
+  topProductsFrom.value = periodFrom.value
+  topProductsTo.value = periodTo.value
+
+  await Promise.all([
+    refreshSummary({
+      storeId,
+      from: periodFrom.value,
+      to: periodTo.value,
+      month: derivedMonth.value
+    }),
+    refreshTopProducts()
+  ])
+
+  lastRefreshTime.value = Date.now()
 }
 
+// Colapsa ráfagas: cambiar de periodo mueve `from` y `to` a la vez, y el
+// perfil del empleado fija la sucursal justo después del montaje. Con el
+// debounce todo eso se resuelve en una sola recarga.
+let refreshTimeoutId: ReturnType<typeof setTimeout> | null = null
 
+function scheduleRefresh(delay = 120) {
+  if (refreshTimeoutId) clearTimeout(refreshTimeoutId)
+  refreshTimeoutId = setTimeout(() => {
+    refreshTimeoutId = null
+    void refreshAllData()
+  }, delay)
+}
 
-
-// --- WATCH EFECTIVO PARA CAMBIOS DE FILTRO ---
-watch(selectedStoreId, () => {
-  console.log(' Cambio de sucursal detectado')
-  refreshAllData()
-})
-
-watch([periodFrom, periodTo], () => {
-  console.log(' Cambio de periodo detectado')
-  refreshAllData()
-})
-
-
-
-
+// Un único watcher para todos los filtros. `me.id` entra porque la primera
+// carga real debe esperar a que se resuelva el perfil (y con él, la sucursal
+// del empleado).
+watch([selectedStoreId, periodFrom, periodTo, () => me.value?.id], () => scheduleRefresh())
 
 // --- MANEJADOR DE VISIBILIDAD ---
-let visibilityTimeoutId: ReturnType<typeof setTimeout> | null = null
-let lastRefreshTime = ref(Date.now())
-const MIN_REFRESH_INTERVAL = 5000
+// Antes eran 5 s, y encima varios composables registraban su propio listener:
+// volver a la pestaña recargaba el dashboard entero en casi cada alt-tab.
+const MIN_REFRESH_INTERVAL = 60_000
 
 const handleVisibilityChange = () => {
-  if (document.visibilityState === 'visible') {
-    const now = Date.now()
-    if (now - lastRefreshTime.value < MIN_REFRESH_INTERVAL) {
-      return
-    }
-    
-    
-    if (visibilityTimeoutId) {
-      clearTimeout(visibilityTimeoutId)
-      visibilityTimeoutId = null
-    }
-    
-    visibilityTimeoutId = setTimeout(() => {
-      refreshAllData()
-      lastRefreshTime.value = Date.now()
-      visibilityTimeoutId = null
-    }, 500)
-  }
+  if (document.visibilityState !== 'visible') return
+  if (Date.now() - lastRefreshTime.value < MIN_REFRESH_INTERVAL) return
+  scheduleRefresh(500)
 }
 
-// --- REFRESCO PERIÓDICO ---
-let intervalId: ReturnType<typeof setInterval> | null = null
-
-
 // --- CICLO DE VIDA ---
-onMounted(async () => {
-  await refreshAllData()
-  lastRefreshTime.value = Date.now()
+onMounted(() => {
+  scheduleRefresh(0)
   document.addEventListener('visibilitychange', handleVisibilityChange)
-    refreshMonthly()
-
 })
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
-  if (visibilityTimeoutId) {
-    clearTimeout(visibilityTimeoutId)
-    visibilityTimeoutId = null
-  }
-  if (intervalId) {
-    clearInterval(intervalId)
-    intervalId = null
+  if (refreshTimeoutId) {
+    clearTimeout(refreshTimeoutId)
+    refreshTimeoutId = null
   }
 })
 
@@ -277,34 +177,13 @@ function stockFor(p: (typeof products.value)[number]) {
   return p.byStore.find((b) => b.storeId === selectedStoreId.value)?.quantity ?? 0
 }
 
-// Mapa producto×sucursal → costo promedio, construido desde el histórico
-// completo (no depende del periodo ni de selectedStoreId).
-
-
-
 // --- VALOR DE ENTRADAS Y SALIDAS ---
-const entryValue = computed(() =>
-  movements.value
-    .filter((m) => m.supplierInvoiceNumber?.trim().toUpperCase() !== 'II')
-    .reduce((sum, m) => sum + Number(m.totalValue), 0)
-)
+// Ambos los agrega ahora el servidor con SUM(), en vez de descargar todas las
+// entradas y todas las ventas del periodo para sumarlas aquí.
+const entryValue = computed(() => summary.value?.entriesValue ?? 0)
 
-const salesValue = computed(() =>
-  sales.value
-    .filter((s) => s.status === 'emitida')
-    .reduce((sum, s) => sum + Number(s.totalAmount), 0)
-)
-
-const totalExpenses = computed(() =>
-  expenses.value.reduce((sum, e) => sum + Number(e.amount), 0)
-)
-
-const totalLoses = computed(() => salesValue.value - entryValue.value)
-
+const totalLoses = computed(() => (allProductsTotals.value?.totalProfit ?? 0) - totalExpensesPaid.value)
 const activeStores = computed(() => stores.value.filter((s) => s.isActive).length)
-const totalCategories = computed(
-  () => new Set(products.value.map((p) => p.categoryId).filter((id) => id != null)).size
-)
 
 const lowStock = computed(() =>
   products.value
@@ -321,13 +200,9 @@ const recentProducts = computed(() => {
   return list.slice(0, 6)
 })
 
-const {
-  data: monthlyInventory,
-  pending: loadingMonthly,
-  month: monthlyMonth,
-  storeId: monthlyStoreId,
-  refresh: refreshMonthly
-} = useMonthlyInventory()
+// El cierre de inventario del mes viene dentro del resumen; ya no es una
+// petición aparte (ni se recalcula dos veces al montar).
+const monthlyInventory = computed(() => summary.value?.monthly ?? null)
 
 // Deriva YYYY-MM desde el filtro de periodo global. Si no hay periodo elegido
 // ("Todo"), cae al mes calendario actual como default razonable.
@@ -336,18 +211,9 @@ const derivedMonth = computed(() => {
   return new Date().toISOString().slice(0, 7)
 })
 
-watch(
-  derivedMonth,
-  (m) => {
-    monthlyMonth.value = m
-    refreshMonthly()
-  },
-  { immediate: true }
-)
 // --- MÉTRICAS ---
 const totalProducts = computed(() => products.value.length)
 const activeProducts = computed(() => products.value.filter((p) => p.isActive).length)
-const totalUnits = computed(() => products.value.reduce((sum, p) => sum + stockFor(p), 0))
 
 const metricsSection1 = computed(() => {
   const all = [
@@ -366,7 +232,7 @@ const metricsSection1 = computed(() => {
       hint: `al cierre de ${derivedMonth.value}`,
       icon: 'i-lucide-boxes',
       color: 'text-info',
-      loading: loadingProducts.value || loadingMonthly.value,
+      loading: loadingProducts.value || loadingSummary.value,
       globalOnly: false
     },
 
@@ -383,48 +249,20 @@ const metricsSection2 = computed(() => {
       hint: 'en el periodo',
       icon: 'i-lucide-arrow-up-right',
       color: 'text-info',
-      loading: loadingMovements.value,
+      loading: loadingSummary.value,
       globalOnly: false
     },
-    {
-      label: 'Ventas',
-      value: currency.format(salesValue.value),
-      hint: 'en el periodo',
-      icon: 'i-lucide-arrow-down-right',
-      color: 'text-error',
-      loading: loadingSales.value,
-      globalOnly: false
-    }
+   
   ]
 
-  if (totalLoses.value < 0) {
-    all.push({
-      label: 'Pérdidas',
-      value: currency.format(totalLoses.value),
-      hint: 'en el periodo',
-      icon: 'i-lucide-alert-circle',
-      color: 'text-error',
-      loading: loadingSales.value || loadingMovements.value,
-      globalOnly: false
-    })
-  } else {
-    all.push({
-      label: 'Ganancias',
-      value: currency.format(totalLoses.value),
-      hint: 'en el periodo',
-      icon: 'i-lucide-check-circle',
-      color: 'text-success',
-      loading: loadingSales.value || loadingMovements.value,
-      globalOnly: false
-    })
-  }
+ 
  all.push({
     label: 'Costo total',
     value: currency.format(allProductsTotals.value?.totalCost ?? 0),
     hint: 'de todos los productos vendidos',
     icon: 'i-lucide-receipt',
     color: 'text-warning',
-    loading: loadingAllProductsTotals.value,
+    loading: loadingSummary.value,
     globalOnly: false
   })
 
@@ -434,7 +272,17 @@ const metricsSection2 = computed(() => {
     hint: 'de todos los productos vendidos',
     icon: 'i-lucide-trending-up',
     color: 'text-info',
-    loading: loadingAllProductsTotals.value,
+    loading: loadingSummary.value,
+    globalOnly: false
+  })
+
+  all.push({
+    label: 'Total gastos Pagados',
+    value: currency.format(totalExpensesPaid.value),
+    hint: 'en el periodo',
+    icon: 'i-lucide-circle-check',
+    color: 'text-success',
+    loading: loadingSummary.value,
     globalOnly: false
   })
 
@@ -444,9 +292,31 @@ const metricsSection2 = computed(() => {
   hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
   icon: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
   color: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'text-success' : 'text-error',
-  loading: loadingAllProductsTotals.value,
+  loading: loadingSummary.value,
   globalOnly: false
 })
+
+ if (totalLoses.value < 0) {
+    all.push({
+      label: 'Pérdidas',
+      value: currency.format(totalLoses.value),
+      hint: 'en el periodo',
+      icon: 'i-lucide-alert-circle',
+      color: 'text-error',
+      loading: loadingSummary.value,
+      globalOnly: false
+    })
+  } else {
+    all.push({
+      label: 'Ganancias',
+      value: currency.format(totalLoses.value),
+      hint: 'en el periodo',
+      icon: 'i-lucide-check-circle',
+      color: 'text-success',
+      loading: loadingSummary.value,
+      globalOnly: false
+    })
+  }
 
 all.push({
   label: 'Gastos fijos',
@@ -454,7 +324,7 @@ all.push({
   hint: 'sin IVA/retenciones · en el periodo',
   icon: 'i-lucide-home',
   color: 'text-warning',
-  loading: loadingExpenses.value,
+  loading: loadingSummary.value,
   globalOnly: false
 })
 
@@ -468,7 +338,7 @@ all.push({
   hint: 'en el periodo',
   icon: 'i-lucide-circle-check',
   color: 'text-success',
-  loading: loadingExpenses.value,
+  loading: loadingSummary.value,
   globalOnly: false
 })
 
@@ -478,7 +348,7 @@ all.push({
   hint: 'por pagar',
   icon: 'i-lucide-clock',
   color: 'text-error',
-  loading: loadingExpenses.value,
+  loading: loadingSummary.value,
   globalOnly: false
 })
 
@@ -488,7 +358,7 @@ all.push({
   hint: 'sin IVA/retenciones · en el periodo',
   icon: 'i-lucide-wrench',
   color: 'text-warning',
-  loading: loadingExpenses.value,
+  loading: loadingSummary.value,
   globalOnly: false
 })
 
@@ -498,7 +368,7 @@ all.push({
   hint: 'en el periodo',
   icon: 'i-lucide-circle-check',
   color: 'text-success',
-  loading: loadingExpenses.value,
+  loading: loadingSummary.value,
   globalOnly: false
 })
 
@@ -508,7 +378,7 @@ all.push({
   hint: 'por pagar',
   icon: 'i-lucide-clock',
   color: 'text-error',
-  loading: loadingExpenses.value,
+  loading: loadingSummary.value,
   globalOnly: false
 })
 
@@ -521,18 +391,6 @@ return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 })
 
 
-
-const isLoading = computed(
-  () =>
-    loadingProducts.value ||
-    loadingMovements.value ||
-    loadingSales.value ||
-    loadingAverageCosts.value ||
-    loadingTopProducts.value ||
-    loadingExpenses.value ||
-    loadingMonthly.value ||
-    loadingAllProductsTotals.value
-)
 
 /**
  * Porcentaje que ocupa el COSTO dentro de la barra (0-100). El resto es
@@ -596,7 +454,16 @@ const filteredTopProducts = computed(() => {
       variant="soft"
       icon="i-lucide-triangle-alert"
       title="No se pudieron cargar los productos"
-      :description="productsError.message"
+      :description="productsError"
+    />
+
+    <UAlert
+      v-if="summaryError"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      title="No se pudieron cargar las métricas del periodo"
+      :description="summaryError"
     />
 
     <!-- Tarjetas de métricas -->
@@ -626,7 +493,7 @@ const filteredTopProducts = computed(() => {
     </div>
   </template>
 
-  <p v-if="loadingMonthly" class="text-xs text-muted py-2 text-center">Calculando…</p>
+  <p v-if="loadingSummary" class="text-xs text-muted py-2 text-center">Calculando…</p>
   <div v-else-if="monthlyInventory" class="grid gap-4 sm:grid-cols-3">
     <div>
       <p class="text-xs text-muted">Inventario al cierre</p>

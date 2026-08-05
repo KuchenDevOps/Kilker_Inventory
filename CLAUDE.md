@@ -193,6 +193,14 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
   - **Aislamiento por sucursal:** el empleado solo opera y solo ve la suya (el backend
     ignora el `storeId` del body y usa `profile.storeId`); el admin ve todas y puede
     filtrar por `?storeId`.
+- ⚠️ **`requireProfile` cachea el perfil** en dos niveles (`server/utils/auth.ts`):
+  por request (`event.context`) y por token con **TTL de 60 s** a nivel de módulo.
+  Sin esto, cada petición autenticada costaba un round-trip HTTP a
+  `/auth/v1/user` de Supabase, y una sola carga del dashboard generaba ~50.
+  **Consecuencia:** desactivar un usuario o cambiarle rol/sucursal tarda hasta 60 s
+  en aplicar, salvo que se llame `invalidateProfileCache(userId)` — ya lo hacen
+  `PATCH /api/users/:id` y `PATCH /api/stores/:id` (este último para la cascada a
+  sus empleados). El caché es **por proceso**: en Vercel cada instancia tiene el suyo.
 
 ---
 
@@ -252,7 +260,7 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
 | **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id` |
 | **Tickets de corrección** | `tickets/index` | `GET/POST /api/tickets`, `POST /api/tickets/:id/resolve` |
 | **Administración** | `tiendas/index`, `empleados/index` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id` |
-| **Reportes / Dashboard** | `dashboard` | `GET /api/reports/monthly-inventory`, `/api/reports/top-products`, `/api/reports/inventory-value`, `/api/average-costs` |
+| **Reportes / Dashboard** | `dashboard` | `GET /api/dashboard/summary` (agregado del dashboard), `GET /api/reports/monthly-inventory`, `/api/reports/top-products`, `/api/reports/inventory-value`, `/api/average-costs` |
 
 - **Auth/UI:** login por Supabase Auth, guard global solo-cliente
   (`app/middleware/auth.global.ts`), nav en secciones plegables filtrada por rol y badge de
@@ -261,6 +269,10 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
 - **Paginación** (`?page&pageSize`, respuesta `{data,total,page,pageSize}`) en products,
   movements, sales, transfers, tickets, cortes, customers, expenses y users. Sin `page` en
   la query, esos endpoints devuelven el arreglo completo (lo usan las exportaciones).
+  ⚠️ **Excepción: `GET /api/sales`.** Sin `?page` recorta a **200 filas** salvo que se
+  mande `?all=true`, y lo hace en silencio (devuelve un arreglo que parece completo). Por
+  eso las exportaciones de `/ventas` salían truncadas. Usar siempre `useAllSales()`
+  (`useInventoryApi.ts`), que manda el flag, en vez de pegarle al endpoint a mano.
 - **Filtros compartidos:** `app/components/FiltroPeriodo.vue` y `FiltroCortePeriodo.vue`
   (Todo/Día/Semana/Mes sobre el periodo concreto elegido + búsqueda `?q`).
 - **Exportación a Excel** (SheetJS, en el cliente) desde catálogo (valor de inventario),
@@ -310,11 +322,17 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   ventas/anulaciones/transferencias/ajustes en una sola vista.
 - **`GET /api/reports/unsold-products` es un stub** (devuelve `'Hello Nitro'`); la UI cubre
   el caso vía `?includeUnsold` de `top-products`.
-- **Limpieza:** `console.log('[DEBUG] …')` en `server/api/reports/top-products.get.ts`;
-  `pdfmake` y `@canvasjs/charts` instalados sin uso; `MODELO-DATOS.md` se mantiene como
-  resumen del esquema real.
-- **Caché de reportes:** `top-products` cachea 60 s **en memoria del proceso**; con varias
-  instancias en Vercel cada una tendrá la suya (mover a Redis si hace falta coherencia).
+- **Limpieza:** `pdfmake` y `@canvasjs/charts` instalados sin uso; `MODELO-DATOS.md` se
+  mantiene como resumen del esquema real.
+- **Caché de reportes:** `top-products` cachea 60 s **en memoria del proceso** (ahora en
+  `server/utils/topProducts.ts`); con varias instancias en Vercel cada una tendrá la suya
+  (mover a Redis si hace falta coherencia). Lo mismo aplica al caché de perfiles de §7.
+- **Composables muertos:** tras mover el dashboard a `/api/dashboard/summary`, quedaron sin
+  usar `useSales`, `useMovements` (ambos en `useInventoryApi.ts`) y `useAllExpenses` (en
+  `useExpenses.ts`). Las páginas usan las variantes paginadas de `usePages.ts`
+  (`useSalesHistory`, `useMovementsHistory`) y `useExpenses`. `useSales` además registra su
+  `watch` y su listener de `visibilitychange` **sin guard** (cada montaje acumulaba otro);
+  está inerte mientras nadie lo llame, pero conviene borrarlo antes de que alguien lo use.
 - **Tickets:** solo `target='factura'`; `movimiento` sigue sin implementarse.
 - **Hardening:** policies de RLS (hoy innecesarias: todo el acceso es server-side),
   migrar `SUPABASE_SERVICE_KEY` → `NUXT_SUPABASE_SECRET_KEY`, confirmar planes/regiones de
