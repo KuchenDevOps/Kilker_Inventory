@@ -443,6 +443,8 @@ export interface ApiExpense {
   /** totalToPay - totalPaid (nunca negativo). */
   balance: number
   paymentStatus: PaymentStatus
+  /** Empresas/personas que pagaron (distintas), tomadas de expense_payments.paid_by. */
+  payers: string[]
   paidAt: string
   note: string | null
   createdByName: string | null

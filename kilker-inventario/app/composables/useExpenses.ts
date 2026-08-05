@@ -13,6 +13,8 @@ export function useExpenses() {
   const from = useState<string | undefined>('expenses-from', () => undefined)
   const to = useState<string | undefined>('expenses-to', () => undefined)
   const search = useState('expenses-search', () => '')
+  /** Búsqueda por quién pagó (expense_payments.paid_by). Filtro aparte de `search`. */
+  const paidBy = useState('expenses-paid-by', () => '')
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
@@ -36,6 +38,7 @@ export function useExpenses() {
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       if (search.value.trim()) q.set('q', search.value.trim())
+      if (paidBy.value.trim()) q.set('paidBy', paidBy.value.trim())
       q.set('page', String(page.value))
       q.set('pageSize', String(pageSize.value))
       const qs = q.toString()
@@ -63,14 +66,31 @@ export function useExpenses() {
   const watching = useState('expenses-watching', () => false)
   if (import.meta.client && !watching.value) {
     watching.value = true
-    watch([storeId, type, from, to, search], () => {   // ← type agregado al watch
-      page.value = 1
-      void refresh()
+    // Volver a la página 1 al cambiar un filtro. Si `page` ya cambió, el
+    // watcher de abajo hace el fetch; llamar refresh() aquí además lo
+    // duplicaría.
+    const resetAndRefresh = () => {
+      if (page.value !== 1) page.value = 1
+      else void refresh()
+    }
+
+    watch([storeId, type, from, to], resetAndRefresh)
+
+    // Los dos campos de texto sí se debouncean: sin esto cada tecla dispara
+    // una petición (y la de `paidBy` además consulta expense_payments).
+    let searchTimeout: ReturnType<typeof setTimeout> | null = null
+    watch([search, paidBy], () => {
+      if (searchTimeout) clearTimeout(searchTimeout)
+      searchTimeout = setTimeout(() => {
+        searchTimeout = null
+        resetAndRefresh()
+      }, 300)
     })
+
     watch(page, () => void refresh())
   }
 
-  return { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, refresh }
+  return { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh }
 }
 
 // composables/useAllExpenses.ts

@@ -3,7 +3,7 @@
 // ───────────────────────────────────────────────
 import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { expenses, expenseItems } from '../../db/schema'
+import { expenses, expenseItems, expensePayments } from '../../db/schema'
 
 const IVA_RATE = 0.16
 
@@ -18,9 +18,16 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const db = useDb()
 
+  // Declarados arriba porque el filtro de `paidBy` puede cortar temprano con
+  // un resultado vacío y necesita saber si la respuesta va envuelta o no.
+  const paginate = query.page != null
+  const page = Math.max(1, Number(query.page) || 1)
+  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
+  const emptyResult = () => (paginate ? { data: [], total: 0, page, pageSize } : [])
+
   const filters = []
   if (profile.role === 'empleado') {
-    if (profile.storeId == null) return []
+    if (profile.storeId == null) return emptyResult()
     filters.push(eq(expenses.storeId, profile.storeId))
   } else if (query.storeId) {
     const storeId = Number(query.storeId)
@@ -60,10 +67,27 @@ export default defineEventHandler(async (event) => {
   }
   // ─── fin del bloque de búsqueda ───
 
+  // ─── Filtro por quién pagó (expense_payments.paid_by) ───
+  // Filtro aparte de `?q` a propósito: buscar "quién pagó" es una pregunta
+  // distinta de buscar proveedor/factura/concepto, y mezclarlas daría falsos
+  // positivos (una empresa puede ser a la vez proveedor y pagadora).
+  // Se resuelve como consulta previa, no como EXISTS correlacionado, por la
+  // misma razón que el match de `reason`: el modo relacional de db.query
+  // re-aliasea las tablas y rompe la referencia.
+  const paidBy = String(query.paidBy ?? '').trim()
+  if (paidBy) {
+    const payerRows = await db
+      .select({ expenseId: expensePayments.expenseId })
+      .from(expensePayments)
+      .where(ilike(expensePayments.paidBy, `%${paidBy}%`))
+
+    const payerExpenseIds = [...new Set(payerRows.map((r) => r.expenseId))]
+    // Nadie con ese nombre pagó nada: resultado vacío, sin ir a la BD otra vez.
+    if (payerExpenseIds.length === 0) return emptyResult()
+    filters.push(inArray(expenses.id, payerExpenseIds))
+  }
+
   const whereClause = filters.length ? and(...filters) : undefined
-  const paginate = query.page != null
-  const page = Math.max(1, Number(query.page) || 1)
-  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
 
   const rows = await db.query.expenses.findMany({
     where: whereClause,
@@ -72,7 +96,7 @@ export default defineEventHandler(async (event) => {
     with: {
       store: { columns: { code: true, name: true } },
       createdBy: { columns: { fullName: true } },
-      payments: { columns: { amount: true } },
+      payments: { columns: { amount: true, paidBy: true } },
       items: { columns: { id: true, reason: true, amount: true } }
     }
   })
@@ -88,6 +112,10 @@ export default defineEventHandler(async (event) => {
 
     const subtotal = Math.round(e.items.reduce((sum, it) => sum + Number(it.amount), 0) * 100) / 100
     const iva = Math.round(subtotal * IVA_RATE * 100) / 100
+
+    // Quién(es) pagaron este gasto, sin repetir. Un gasto en parcialidades
+    // puede haber sido cubierto por varias empresas.
+    const payers = [...new Set(e.payments.map((p) => p.paidBy).filter(Boolean))]
 
     return {
       id: e.id,
@@ -108,6 +136,7 @@ export default defineEventHandler(async (event) => {
       totalPaid,
       balance,
       paymentStatus,
+      payers,
       paidAt: e.paidAt,
       note: e.note,
       createdByName: e.createdBy?.fullName ?? null,

@@ -256,7 +256,7 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
 | **Ventas** | `ventas/nueva`, `ventas/index` | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void` |
 | **Transferencias** | `transferencias/nueva`, `transferencias/index` | `POST/GET /api/transfers`, `GET /api/transfers/:id`, `POST /api/transfers/:id/receive`, `POST /api/transfers/:id/cancel` |
 | **Clientes** | `clientes/index` | `GET/POST /api/customers`, `PATCH/DELETE /api/customers/:id` |
-| **Gastos** | `gastos/index` | `GET/POST /api/expenses`, `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments` |
+| **Gastos** | `gastos/index` | `GET/POST /api/expenses` (filtros `?q`, `?paidBy`, `?type`, `?storeId`, fechas), `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments` |
 | **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id` |
 | **Tickets de corrección** | `tickets/index` | `GET/POST /api/tickets`, `POST /api/tickets/:id/resolve` |
 | **Administración** | `tiendas/index`, `empleados/index` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id` |

@@ -11,6 +11,8 @@
 
 **Regla:** cada vez que el agente **termina de implementar un componente o una función**,
 debe **cerrar ese mensaje** con el nombre del usuario y una carita feliz, exactamente:
+-No generes comentarios largos en el codigo usa una linea para cada funcion y genera un
+menasje con la explicacion del script creado solo si es pedido por el usuario.
 
 ```
 Fernando 😊

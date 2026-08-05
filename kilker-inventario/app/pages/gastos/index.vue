@@ -3,7 +3,7 @@ useHead({ title: 'Gastos · Inventario Kilker' })
 
 import type { ApiExpense, ApiExpensePayment, PaymentMethod } from '~/types/inventario'
 import { PAYMENT_LABELS, EXPENSE_TYPE_LABELS, type ExpenseType } from '~/types/inventario'
-const { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, refresh } = useExpenses()
+const { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -346,12 +346,31 @@ onMounted(() => {
       :description="error"
     />
 
-    <UInput
-      v-model="search"
-      icon="i-lucide-search"
-      placeholder="Buscar por proveedor, factura o concepto…"
-      class="w-full sm:max-w-sm"
-    />
+    <div class="flex flex-wrap gap-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Buscar por proveedor, factura o concepto…"
+        class="w-full sm:max-w-sm"
+      />
+      <UInput
+        v-model="paidBy"
+        icon="i-lucide-building-2"
+        placeholder="Pagado por… (empresa)"
+        class="w-full sm:max-w-xs"
+      >
+        <template v-if="paidBy" #trailing>
+          <UButton
+            icon="i-lucide-x"
+            color="neutral"
+            variant="link"
+            size="xs"
+            aria-label="Limpiar filtro de pagador"
+            @click="paidBy = ''"
+          />
+        </template>
+      </UInput>
+    </div>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">
@@ -374,10 +393,10 @@ onMounted(() => {
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="12" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td colspan="13" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!expenses.length">
-              <td colspan="12" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
+              <td colspan="13" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
             </tr>
             <tr v-else v-for="e in expenses" :key="e.id" class="hover:bg-elevated/50">
               <td class="px-4 py-3 text-muted whitespace-nowrap">{{ e.paidAt }}</td>
@@ -393,6 +412,7 @@ onMounted(() => {
               <td class="px-4 py-3 text-muted">{{ e.storeCode ?? '—' }}</td>
               <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(e.createdAt) }}</td>
               <td class="px-4 py-3 text-muted truncate max-w-48">{{ e.note ?? '—' }}</td>
+             
               <td class="px-4 py-3">
                 <UBadge
                   :label="e.paymentStatus === 'pagado' ? 'Pagado' : e.paymentStatus === 'parcial' ? 'Parcial' : 'Pendiente'"
