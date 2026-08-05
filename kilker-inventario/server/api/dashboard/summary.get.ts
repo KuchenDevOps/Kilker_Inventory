@@ -1,9 +1,7 @@
 // ───────────────────────────────────────────────
 //  GET /api/dashboard/summary — todas las métricas del dashboard en 1 request
 // ───────────────────────────────────────────────
-// Antes el dashboard se descargaba ventas, entradas y gastos COMPLETOS del
-// periodo para sumarlos en JavaScript: 7 peticiones autenticadas y megabytes
-// de payload. Aquí se agrega en SQL y se devuelve solo el resultado.
+
 //
 // Reglas replicadas tal cual de los endpoints originales, para que los
 // números no cambien:

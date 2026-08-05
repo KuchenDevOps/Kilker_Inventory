@@ -275,7 +275,15 @@ const metricsSection2 = computed(() => {
     loading: loadingSummary.value,
     globalOnly: false
   })
-
+   all.push({
+  label: 'Utilidad total',
+  value: currency.format(allProductsTotals.value?.totalProfit ?? 0),
+  hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
+  icon: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
+  color: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'text-success' : 'text-error',
+  loading: loadingSummary.value,
+  globalOnly: false
+})
   all.push({
     label: 'Total gastos Pagados',
     value: currency.format(totalExpensesPaid.value),
@@ -286,15 +294,7 @@ const metricsSection2 = computed(() => {
     globalOnly: false
   })
 
-   all.push({
-  label: 'Utilidad total',
-  value: currency.format(allProductsTotals.value?.totalProfit ?? 0),
-  hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
-  icon: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
-  color: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'text-success' : 'text-error',
-  loading: loadingSummary.value,
-  globalOnly: false
-})
+
 
  if (totalLoses.value < 0) {
     all.push({
