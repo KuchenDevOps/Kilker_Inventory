@@ -216,6 +216,61 @@ export function useSales() {
   return { sales, pending, error, status, storeId, productId, from, to, search, refresh }
 }
 
+export interface AllSalesFilters {
+  status?: 'todas' | 'emitida' | 'anulada'
+  storeId?: number
+  productId?: number
+  from?: string
+  to?: string
+  q?: string
+}
+
+
+
+export function useAllSales() {
+  const sales = useState<ApiSale[]>('all-sales', () => [])
+  const pending = useState('all-sales-pending', () => false)
+  const error = useState<string | null>('all-sales-error', () => null)
+  const supabase = useSupabaseClient()
+
+  async function refresh(filters: AllSalesFilters = {}): Promise<ApiSale[]> {
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        sales.value = []
+        return []
+      }
+
+      const q = new URLSearchParams()
+      if (filters.status && filters.status !== 'todas') q.set('status', filters.status)
+      if (filters.storeId) q.set('storeId', String(filters.storeId))
+      if (filters.productId) q.set('productId', String(filters.productId))
+      if (filters.from) q.set('from', filters.from)
+      if (filters.to) q.set('to', filters.to)
+      if (filters.q?.trim()) q.set('q', filters.q.trim())
+      // Sin esto el endpoint recorta a 200 filas en silencio.
+      q.set('all', 'true')
+
+      const result = await $fetch<ApiSale[]>(`/api/sales?${q.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      sales.value = Array.isArray(result) ? result : []
+      return sales.value
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      sales.value = []
+      throw e
+    } finally {
+      pending.value = false
+    }
+  }
+
+  return { sales, pending, error, refresh }
+}
+
 /** Historial de entradas de stock; el backend filtra por rol. Filtros storeId/fecha/q recargan. */
 export function useMovements() {
    const movements = useState<ApiMovement[]>('movements', () => [])

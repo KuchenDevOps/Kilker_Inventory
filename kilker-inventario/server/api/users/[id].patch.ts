@@ -115,5 +115,10 @@ export default defineEventHandler(async (event) => {
     .set(patch)
     .where(eq(profiles.id, id))
     .returning()
+
+  // requireProfile cachea el perfil por token durante un rato: sin esto, un
+  // cambio de rol/sucursal o una baja tardarían hasta el TTL en aplicarse.
+  invalidateProfileCache(id)
+
   return updated
 })
