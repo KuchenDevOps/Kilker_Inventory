@@ -10,6 +10,7 @@ import {
 
 definePageMeta({ requiresRole: 'admin' })
 useHead({ title: 'Nuevo producto · Inventario Kilker' })
+const apiFetch = useApiFetch()
 
 const toast = useToast()
 const { me } = useMe()
