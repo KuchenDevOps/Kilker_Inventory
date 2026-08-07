@@ -69,6 +69,99 @@ const paged = computed(() => {
 // Si cambia la búsqueda, vuelve a la página 1 (si no, puedes quedar en una página vacía).
 watch(search, () => { page.value = 1 })
 
+// ───────────────────────────────────────────────
+//  EXISTENCIA A UNA FECHA DE CORTE
+// ───────────────────────────────────────────────
+// `inventory.quantity` (lo que trae /api/products) es solo el saldo de HOY.
+// Para ver el inventario "hasta" una fecha hay que reconstruir el kardex, que
+// es lo que hace /api/reports/inventory-value?asOf=. Ese cálculo es caro
+// (recorre todo el histórico), así que se dispara SOLO cuando el usuario
+// activa el filtro: la carga normal de la página no lo toca.
+interface AsOfRow {
+  productId: number
+  storeId: number
+  endingUnits: number
+  endingValue: number
+}
+
+const asOfMode = ref(false)
+const asOfDate = ref(new Date().toISOString().slice(0, 10))
+const asOfRows = ref<AsOfRow[] | null>(null)
+const asOfLoading = ref(false)
+const asOfError = ref<string | null>(null)
+
+/** Fin del día seleccionado: el endpoint compara con `<` estricto, así que se
+ *  manda el inicio del día siguiente para incluir todo el día elegido. */
+const asOfCutoff = computed(() => {
+  const end = new Date(`${asOfDate.value}T00:00:00`)
+  end.setDate(end.getDate() + 1)
+  return end.toISOString()
+})
+
+async function loadAsOf() {
+  asOfLoading.value = true
+  asOfError.value = null
+  try {
+    asOfRows.value = await apiFetch<AsOfRow[]>('/api/reports/inventory-value', {
+      query: { asOf: asOfCutoff.value }
+    })
+  } catch (e) {
+    asOfError.value = apiErrorMessage(e)
+    asOfRows.value = null
+  } finally {
+    asOfLoading.value = false
+  }
+}
+
+// Sin `immediate`: al entrar a la página no se pide nada.
+watch([asOfMode, asOfDate], () => {
+  if (!asOfMode.value) {
+    asOfRows.value = null
+    asOfError.value = null
+    return
+  }
+  void loadAsOf()
+})
+
+/** productId -> existencia y desglose por sucursal a la fecha de corte. */
+const asOfByProduct = computed(() => {
+  const map = new Map<number, { totalUnits: number; byStore: AsOfRow[] }>()
+  for (const r of asOfRows.value ?? []) {
+    let entry = map.get(r.productId)
+    if (!entry) {
+      entry = { totalUnits: 0, byStore: [] }
+      map.set(r.productId, entry)
+    }
+    entry.totalUnits += r.endingUnits
+    entry.byStore.push(r)
+  }
+  for (const entry of map.values()) {
+    entry.totalUnits = Math.round(entry.totalUnits * 1000) / 1000
+    entry.byStore.sort((a, b) => a.storeId - b.storeId)
+  }
+  return map
+})
+
+/** Existencia total a mostrar. El endpoint omite los productos sin existencia
+ *  a esa fecha, así que "ausente" significa 0. */
+function displayStock(productId: number, currentStock: number) {
+  if (!asOfMode.value) return currentStock
+  return asOfByProduct.value.get(productId)?.totalUnits ?? 0
+}
+
+/** Desglose por sucursal. En modo fecha viene del corte (con su valor FIFO ya
+ *  calculado); en modo actual, del inventario vivo y el valor sale del caché. */
+function displayByStore(product: { id: number; byStore: Array<{ storeId: number; quantity: number }> }) {
+  if (!asOfMode.value) {
+    return product.byStore.map((b) => ({ storeId: b.storeId, quantity: b.quantity, value: null as number | null }))
+  }
+  return (asOfByProduct.value.get(product.id)?.byStore ?? []).map((r) => ({
+    storeId: r.storeId,
+    quantity: r.endingUnits,
+    value: r.endingValue as number | null
+  }))
+}
+
 interface InventoryValueByStore { storeId: number; endingUnits: number; endingValue: number }
 interface InventoryValueResult {
   productId: number
@@ -91,7 +184,8 @@ async function loadInventoryValue(productId: number) {
 }
 
 watch(expandedId, (id) => {
-  if (id != null) loadInventoryValue(id)
+  // En modo fecha de corte el valor ya viene en la respuesta del filtro.
+  if (id != null && !asOfMode.value) loadInventoryValue(id)
 })
 
 const exportingInventoryValue = ref(false)
@@ -99,13 +193,12 @@ const exportingInventoryValue = ref(false)
 async function exportInventoryValue() {
   exportingInventoryValue.value = true
   try {
+    // Si hay filtro de fecha activo, se exporta ese mismo corte (si no, sería
+    // confuso: ver una fecha en pantalla y bajar el inventario de hoy).
     const rows = await apiFetch<Array<{ productId: number; storeId: number; endingUnits: number; endingValue: number }>>(
-      '/api/reports/inventory-value'
+      '/api/reports/inventory-value',
+      asOfMode.value ? { query: { asOf: asOfCutoff.value } } : {}
     )
-    if (!rows.length) {
-      toast.add({ title: 'Sin inventario para exportar', color: 'warning', icon: 'i-lucide-info' })
-      return
-    }
 
     const productMap = new Map(products.value.map((p) => [p.id, p]))
 
@@ -114,6 +207,19 @@ async function exportInventoryValue() {
     for (const r of rows) {
       if (!rowsByStore.has(r.storeId)) rowsByStore.set(r.storeId, [])
       rowsByStore.get(r.storeId)!.push(r)
+    }
+
+    // El endpoint omite productos sin existencia (no aparecen en `rows`), así
+    // que los agregamos a mano en un grupo aparte con existencia/valor 0 para
+    // que el Excel refleje TODO el catálogo, no solo lo que tiene stock.
+    const productsWithStock = new Set(rows.map((r) => r.productId))
+    const productsWithoutStock = products.value
+      .filter((p) => !productsWithStock.has(p.id))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    if (!rows.length && !productsWithoutStock.length) {
+      toast.add({ title: 'Sin productos para exportar', color: 'warning', icon: 'i-lucide-info' })
+      return
     }
 
     // Orden de sucursales: por código, para que el Excel salga consistente
@@ -176,6 +282,32 @@ async function exportInventoryValue() {
       grandTotalValue += storeTotalValue
     }
 
+    // Grupo aparte para productos sin ninguna existencia (no cuentan para
+    // el total general de unidades/valor, porque su aporte es cero).
+    if (productsWithoutStock.length) {
+      for (const p of productsWithoutStock) {
+        sheetRows.push({
+          SKU: p.sku,
+          Producto: p.name,
+          Categoría: p.category ?? '',
+          Sucursal: 'Sin existencias',
+          Existencia: 0,
+          'Valor de inventario': 0
+        })
+      }
+
+      sheetRows.push({
+        SKU: '',
+        Producto: '',
+        Categoría: '',
+        Sucursal: 'Subtotal Sin existencias',
+        Existencia: 0,
+        'Valor de inventario': 0
+      })
+
+      sheetRows.push({ SKU: '', Producto: '', Categoría: '', Sucursal: '', Existencia: null, 'Valor de inventario': null })
+    }
+
     // Quita el separador en blanco final antes del total general.
     sheetRows.pop()
 
@@ -193,7 +325,7 @@ async function exportInventoryValue() {
     sheet['!cols'] = [{ wch: 14 }, { wch: 30 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 16 }]
     XLSX.utils.book_append_sheet(workbook, sheet, 'Inventario valorizado')
 
-    const fecha = new Date().toISOString().slice(0, 10)
+    const fecha = asOfMode.value ? asOfDate.value : new Date().toISOString().slice(0, 10)
     XLSX.writeFile(workbook, `inventario-valorizado_${fecha}.xlsx`)
   } catch (e) {
     toast.add({
@@ -215,7 +347,8 @@ async function exportInventoryValue() {
       <div>
         <h1 class="text-2xl font-semibold">Catálogo</h1>
         <p class="text-sm text-muted">
-          {{ total }} productos · existencias
+          {{ total }} productos ·
+          {{ asOfMode ? `existencias al ${asOfDate}` : 'existencias actuales' }}
         </p>
       </div>
        <div v-if="isAdmin" class="flex items-center gap-2">
@@ -249,11 +382,43 @@ async function exportInventoryValue() {
       :description="error"
     />
 
-    <UInput
-      v-model="search"
-      icon="i-lucide-search"
-      placeholder="Buscar por SKU, nombre, categoría o color…"
-      class="w-full sm:max-w-sm"
+    <div class="flex flex-wrap items-center gap-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Buscar por SKU, nombre, categoría o color…"
+        class="w-full sm:max-w-sm"
+      />
+
+      <UButtonGroup>
+        <UButton
+          label="Actual"
+          :color="!asOfMode ? 'primary' : 'neutral'"
+          :variant="!asOfMode ? 'solid' : 'outline'"
+          @click="asOfMode = false"
+        />
+        <UButton
+          label="A una fecha"
+          :color="asOfMode ? 'primary' : 'neutral'"
+          :variant="asOfMode ? 'solid' : 'outline'"
+          @click="asOfMode = true"
+        />
+      </UButtonGroup>
+
+      <UInput v-if="asOfMode" v-model="asOfDate" type="date" class="w-44" />
+
+      <span v-if="asOfMode && asOfLoading" class="text-sm text-muted">
+        Calculando inventario…
+      </span>
+    </div>
+
+    <UAlert
+      v-if="asOfError"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      title="No se pudo calcular el inventario a esa fecha"
+      :description="asOfError"
     />
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
@@ -266,7 +431,9 @@ async function exportInventoryValue() {
               <th class="px-4 py-3 font-medium">Categoría</th>
               <th class="px-4 py-3 font-medium">Unidad</th>
               <th class="px-4 py-3 font-medium text-right">Precio</th>
-              <th class="px-4 py-3 font-medium text-right">Existencia</th>
+              <th class="px-4 py-3 font-medium text-right">
+                {{ asOfMode ? `Existencia al ${asOfDate}` : 'Existencia' }}
+              </th>
               <th class="px-4 py-3 font-medium text-center">Estado</th>
               <th class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
@@ -293,7 +460,10 @@ async function exportInventoryValue() {
                   <td class="px-4 py-3 text-right tabular-nums">
                     {{ currency.format(Number(p.price)) }}
                   </td>
-                  <td class="px-4 py-3 text-right tabular-nums">{{ p.totalStock }}</td>
+                  <td class="px-4 py-3 text-right tabular-nums">
+                    <USkeleton v-if="asOfMode && asOfLoading" class="h-4 w-12 ml-auto" />
+                    <template v-else>{{ displayStock(p.id, p.totalStock) }}</template>
+                  </td>
                   <td class="px-4 py-3 text-center">
                     <UBadge
                       :label="p.isActive ? 'Activo' : 'Inactivo'"
@@ -358,18 +528,22 @@ async function exportInventoryValue() {
                           <th class="px-8 py-2 font-medium">Código</th>
                           <th class="px-4 py-2 font-medium">Sucursal</th>
                           <th class="px-4 py-2 font-medium text-right">Existencia</th>
+                          <th class="px-4 py-2 font-medium text-right">Valor de inventario</th>
                         </tr>
                       </thead>
                      <tbody class="divide-y divide-default">
-                        <tr v-if="!p.byStore.length">
+                        <tr v-if="!displayByStore(p).length">
                           <td colspan="4" class="px-8 py-3 text-muted">Sin existencias registradas.</td>
                         </tr>
-                        <tr v-for="b in p.byStore" :key="b.storeId">
+                        <tr v-for="b in displayByStore(p)" :key="b.storeId">
                           <td class="px-8 py-3 font-mono text-xs">{{ storeMap.get(b.storeId)?.code ?? '?' }}</td>
                           <td class="px-4 py-3 text-muted">{{ storeMap.get(b.storeId)?.name ?? `Sucursal ${b.storeId}` }}</td>
                           <td class="px-4 py-3 text-right tabular-nums">{{ b.quantity }}</td>
                           <td class="px-4 py-3 text-right tabular-nums">
-                            <template v-if="inventoryValueCache[p.id] === 'loading'">
+                            <template v-if="b.value !== null">
+                              {{ currency.format(b.value) }}
+                            </template>
+                            <template v-else-if="inventoryValueCache[p.id] === 'loading'">
                               <USkeleton class="h-4 w-16 ml-auto" />
                             </template>
                             <template v-else-if="inventoryValueCache[p.id] === 'error'">
