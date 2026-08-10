@@ -6,6 +6,7 @@
 import type {
   ApiCategory,
   ApiCorte,
+  ApiKit,
   ApiMovement,
   ApiProduct,
   ApiSale,
@@ -87,6 +88,49 @@ export function useAllProducts() {
 
   return { products, pending, error, refresh }
 }
+/** Kits de venta con sus productos y precios. Requiere sesión (cualquier rol). */
+export function useKits() {
+  const kits = useState<ApiKit[]>('kits', () => [])
+  const pending = useState('kits-pending', () => false)
+  const error = useState<string | null>('kits-error', () => null)
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      kits.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        kits.value = []
+        return
+      }
+      // Sin 'page' en la query -> el endpoint regresa el arreglo completo
+      kits.value = await $fetch<ApiKit[]>('/api/kits', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      kits.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  const watching = useState('kits-watching', () => false)
+  if (import.meta.client && !watching.value) {
+    watching.value = true
+    watch(user, () => void refresh(), { immediate: true })
+  }
+
+  return { kits, pending, error, refresh }
+}
+
 /** Tiendas/sucursales. */
 export function useStores() {
   return useFetch<ApiStore[]>('/api/stores', {

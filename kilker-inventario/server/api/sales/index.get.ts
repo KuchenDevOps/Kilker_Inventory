@@ -84,7 +84,17 @@ export default defineEventHandler(async (event) => {
       customer: { columns: { name: true } },
       createdBy: { columns: { fullName: true } },
       items: {
-        columns: { id: true, productId: true, quantity: true, unitPrice: true, lineTotal: true },
+        columns: {
+          id: true,
+          productId: true,
+          quantity: true,
+          unitPrice: true,
+          lineTotal: true,
+          kitId: true,
+          kitSku: true,
+          kitName: true,
+          kitQuantity: true
+        },
         with: { product: { columns: { name: true, sku: true, unit: true } } }
       }
     }
@@ -114,6 +124,8 @@ export default defineEventHandler(async (event) => {
     paymentMethod: inv.paymentMethod,
     discountPct: inv.discountPct,
     discountAmount: inv.discountAmount,
+    // No hay columna de subtotal: se deriva (el descuento es un % del subtotal).
+    subtotalAmount: String(Number(inv.totalAmount) + Number(inv.discountAmount)),
     totalAmount: inv.totalAmount,
     note: inv.note,
     itemCount: inv.items.length,
@@ -130,7 +142,11 @@ export default defineEventHandler(async (event) => {
       unit: it.product?.unit ?? null,
       quantity: it.quantity,
       unitPrice: it.unitPrice,
-      lineTotal: it.lineTotal
+      lineTotal: it.lineTotal,
+      kitId: it.kitId,
+      kitSku: it.kitSku,
+      kitName: it.kitName,
+      kitQuantity: it.kitQuantity
     }))
   }))
   if (!paginate) return mapped

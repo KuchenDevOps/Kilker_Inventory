@@ -162,6 +162,20 @@
       "when": 1785439530205,
       "tag": "0022_stale_martin_li",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786124122876,
+      "tag": "0023_brave_moondragon",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786376060816,
+      "tag": "0024_hard_jack_murdock",
+      "breakpoints": true
     }
   ]
 }

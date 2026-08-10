@@ -2,6 +2,10 @@
 //  POST /api/sales — registrar una venta
 // ───────────────────────────────────────────────
 // En transacción: crea factura + líneas, movimientos de venta y baja inventario.
+//
+// KITS: un kit no tiene inventario propio. Al vender se EXPLOTA en líneas de
+// producto normales (kardex y stock son siempre por producto), cada una marcada
+
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import {
@@ -10,6 +14,7 @@ import {
   invoiceItems,
   invoices,
   products,
+  salesKits,
   stockMovements,
   stores
 } from '../../db/schema'
@@ -19,6 +24,11 @@ interface SaleItem {
   quantity: number
   unitPrice?: number
 }
+/** Un kit vendido: se explota en sus productos al registrar la venta. */
+interface SaleKit {
+  kitId: number
+  quantity: number
+}
 interface SaleBody {
   storeId: number
   customerId?: number | null
@@ -26,8 +36,21 @@ interface SaleBody {
   note?: string
   paymentMethod?: string
   items: SaleItem[]
+  kits?: SaleKit[]
   discount?: number
   issuedAt?: string
+}
+
+/** Línea ya resuelta (suelta o explotada de un kit), antes de fijar precio. */
+interface PendingLine {
+  productId: number
+  quantity: number
+  /** Precio explícito; si es undefined se usa el de catálogo. */
+  unitPrice?: number
+  kitId: number | null
+  kitSku: string | null
+  kitName: string | null
+  kitQuantity: number | null
 }
 
 export default defineEventHandler(async (event) => {
@@ -36,14 +59,27 @@ export default defineEventHandler(async (event) => {
 
   const storeId = Number(body?.storeId)
   const items = Array.isArray(body?.items) ? body.items : []
-  if (!storeId || items.length === 0) {
-    throw createError({ statusCode: 400, statusMessage: 'storeId e items son requeridos' })
+  const kits = Array.isArray(body?.kits) ? body.kits : []
+  // Una venta puede ser solo de productos sueltos, solo de kits, o mezcla.
+  if (!storeId || (items.length === 0 && kits.length === 0)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'storeId y al menos un producto o kit son requeridos'
+    })
   }
   for (const it of items) {
     if (!Number(it.productId) || !(Number(it.quantity) > 0)) {
       throw createError({
         statusCode: 400,
         statusMessage: 'Cada item requiere productId y quantity (>0)'
+      })
+    }
+  }
+  for (const k of kits) {
+    if (!Number(k.kitId) || !(Number(k.quantity) > 0)) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Cada kit requiere kitId y quantity (>0)'
       })
     }
   }
@@ -106,14 +142,72 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    const lines: { productId: number; quantity: number; unitPrice: number; lineTotal: number }[] = []
-    for (const it of items) {
-      const productId = Number(it.productId)
-      const quantity = Number(it.quantity)
+    // ─── 1. Resolver las líneas pedidas: sueltas + explotadas de cada kit ───
+    const pendingLines: PendingLine[] = items.map((it) => ({
+      productId: Number(it.productId),
+      quantity: Number(it.quantity),
+      unitPrice: it.unitPrice != null ? Number(it.unitPrice) : undefined,
+      kitId: null,
+      kitSku: null,
+      kitName: null,
+      kitQuantity: null
+    }))
+
+    for (const k of kits) {
+      const kitId = Number(k.kitId)
+      const kitQuantity = Number(k.quantity)
+
+      const kit = await tx.query.salesKits.findFirst({
+        where: eq(salesKits.id, kitId),
+        with: { items: { with: { product: { columns: { price: true } } } } }
+      })
+      if (!kit) {
+        throw createError({ statusCode: 404, statusMessage: `El kit ${kitId} no existe` })
+      }
+      if (!kit.isActive) {
+        throw createError({ statusCode: 400, statusMessage: `El kit ${kit.sku} está inactivo` })
+      }
+      if (!kit.items.length) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: `El kit ${kit.sku} no tiene productos`
+        })
+      }
+
+      for (const ki of kit.items) {
+        // Precio del kit: el pactado en la línea del kit o, si es null, el de
+        // catálogo del producto. El nombre y SKU se guardan como snapshot.
+        const unitPrice =
+          ki.unitPrice != null ? Number(ki.unitPrice) : Number(ki.product?.price ?? 0)
+        pendingLines.push({
+          productId: ki.productId,
+          quantity: Number(ki.quantity) * kitQuantity,
+          unitPrice,
+          kitId: kit.id,
+          kitSku: kit.sku,
+          kitName: kit.name,
+          kitQuantity
+        })
+      }
+    }
+
+    // ─── 2. Validar existencia UNA sola vez por producto, con la cantidad
+    //         TOTAL requerida. Un mismo producto puede venir suelto y además
+    //         dentro de un kit en la misma venta: validar cada línea por
+    //         separado dejaría pasar una venta que en conjunto no alcanza. ───
+    const requiredByProduct = new Map<number, number>()
+    for (const l of pendingLines) {
+      requiredByProduct.set(l.productId, (requiredByProduct.get(l.productId) ?? 0) + l.quantity)
+    }
+
+    const productById = new Map<number, { sku: string; price: string }>()
+
+    for (const [productId, quantity] of requiredByProduct) {
       const product = await tx.query.products.findFirst({ where: eq(products.id, productId) })
       if (!product) {
         throw createError({ statusCode: 404, statusMessage: `Producto ${productId} no existe` })
       }
+      productById.set(productId, { sku: product.sku, price: product.price })
 
       // Validación estándar: contra el inventario actual (siempre se hace).
       const inv = await tx.query.inventory.findFirst({
@@ -171,10 +265,22 @@ export default defineEventHandler(async (event) => {
           })
         }
       }
-
-      const unitPrice = it.unitPrice != null ? Number(it.unitPrice) : Number(product.price)
-      lines.push({ productId, quantity, unitPrice, lineTotal: quantity * unitPrice })
     }
+
+    // ─── 3. Fijar precio definitivo de cada línea ───
+    const lines = pendingLines.map((l) => {
+      const unitPrice = l.unitPrice ?? Number(productById.get(l.productId)?.price ?? 0)
+      return {
+        productId: l.productId,
+        quantity: l.quantity,
+        unitPrice,
+        lineTotal: l.quantity * unitPrice,
+        kitId: l.kitId,
+        kitSku: l.kitSku,
+        kitName: l.kitName,
+        kitQuantity: l.kitQuantity
+      }
+    })
 
     const subTotal = lines.reduce((sum, l) => sum + l.lineTotal, 0)
     const discountPct = Math.min(Math.max(Number(body?.discount ?? 0), 0), 100)
@@ -216,7 +322,11 @@ export default defineEventHandler(async (event) => {
         productId: l.productId,
         quantity: String(l.quantity),
         unitPrice: String(l.unitPrice),
-        lineTotal: String(l.lineTotal)
+        lineTotal: String(l.lineTotal),
+        kitId: l.kitId,
+        kitSku: l.kitSku,
+        kitName: l.kitName,
+        kitQuantity: l.kitQuantity == null ? null : String(l.kitQuantity)
       })
       await tx.insert(stockMovements).values({
         productId: l.productId,

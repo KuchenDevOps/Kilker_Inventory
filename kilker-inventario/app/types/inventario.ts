@@ -58,6 +58,35 @@ export interface ApiProductDetail {
   isActive: boolean
 }
 
+/** Línea de un kit tal como la resuelve `GET /api/kits` (precios ya en number). */
+export interface ApiKitItem {
+  id: number
+  productId: number
+  sku: string | null
+  name: string | null
+  unit: ProductUnit | null
+  productIsActive: boolean
+  quantity: number
+  listUnitPrice: number
+  overrideUnitPrice: number | null
+  unitPrice: number
+  lineTotal: number
+  listLineTotal: number
+}
+
+/** Kit de venta tal como lo lista `GET /api/kits`. */
+export interface ApiKit {
+  id: number
+  sku: string
+  name: string
+  isActive: boolean
+  createdAt: string
+  itemCount: number
+  items: ApiKitItem[]
+  totalPrice: number
+
+}
+
 /** Tienda/sucursal tal como la devuelve `GET /api/stores`. */
 export interface ApiStore {
   id: number
@@ -264,6 +293,12 @@ export interface ApiSaleItem {
   quantity: string
   unitPrice: string
   lineTotal: string
+  /** Kit del que salió esta línea; null si se vendió suelta. Snapshot al vender. */
+  kitId: number | null
+  kitSku: string | null
+  kitName: string | null
+  /** Cuántos kits se vendieron (igual en todas las líneas del mismo kit). */
+  kitQuantity: string | null
 }
 
 /** Detalle completo de una venta (`GET /api/sales/:id`). */
