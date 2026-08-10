@@ -12,6 +12,7 @@ useHead({ title: 'Nueva venta · Inventario Kilker' })
 const toast = useToast()
 const { me } = useMe()
 const { products } = useAllProducts()   // ← antes: const { data: products } = useProducts()
+const { kits } = useKits()
 const { data: stores } = useStores()
 const { customers, pending, error, refresh } = useAllCustomers()
 const apiFetch = useApiFetch()
@@ -98,9 +99,56 @@ function lineTotal(line: Line): number {
   return effectivePrice(line) * (line.quantity ?? 0)
 }
 
+// ───────────────────────────────────────────────
+//  KITS
+// ───────────────────────────────────────────────
+// Un kit se vende como una unidad, pero el backend lo explota en líneas de
+// producto (el inventario es siempre por producto). Aquí solo se elige el kit
+// y cuántos; los productos y precios se muestran de forma informativa.
+type KitLine = {
+  kitId: number | undefined
+  quantity: number | undefined
+}
+
+const kitLines = reactive<KitLine[]>([])
+
+const kitItems = computed(() =>
+  kits.value
+    .filter((k) => k.isActive)
+    .map((k) => ({ label: `${k.sku} — ${k.name}`, value: k.id }))
+)
+
+function kitOf(id: number | undefined) {
+  return id == null ? undefined : kits.value.find((k) => k.id === id)
+}
+
+/** Importe de una línea de kit: precio del kit × cuántos kits. */
+function kitLineTotal(line: KitLine): number {
+  const kit = kitOf(line.kitId)
+  if (!kit) return 0
+  return kit.totalPrice * (line.quantity ?? 0)
+}
+
+function addKitLine() {
+  kitLines.push({ kitId: undefined, quantity: 1 })
+}
+function removeKitLine(i: number) {
+  kitLines.splice(i, 1)
+}
+
+const validKitLines = computed(() =>
+  kitLines.filter((l) => l.kitId != null && (l.quantity ?? 0) > 0)
+)
+
 const IVA_RATE = 0.16
 
-const subtotal = computed(() => lines.reduce((sum, l) => sum + lineTotal(l), 0))
+// El subtotal incluye productos sueltos y kits; el descuento es un % sobre ese
+// subtotal, así que aplica por igual a todo — incluidos los kits completos.
+const subtotal = computed(
+  () =>
+    lines.reduce((sum, l) => sum + lineTotal(l), 0) +
+    kitLines.reduce((sum, l) => sum + kitLineTotal(l), 0)
+)
 const grandTotal = computed(() => subtotal.value * (1 - discount.value / 100))
 const discountTotal = computed(() => subtotal.value - grandTotal.value)
 
@@ -118,7 +166,10 @@ const validLines = computed(() =>
   lines.filter((l) => l.productId != null && (l.quantity ?? 0) > 0)
 )
 const canSubmit = computed(
-  () => canOperate.value && storeId.value != null && validLines.value.length > 0
+  () =>
+    canOperate.value &&
+    storeId.value != null &&
+    (validLines.value.length > 0 || validKitLines.value.length > 0)
 )
 
 async function onSubmit() {
@@ -157,6 +208,10 @@ async function onSubmit() {
           quantity: l.quantity,
           unitPrice: l.unitPrice ?? undefined,
         })),
+        kits: validKitLines.value.map((l) => ({
+          kitId: l.kitId,
+          quantity: l.quantity,
+        })),
       },
     })
     await refreshNuxtData('products')
@@ -178,6 +233,7 @@ async function onSubmit() {
       quantity: undefined,
       unitPrice: undefined,
     })
+    kitLines.splice(0, kitLines.length)
   } catch (e) {
     toast.add({
       title: 'No se pudo registrar la venta',
@@ -440,6 +496,112 @@ async function quickCreateCustomer() {
               {{ UNIT_LABELS[productOf(line.productId)!.unit] }} · existencia total:
               {{ stockInStore(line.productId) }}
             </p>
+          </div>
+        </div>
+
+        <USeparator />
+
+        <!-- Kits -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="font-semibold">Kits</h2>
+              <p class="text-xs text-muted">
+                Al vender un kit se descuentan del inventario los productos que lo forman.
+              </p>
+            </div>
+            <UButton
+              type="button"
+              size="xs"
+              variant="soft"
+              icon="i-lucide-plus"
+              :disabled="!canOperate || !kitItems.length"
+              @click="addKitLine"
+            >
+              Agregar kit
+            </UButton>
+          </div>
+
+          <p v-if="!kitItems.length" class="text-sm text-muted">
+            No hay kits activos disponibles.
+          </p>
+
+          <div
+            v-for="(kitLine, i) in kitLines"
+            :key="`kit-${i}`"
+            class="rounded-lg border border-default p-3 space-y-3"
+          >
+            <div class="grid items-end gap-3 sm:grid-cols-12">
+              <UFormField label="Kit" class="sm:col-span-7">
+                <USelectMenu
+                  v-model="kitLine.kitId"
+                  :items="kitItems"
+                  value-key="value"
+                  :disabled="!canOperate"
+                  searchable
+                  placeholder="Buscar kit por SKU o nombre…"
+                  class="w-full"
+                />
+              </UFormField>
+
+              <UFormField label="Cantidad" class="sm:col-span-3">
+                <UInputNumber
+                  v-model="kitLine.quantity"
+                  :min="0"
+                  :disabled="!canOperate"
+                  placeholder="1"
+                  class="w-full"
+                />
+              </UFormField>
+
+              <div class="sm:col-span-2 flex items-center justify-between gap-2">
+                <span class="text-sm tabular-nums">
+                  {{ currency.format(kitLineTotal(kitLine)) }}
+                </span>
+                <UButton
+                  type="button"
+                  size="xs"
+                  color="error"
+                  variant="ghost"
+                  icon="i-lucide-trash-2"
+                  :disabled="!canOperate"
+                  @click="removeKitLine(i)"
+                />
+              </div>
+            </div>
+
+            <!-- Productos que componen el kit (informativo) -->
+            <div v-if="kitOf(kitLine.kitId)" class="rounded-md bg-elevated/40 p-3">
+              <table class="w-full text-xs">
+                <thead class="text-muted">
+                  <tr class="text-left">
+                    <th class="py-1 font-medium">Producto</th>
+                    <th class="py-1 font-medium text-right">Cant. c/kit</th>
+                    <th class="py-1 font-medium text-right">Total</th>
+                    <th class="py-1 font-medium text-right">P. unit.</th>
+                    <th class="py-1 font-medium text-right">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="it in kitOf(kitLine.kitId)!.items" :key="it.id">
+                    <td class="py-1">
+                      <span class="font-mono">{{ it.sku ?? '—' }}</span>
+                      · {{ it.name ?? `Producto ${it.productId}` }}
+                    </td>
+                    <td class="py-1 text-right tabular-nums">{{ it.quantity }}</td>
+                    <td class="py-1 text-right tabular-nums">
+                      {{ it.quantity * (kitLine.quantity ?? 0) }}
+                    </td>
+                    <td class="py-1 text-right tabular-nums">
+                      {{ currency.format(it.unitPrice) }}
+                    </td>
+                    <td class="py-1 text-right tabular-nums">
+                      {{ currency.format(it.lineTotal * (kitLine.quantity ?? 0)) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 

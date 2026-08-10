@@ -3,8 +3,8 @@
 > **Fuente de verdad: [`kilker-inventario/server/db/schema.ts`](../kilker-inventario/server/db/schema.ts).**
 > Este documento es un **resumen legible** de ese archivo; si discrepan, manda el código.
 > Motor: **PostgreSQL (Supabase)**. Esquema definido y migrado **solo** con Drizzle +
-> `drizzle-kit` (migraciones en `kilker-inventario/server/db/migrations/`, `0000`–`0022`).
-> Idioma: español. Última actualización: 2026-08-04.
+> `drizzle-kit` (migraciones en `kilker-inventario/server/db/migrations/`, `0000`–`0024`).
+> Idioma: español. Última actualización: 2026-08-10.
 
 ---
 
@@ -41,7 +41,7 @@
 
 ---
 
-## Tablas (17)
+## Tablas (19)
 
 ### Base
 
@@ -65,8 +65,15 @@
 | Tabla | Contenido |
 |-------|-----------|
 | `invoices` | Comprobante interno (sin CFDI/SAT). `folio` (único por tienda, `<CODE>-0001`), `store_id`, `customer_id`, `created_by`, `status`, `payment_method`, `channel`, `discount_pct`/`discount_amount`, `total_amount`, `issued_at` (admite fecha retroactiva) y `voided_at/by/reason`. |
-| `invoice_items` | Líneas. `quantity`, `unit_price` (**snapshot** al vender), `line_total`. `discount_type`/`discount_value`/`tax_rate` existen pero hoy no se llenan (el IVA se calcula en la app, 16% informativo). |
+| `invoice_items` | Líneas. `quantity`, `unit_price` (**snapshot** al vender), `line_total`. `discount_type`/`discount_value`/`tax_rate` existen pero hoy no se llenan (el IVA se calcula en la app, 16% informativo). **Venta por kit:** `kit_id` + `kit_sku`/`kit_name` (**snapshot**) + `kit_quantity` marcan de qué kit salió la línea; null = producto suelto. |
 | `customers` | Clientes. `name`, `rfc` (**único**), `address`, `email`, `phone`, `is_active`. |
+
+### Kits de venta
+
+| Tabla | Contenido |
+|-------|-----------|
+| `sales_kits` | Cabecera del kit. `sku` (**único**), `name`, `is_active`. **No tiene inventario propio.** |
+| `sales_kit_items` | Productos que lo componen. `quantity` y `unit_price` **nullable**: null = la línea hereda `products.price`. Único `(kit_id, product_id)`; borrado en cascada con el kit. |
 
 ### Transferencias entre sucursales
 
@@ -98,7 +105,10 @@ stores 1───* inventory · stock_movements · invoices · transfers(from/to
 
 categories 1───* categories (jerarquía)  ·  categories 1───* products
 
-products 1───* inventory · stock_movements · invoice_items · transfer_items
+products 1───* inventory · stock_movements · invoice_items · transfer_items · sales_kit_items
+
+sales_kits 1───* sales_kit_items (cascade)
+           1───* invoice_items (kit_id: líneas que salieron de ese kit)
 
 customers 1───* invoices 1───* invoice_items
 invoices  1───* stock_movements (type='venta' / 'anulacion')
@@ -123,6 +133,9 @@ erDiagram
     CATEGORIES ||--o{ PRODUCTS : agrupa
     PRODUCTS ||--o{ INVENTORY : se_almacena
     PRODUCTS ||--o{ STOCK_MOVEMENTS : mueve
+    PRODUCTS ||--o{ SALES_KIT_ITEMS : compone
+    SALES_KITS ||--o{ SALES_KIT_ITEMS : contiene
+    SALES_KITS ||--o{ INVOICE_ITEMS : se_vende_como
     CUSTOMERS ||--o{ INVOICES : compra
     INVOICES ||--o{ INVOICE_ITEMS : contiene
     INVOICES ||--o{ STOCK_MOVEMENTS : genera

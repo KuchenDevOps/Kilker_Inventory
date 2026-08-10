@@ -55,6 +55,8 @@ export default defineEventHandler(async (event) => {
     paymentMethod: invoice.paymentMethod,
     discountPct: invoice.discountPct,
     discountAmount: invoice.discountAmount,
+    // No hay columna de subtotal: se deriva (el descuento es un % del subtotal).
+    subtotalAmount: String(Number(invoice.totalAmount) + Number(invoice.discountAmount)),
     totalAmount: invoice.totalAmount,
     note: invoice.note,
     itemCount: invoice.items.length,
@@ -71,7 +73,13 @@ export default defineEventHandler(async (event) => {
       unit: it.product?.unit ?? null,
       quantity: it.quantity,
       unitPrice: it.unitPrice,
-      lineTotal: it.lineTotal
+      lineTotal: it.lineTotal,
+      // Kit del que vino la línea (null = producto suelto). Son los valores
+      // snapshot guardados al vender, no el kit actual.
+      kitId: it.kitId,
+      kitSku: it.kitSku,
+      kitName: it.kitName,
+      kitQuantity: it.kitQuantity
     }))
   }
 })

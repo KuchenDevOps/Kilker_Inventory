@@ -114,6 +114,9 @@ export default defineEventHandler(async (event) => {
         createdBy: profile.id
       })
       .returning()
+    if (!expense) {
+      throw createError({ statusCode: 500, statusMessage: 'No se pudo crear el gasto' })
+    }
 
     const insertedItems = await tx
       .insert(expenseItems)

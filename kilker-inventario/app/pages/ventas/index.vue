@@ -1,6 +1,6 @@
 <!-- pages/ventas/index.vue -->
 <script setup lang="ts">
-import type { ApiSale, ApiSaleDetail } from '~/types/inventario'
+import type { ApiSale, ApiSaleDetail, ApiSaleItem } from '~/types/inventario'
 import * as XLSX from 'xlsx'
 const { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
 
@@ -299,6 +299,69 @@ async function exportAll() {
 const IVA_RATE = 0.16
 
 const detailIva = computed(() => (detail.value ? Number(detail.value.totalAmount) * IVA_RATE : 0))
+
+// ───────────────────────────────────────────────
+//  TICKET: agrupar las líneas por kit
+// ───────────────────────────────────────────────
+// El backend guarda un kit explotado en líneas de producto marcadas con
+// kit_id/kit_sku/kit_name. Para el ticket las volvemos a juntar: cada kit se
+// muestra como un bloque con su nombre, SKU y los productos que lo componen
+// con su precio. Un producto suelto es un grupo de kitId null con una línea.
+interface TicketGroup {
+  key: string
+  kitId: number | null
+  kitSku: string | null
+  kitName: string | null
+  kitQuantity: number
+  items: ApiSaleItem[]
+  /** Importe del grupo antes del descuento de la venta. */
+  subtotal: number
+}
+
+const detailGroups = computed<TicketGroup[]>(() => {
+  const groups: TicketGroup[] = []
+  const byKit = new Map<number, TicketGroup>()
+
+  for (const it of detail.value?.items ?? []) {
+    if (it.kitId == null) {
+      groups.push({
+        key: `p-${it.id}`,
+        kitId: null,
+        kitSku: null,
+        kitName: null,
+        kitQuantity: 0,
+        items: [it],
+        subtotal: Number(it.lineTotal)
+      })
+      continue
+    }
+
+    let group = byKit.get(it.kitId)
+    if (!group) {
+      group = {
+        key: `k-${it.kitId}`,
+        kitId: it.kitId,
+        kitSku: it.kitSku,
+        kitName: it.kitName,
+        kitQuantity: Number(it.kitQuantity ?? 1),
+        items: [],
+        subtotal: 0
+      }
+      byKit.set(it.kitId, group)
+      groups.push(group)
+    }
+    group.items.push(it)
+    group.subtotal += Number(it.lineTotal)
+  }
+
+  return groups
+})
+
+/** Factor del descuento de la venta (1 = sin descuento). Se aplica igual a
+ *  todas las líneas, así que un kit se descuenta completo. */
+const detailDiscountFactor = computed(
+  () => 1 - Number(detail.value?.discountPct ?? 0) / 100
+)
 
 const route = useRoute()
 
@@ -625,15 +688,63 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-default">
-                  <tr v-for="it in detail.items" :key="it.id">
-                    <td class="py-2">
-                      <p class="font-medium">{{ it.productName ?? '—' }}</p>
-                      <p class="text-xs text-muted font-mono">{{ it.productSku ?? '—' }}</p>
-                    </td>
-                    <td class="py-2 text-right tabular-nums">{{ it.quantity }}</td>
-                    <td class="py-2 text-right tabular-nums">{{ currency.format(Number(it.unitPrice)) }}</td>
-                    <td class="py-2 text-right tabular-nums">{{ currency.format(Number(it.lineTotal)) }}</td>
-                  </tr>
+                  <template v-for="g in detailGroups" :key="g.key">
+                    <!-- Cabecera del kit -->
+                    <tr v-if="g.kitId !== null" class="bg-elevated/40">
+                      <td class="py-2">
+                        <div class="flex items-center gap-2">
+                          <UIcon name="i-lucide-boxes" class="size-4 text-primary shrink-0" />
+                          <div>
+                            <p class="font-medium">{{ g.kitName ?? 'Kit' }}</p>
+                            <p class="text-xs text-muted font-mono">{{ g.kitSku ?? '—' }}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="py-2 text-right tabular-nums">{{ g.kitQuantity }}</td>
+                      <td class="py-2 text-right text-xs text-muted">kit</td>
+                      <td class="py-2 text-right tabular-nums font-medium">
+                        {{ currency.format(g.subtotal) }}
+                      </td>
+                    </tr>
+
+                    <!-- Líneas: productos del kit (indentados) o producto suelto -->
+                    <tr v-for="it in g.items" :key="it.id">
+                      <td :class="g.kitId !== null ? 'py-1 pl-6' : 'py-2'">
+                        <p :class="g.kitId !== null ? 'text-xs' : 'font-medium'">
+                          {{ it.productName ?? '—' }}
+                        </p>
+                        <p class="text-xs text-muted font-mono">{{ it.productSku ?? '—' }}</p>
+                      </td>
+                      <td
+                        class="text-right tabular-nums"
+                        :class="g.kitId !== null ? 'py-1 text-xs' : 'py-2'"
+                      >
+                        {{ it.quantity }}
+                      </td>
+                      <td
+                        class="text-right tabular-nums"
+                        :class="g.kitId !== null ? 'py-1 text-xs' : 'py-2'"
+                      >
+                        {{ currency.format(Number(it.unitPrice)) }}
+                      </td>
+                      <td
+                        class="text-right tabular-nums"
+                        :class="g.kitId !== null ? 'py-1 text-xs text-muted' : 'py-2'"
+                      >
+                        {{ currency.format(Number(it.lineTotal)) }}
+                      </td>
+                    </tr>
+
+                    <!-- El descuento de la venta aplica al kit completo -->
+                    <tr v-if="g.kitId !== null && detailDiscountFactor < 1">
+                      <td colspan="3" class="py-1 pl-6 text-xs text-muted">
+                        Kit con {{ Number(detail.discountPct) }}% de descuento
+                      </td>
+                      <td class="py-1 text-right tabular-nums text-xs font-medium">
+                        {{ currency.format(g.subtotal * detailDiscountFactor) }}
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </table>
             </div>
