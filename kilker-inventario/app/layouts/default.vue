@@ -21,6 +21,7 @@ const allNav: NavEntry[] = [
     icon: 'i-lucide-package',
     children: [
       { label: 'Catálogo', to: '/productos', icon: 'i-lucide-package' },
+      { label: 'Kits', to: '/kits', icon: 'i-lucide-boxes' },
       {
         label: 'Nuevo producto',
         to: '/productos/nuevo',

@@ -139,6 +139,36 @@ export const products = pgTable('products', {
   ...timestamps()
 }).enableRLS()
 
+export const salesKits = pgTable('sales_kits', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  sku: text('sku').notNull().unique(),
+  name: text('name').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  ...timestamps()
+}).enableRLS()
+
+export const salesKitItems = pgTable('sales_kit_items', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .generatedAlwaysAsIdentity(),
+  kitId: bigint('kit_id', { mode: 'number' })
+    .notNull()
+    .references(() => salesKits.id, { onDelete: 'cascade' }),
+  productId: bigint('product_id', { mode: 'number' })
+    .notNull()
+    .references(() => products.id),
+  quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+  unitPrice: numeric('unit_price', { precision: 14, scale: 2 }),
+  ...timestamps()
+}, (table) => [
+  unique('sales_kit_items_kit_product_unique').on(table.kitId, table.productId),
+  index('sales_kit_items_kit_id_idx').on(table.kitId),
+  index('sales_kit_items_product_id_idx').on(table.productId)
+]).enableRLS()
+
+
 /** Saldo materializado de existencias por (producto × tienda). */
 export const inventory = pgTable(
   'inventory',
@@ -232,11 +262,23 @@ export const invoiceItems = pgTable('invoice_items', {
   lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull(),
   discountType: discountType('discount_type'),
   discountValue: numeric('discount_value', { precision: 14, scale: 2 }),
-  taxRate: numeric('tax_rate', { precision: 5, scale: 2 })
+  taxRate: numeric('tax_rate', { precision: 5, scale: 2 }),
+  // ─── Venta por kit ───
+  // Un kit NO tiene inventario propio: al vender se "explota" en líneas de
+  // producto normales (el kardex y el stock son siempre por producto). Estas
+  // columnas solo marcan de qué kit vino cada línea, para reagruparlas en el
+  // ticket. sku/name son snapshot al momento de la venta, igual que unit_price:
+  // renombrar un kit después no debe cambiar tickets ya emitidos.
+  kitId: bigint('kit_id', { mode: 'number' }).references(() => salesKits.id),
+  kitSku: text('kit_sku'),
+  kitName: text('kit_name'),
+  /** Cuántos kits se vendieron (se repite en todas las líneas del mismo kit). */
+  kitQuantity: numeric('kit_quantity', { precision: 14, scale: 3 })
 }, (table) => [
   index('idx_invoice_items_product_id').on(table.productId),
   // este también te conviene: tu exists correlaciona por invoiceId
   index('idx_invoice_items_invoice_id').on(table.invoiceId),
+  index('idx_invoice_items_kit_id').on(table.kitId),
 ]).enableRLS()
 
 /** Libro APPEND-ONLY (kardex). Fuente de verdad; cantidad e importe con signo. */
@@ -549,7 +591,23 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   inventory: many(inventory),
   stockMovements: many(stockMovements),
   invoiceItems: many(invoiceItems),
-  transferItems: many(transferItems)
+  transferItems: many(transferItems),
+  kitItems: many(salesKitItems)
+}))
+
+export const salesKitsRelations = relations(salesKits, ({ many }) => ({
+  items: many(salesKitItems)
+}))
+
+export const salesKitItemsRelations = relations(salesKitItems, ({ one }) => ({
+  kit: one(salesKits, {
+    fields: [salesKitItems.kitId],
+    references: [salesKits.id]
+  }),
+  product: one(products, {
+    fields: [salesKitItems.productId],
+    references: [products.id]
+  })
 }))
 
 export const customersRelations = relations(customers, ({ many }) => ({
@@ -596,6 +654,10 @@ export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
   product: one(products, {
     fields: [invoiceItems.productId],
     references: [products.id]
+  }),
+  kit: one(salesKits, {
+    fields: [invoiceItems.kitId],
+    references: [salesKits.id]
   })
 }))
 
@@ -758,3 +820,7 @@ export type ExpensePayment = typeof expensePayments.$inferSelect
 export type NewExpensePayment = typeof expensePayments.$inferInsert
 export type ExpenseItem = typeof expenseItems.$inferSelect
 export type NewExpenseItem = typeof expenseItems.$inferInsert
+export type SalesKit = typeof salesKits.$inferSelect
+export type NewSalesKit = typeof salesKits.$inferInsert
+export type SalesKitItem = typeof salesKitItems.$inferSelect
+export type NewSalesKitItem = typeof salesKitItems.$inferInsert

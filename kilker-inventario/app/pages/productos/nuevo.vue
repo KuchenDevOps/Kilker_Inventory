@@ -15,9 +15,26 @@ const apiFetch = useApiFetch()
 const toast = useToast()
 const { me } = useMe()
 const { data: categories } = useCategories()
-const { products } = useProducts()  
+const { products } = useProducts()
+// Para el picker de productos dentro de un kit necesitamos el catálogo
+// completo (no paginado) — useProducts() puede venir paginado y truncar la
+// lista, ver nota en memoria del proyecto sobre useAllProducts().
+const { products: allProducts } = useAllProducts()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
+// ───────────────────────────────────────────────
+//  TOGGLE: ¿estamos dando de alta un producto o un kit?
+// ───────────────────────────────────────────────
+const mode = ref<'product' | 'kit'>('product')
+
+const currency = new Intl.NumberFormat('es-MX', {
+  style: 'currency',
+  currency: 'MXN'
+})
+
+// ───────────────────────────────────────────────
+//  FORMULARIO: PRODUCTO (sin cambios respecto a la versión anterior)
+// ───────────────────────────────────────────────
 type FormState = {
   sku: string
   name: string
@@ -130,6 +147,147 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
 function onReset() {
   Object.assign(state, emptyState())
 }
+
+// ───────────────────────────────────────────────
+//  FORMULARIO: KIT
+// ───────────────────────────────────────────────
+type KitItemRow = {
+  productId: number | undefined
+  quantity: number | undefined
+  unitPrice: number | undefined
+}
+
+type KitFormState = {
+  sku: string
+  name: string
+  isActive: boolean
+  items: KitItemRow[]
+}
+
+function emptyKitItem(): KitItemRow {
+  return { productId: undefined, quantity: undefined, unitPrice: undefined }
+}
+
+function emptyKitState(): KitFormState {
+  return {
+    sku: '',
+    name: '',
+    isActive: true,
+    items: [emptyKitItem()]
+  }
+}
+
+const kitState = reactive<KitFormState>(emptyKitState())
+const kitSubmitting = ref(false)
+
+const productPickerItems = computed(() =>
+  allProducts.value
+    .filter((p) => p.isActive)
+    .map((p) => ({ label: `${p.sku} — ${p.name}`, value: p.id }))
+)
+const productMap = computed(() => new Map(allProducts.value.map((p) => [p.id, p])))
+
+function addKitItem() {
+  kitState.items.push(emptyKitItem())
+}
+function removeKitItem(index: number) {
+  kitState.items.splice(index, 1)
+  if (!kitState.items.length) kitState.items.push(emptyKitItem())
+}
+
+/** Precio efectivo de una línea: el override si existe, si no el del producto. */
+function lineUnitPrice(row: KitItemRow): number | null {
+  if (row.unitPrice != null) return row.unitPrice
+  const product = row.productId ? productMap.value.get(row.productId) : undefined
+  return product ? Number(product.price) : null
+}
+
+/** Suma de todas las líneas válidas — el precio de venta del kit completo. */
+const kitEstimatedPrice = computed(() => {
+  return kitState.items.reduce((sum, row) => {
+    const unitPrice = lineUnitPrice(row)
+    if (unitPrice == null || row.quantity == null) return sum
+    return sum + unitPrice * row.quantity
+  }, 0)
+})
+
+function validateKit(s: KitFormState): FormError[] {
+  const errors: FormError[] = []
+  if (!s.sku.trim()) {
+    errors.push({ name: 'sku', message: 'El SKU es obligatorio.' })
+  }
+  if (!s.name.trim()) {
+    errors.push({ name: 'name', message: 'El nombre es obligatorio.' })
+  }
+
+  const validRows = s.items.filter((r) => r.productId != null)
+  if (!validRows.length) {
+    errors.push({ name: 'items', message: 'Agrega al menos un producto al kit.' })
+  }
+
+  const seen = new Set<number>()
+  s.items.forEach((row, i) => {
+    if (row.productId == null) return
+    if (seen.has(row.productId)) {
+      errors.push({ name: `items.${i}.productId`, message: 'Este producto ya está en el kit.' })
+    }
+    seen.add(row.productId)
+
+    if (row.quantity == null || row.quantity <= 0) {
+      errors.push({ name: `items.${i}.quantity`, message: 'La cantidad debe ser mayor a 0.' })
+    }
+    if (row.unitPrice != null && row.unitPrice < 0) {
+      errors.push({ name: `items.${i}.unitPrice`, message: 'No puede ser negativo.' })
+    }
+  })
+
+  return errors
+}
+
+async function onSubmitKit(event: FormSubmitEvent<KitFormState>) {
+  kitSubmitting.value = true
+  const d = event.data
+
+  const payload = {
+    sku: d.sku.trim(),
+    name: d.name.trim(),
+    isActive: d.isActive,
+    items: d.items
+      .filter((r) => r.productId != null)
+      .map((r) => ({
+        productId: r.productId as number,
+        quantity: r.quantity as number,
+        unitPrice: r.unitPrice ?? null
+      }))
+  }
+
+  try {
+    const created = await apiFetch<{ id: number; sku: string; name: string }>('/api/kits', {
+      method: 'POST',
+      body: payload
+    })
+    toast.add({
+      title: 'Kit creado',
+      description: `${created.sku} — ${created.name}`,
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    await navigateTo('/productos')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo crear el kit',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    kitSubmitting.value = false
+  }
+}
+
+function onResetKit() {
+  Object.assign(kitState, emptyKitState())
+}
 </script>
 
 <template>
@@ -144,10 +302,16 @@ function onReset() {
       >
         Volver al catálogo
       </UButton>
-      <h1 class="text-2xl font-semibold">Nuevo producto</h1>
+      <h1 class="text-2xl font-semibold">
+        {{ mode === 'product' ? 'Nuevo producto' : 'Nuevo kit' }}
+      </h1>
       <p class="text-sm text-muted">
-        Alta de un producto del catálogo. Los campos con
-        <span class="text-error">*</span> son obligatorios.
+        {{
+          mode === 'product'
+            ? 'Alta de un producto del catálogo.'
+            : 'Alta de un kit de productos'
+        }}
+        Los campos con <span class="text-error">*</span> son obligatorios.
       </p>
     </header>
 
@@ -157,7 +321,7 @@ function onReset() {
       variant="soft"
       icon="i-lucide-lock"
       title="Acceso restringido"
-      description="Solo un administrador puede dar de alta productos."
+      description="Solo un administrador puede dar de alta productos o kits."
       class="mb-6"
     />
     <UAlert
@@ -166,18 +330,36 @@ function onReset() {
       variant="soft"
       icon="i-lucide-log-in"
       title="Inicia sesión"
-      description="Necesitas iniciar sesión como administrador para crear productos."
+      description="Necesitas iniciar sesión como administrador para crear productos o kits."
       class="mb-6"
     />
 
+    <UButtonGroup class="mb-6">
+      <UButton
+        label="Producto"
+        icon="i-lucide-package"
+        :color="mode === 'product' ? 'primary' : 'neutral'"
+        :variant="mode === 'product' ? 'solid' : 'outline'"
+        @click="mode = 'product'"
+      />
+      <UButton
+        label="Kit"
+        icon="i-lucide-boxes"
+        :color="mode === 'kit' ? 'primary' : 'neutral'"
+        :variant="mode === 'kit' ? 'solid' : 'outline'"
+        @click="mode = 'kit'"
+      />
+    </UButtonGroup>
+
+    <!-- ─────────────────────────  PRODUCTO  ───────────────────────── -->
     <UForm
+      v-if="mode === 'product'"
       :state="state"
       :validate="validate"
       :disabled="!isAdmin"
       class="space-y-6"
       @submit="onSubmit"
     >
-      <!-- Identificación -->
       <UCard>
         <template #header>
           <h2 class="font-semibold">Identificación</h2>
@@ -211,7 +393,6 @@ function onReset() {
         </div>
       </UCard>
 
-      <!-- Datos comerciales -->
       <UCard>
         <template #header>
           <h2 class="font-semibold">Datos comerciales</h2>
@@ -302,6 +483,143 @@ function onReset() {
           :disabled="!isAdmin"
         >
           Guardar producto
+        </UButton>
+      </div>
+    </UForm>
+
+    <!-- ───────────────────────────  KIT  ─────────────────────────── -->
+    <UForm
+      v-else
+      :state="kitState"
+      :validate="validateKit"
+      :disabled="!isAdmin"
+      class="space-y-6"
+      @submit="onSubmitKit"
+    >
+      <UCard>
+        <template #header>
+          <h2 class="font-semibold">Identificación del kit</h2>
+        </template>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="SKU" name="sku" required>
+            <UInput v-model="kitState.sku" placeholder="KIT-PINTOR-01" class="w-full" />
+          </UFormField>
+
+          <UFormField label="Nombre" name="name" required>
+            <UInput
+              v-model="kitState.name"
+              placeholder="Kit pintor básico"
+              class="w-full"
+            />
+          </UFormField>
+        </div>
+
+        <USeparator class="my-4" />
+
+        <UFormField name="isActive">
+          <USwitch
+            v-model="kitState.isActive"
+            label="Kit activo"
+            description="Los kits inactivos no se pueden vender."
+          />
+        </UFormField>
+      </UCard>
+
+      <UCard>
+        <template #header>
+          <div class="flex items-center justify-between">
+            <h2 class="font-semibold">Productos del kit</h2>
+            <span class="text-sm text-muted">
+              Precio estimado: <strong>{{ currency.format(kitEstimatedPrice) }}</strong>
+            </span>
+          </div>
+        </template>
+
+        <UFormField name="items" :error="undefined">
+          <div class="space-y-3">
+            <div
+              v-for="(row, index) in kitState.items"
+              :key="index"
+              class="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto] items-start"
+            >
+              <UFormField :name="`items.${index}.productId`">
+                <USelectMenu
+                  v-model="row.productId"
+                  :items="productPickerItems"
+                  value-key="value"
+                  searchable
+                  placeholder="Selecciona un producto"
+                  class="w-90"
+                />
+              </UFormField>
+
+              <UFormField :name="`items.${index}.quantity`">
+                <UInputNumber
+                  v-model="row.quantity"
+                  :min="0"
+                  :step="1"
+                  placeholder="Cant."
+                  class="w-24"
+                />
+              </UFormField>
+
+              <UFormField :name="`items.${index}.unitPrice`">
+                <UInputNumber
+                  v-model="row.unitPrice"
+                  :min="0"
+                  :step="0.01"
+                  :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
+                  :placeholder="
+                    row.productId
+                      ? `${currency.format(Number(productMap.get(row.productId)?.price ?? 0))}`
+                      : 'Precio'
+                  "
+                  class="w-36"
+                />
+              </UFormField>
+
+              <UButton
+                type="button"
+                icon="i-lucide-trash-2"
+                color="error"
+                variant="ghost"
+                :disabled="kitState.items.length === 1 && !row.productId"
+                @click="removeKitItem(index)"
+              />
+            </div>
+          </div>
+        </UFormField>
+
+        <UButton
+          type="button"
+          icon="i-lucide-plus"
+          variant="soft"
+          color="neutral"
+          class="mt-4"
+          @click="addKitItem"
+        >
+          Agregar producto
+        </UButton>
+
+        <p class="text-xs text-muted mt-3">
+          Deja el precio en blanco para usar el precio normal del producto. Llénalo
+          solo si este producto debe venderse a otro precio dentro de este kit.
+        </p>
+      </UCard>
+
+      <div class="flex flex-wrap justify-end gap-3">
+        <UButton type="button" variant="ghost" color="neutral" @click="onResetKit">
+          Limpiar
+        </UButton>
+        <UButton
+          type="submit"
+          icon="i-lucide-save"
+          color="primary"
+          :loading="kitSubmitting"
+          :disabled="!isAdmin"
+        >
+          Guardar kit
         </UButton>
       </div>
     </UForm>
