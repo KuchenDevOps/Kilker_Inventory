@@ -9,8 +9,41 @@ const isAdmin = computed(() => me.value?.role === 'admin')
 
 
 const apiFetch = useApiFetch()
+const toast = useToast()
 
 const expandedId = ref<number | null>(null)
+
+// ─────────────────────────────────────────────
+//  Borrado de kit
+// ─────────────────────────────────────────────
+// Mismo patrón que /productos: confirmación inline en la propia fila. El
+// backend rechaza con 409 si el kit ya se vendió; en ese caso la salida es
+// desactivarlo con el switch del modal de edición.
+const confirmingDeleteId = ref<number | null>(null)
+const deleting = ref(false)
+
+async function deleteKit(id: number) {
+  deleting.value = true
+  try {
+    await apiFetch(`/api/kits/${id}`, { method: 'DELETE' })
+    await refresh()
+    toast.add({
+      title: 'Kit borrado',
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    confirmingDeleteId.value = null
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo borrar el kit',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    deleting.value = false
+  }
+}
 
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -255,22 +288,51 @@ async function submitEdit() {
                     />
                   </td>
                   <td class="px-4 py-3 text-right">
-                    <div class="flex justify-end gap-1">
-                      <UButton
-                        v-if="isAdmin"
-                        size="xs"
-                        color="neutral"
-                        variant="ghost"
-                        icon="i-lucide-pencil"
-                        @click="openEdit(k)"
-                      />
-                      <UButton
-                        size="xs"
-                        :color="expandedId === k.id ? 'primary' : 'neutral'"
-                        variant="ghost"
-                        :icon="expandedId === k.id ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-                        @click="expandedId = expandedId === k.id ? null : k.id"
-                      />
+                    <div class="flex items-center justify-end gap-1">
+                      <template v-if="confirmingDeleteId === k.id">
+                        <span class="text-xs text-muted mr-1">¿Borrar?</span>
+                        <UButton
+                          size="xs"
+                          color="error"
+                          variant="soft"
+                          icon="i-lucide-check"
+                          :loading="deleting"
+                          @click="deleteKit(k.id)"
+                        />
+                        <UButton
+                          size="xs"
+                          color="neutral"
+                          variant="ghost"
+                          icon="i-lucide-x"
+                          :disabled="deleting"
+                          @click="confirmingDeleteId = null"
+                        />
+                      </template>
+                      <template v-else>
+                        <template v-if="isAdmin">
+                          <UButton
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            icon="i-lucide-pencil"
+                            @click="openEdit(k)"
+                          />
+                          <UButton
+                            size="xs"
+                            color="error"
+                            variant="ghost"
+                            icon="i-lucide-trash-2"
+                            @click="confirmingDeleteId = k.id"
+                          />
+                        </template>
+                        <UButton
+                          size="xs"
+                          :color="expandedId === k.id ? 'primary' : 'neutral'"
+                          variant="ghost"
+                          :icon="expandedId === k.id ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                          @click="expandedId = expandedId === k.id ? null : k.id"
+                        />
+                      </template>
                     </div>
                   </td>
                 </tr>
