@@ -41,7 +41,9 @@ const timestamps = () => ({
 // ───────────────────────────────────────────────
 //  ENUMS
 // ───────────────────────────────────────────────
-export const userRole = pgEnum('user_role', ['admin', 'empleado'])
+// `observador`: solo consulta. Ve todas las sucursales (como admin) pero no
+// puede escribir nada; el candado está en requireProfile (server/utils/auth.ts).
+export const userRole = pgEnum('user_role', ['admin', 'empleado', 'observador'])
 
 export const movementType = pgEnum('movement_type', [
   'venta',

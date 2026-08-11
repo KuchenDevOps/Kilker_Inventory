@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import type { ApiStore } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
+// El observador entra en modo consulta: ve la lista, no las acciones.
+definePageMeta({ requiresRole: ['admin', 'observador'] })
 useHead({ title: 'Sucursales · Inventario Kilker' })
+
+const { me } = useMe()
+const canEdit = computed(() => me.value?.role === 'admin')
 
 const toast = useToast()
 const { data: stores, pending, error, refresh } = useStores()
@@ -144,7 +148,13 @@ async function toggleActive(s: ApiStore) {
           {{ stores.length }} sucursal(es) · administra las tiendas de la empresa
         </p>
       </div>
-      <UButton icon="i-lucide-plus" color="primary" :disabled="isNew" @click="openNew">
+      <UButton
+        v-if="canEdit"
+        icon="i-lucide-plus"
+        color="primary"
+        :disabled="isNew"
+        @click="openNew"
+      >
         Nueva sucursal
       </UButton>
     </header>
@@ -237,7 +247,7 @@ async function toggleActive(s: ApiStore) {
                 />
               </td>
               <td class="px-4 py-3">
-                <div class="flex items-center justify-end gap-1">
+                <div v-if="canEdit" class="flex items-center justify-end gap-1">
                   <UButton
                     size="xs"
                     color="neutral"

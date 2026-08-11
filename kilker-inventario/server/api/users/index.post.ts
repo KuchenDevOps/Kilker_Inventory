@@ -5,13 +5,16 @@
 // confirmado) y su fila en `profiles`. Si el profile falla, revierte el usuario.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { profiles, stores } from '../../db/schema'
+import { profiles, stores, userRole } from '../../db/schema'
+
+/** Fuente de verdad de los roles: el propio enum de Postgres. */
+type UserRole = (typeof userRole.enumValues)[number]
 
 interface NewUserBody {
   email?: string
   password?: string
   fullName?: string
-  role?: 'admin' | 'empleado'
+  role?: UserRole
   storeId?: number | null
 }
 
@@ -42,13 +45,13 @@ export default defineEventHandler(async (event) => {
   if (!fullName) {
     throw createError({ statusCode: 400, statusMessage: 'El nombre es obligatorio' })
   }
-  if (role !== 'admin' && role !== 'empleado') {
+  if (!role || !userRole.enumValues.includes(role)) {
     throw createError({ statusCode: 400, statusMessage: 'Rol inválido' })
   }
 
   const db = useDb()
 
-  // Admin = global (sin tienda); empleado = requiere sucursal existente.
+  // Admin y observador = globales (sin tienda); empleado = requiere sucursal.
   let storeId: number | null = null
   if (role === 'empleado') {
     storeId = Number(body?.storeId)

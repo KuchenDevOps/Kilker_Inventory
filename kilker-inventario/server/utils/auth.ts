@@ -26,6 +26,23 @@ import { useDb } from '../db'
 import { profiles } from '../db/schema'
 
 export type SessionProfile = typeof profiles.$inferSelect
+export type UserRole = SessionProfile['role']
+
+/**
+ * Roles de SOLO LECTURA: se les rechaza cualquier método que no sea GET.
+ *
+ * El candado vive aquí y no endpoint por endpoint a propósito. Hay 14 rutas de
+ * escritura que llaman `requireProfile(event)` sin exigir rol (o sea, cualquier
+ * usuario autenticado escribe); parcharlas una por una dejaría el agujero
+ * abierto para la siguiente que alguien agregue. Centralizado es fail-safe:
+ * un endpoint nuevo nace protegido sin que nadie tenga que acordarse.
+ */
+const READ_ONLY_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['observador'])
+
+/** true si el rol no puede realizar cambios (solo consulta). */
+export function isReadOnlyRole(role: UserRole): boolean {
+  return READ_ONLY_ROLES.has(role)
+}
 
 const PROFILE_CACHE_TTL_MS = 60_000
 /** Tope de entradas: evita crecimiento sin límite en procesos de larga vida. */
@@ -156,7 +173,7 @@ export async function getOptionalProfile(
 
 export async function requireProfile(
   event: H3Event,
-  opts: { role?: 'admin' | 'empleado' } = {}
+  opts: { role?: UserRole | UserRole[] } = {}
 ): Promise<SessionProfile> {
   const { userId, profile } = await resolveProfile(event)
 
@@ -166,8 +183,25 @@ export async function requireProfile(
   if (!profile) {
     throw createError({ statusCode: 403, statusMessage: 'Perfil inactivo o inexistente' })
   }
-  if (opts.role && profile.role !== opts.role) {
-    throw createError({ statusCode: 403, statusMessage: `Requiere rol ${opts.role}` })
+
+  // Candado central de escritura (ver READ_ONLY_ROLES arriba). Va antes de la
+  // verificación de rol para que el mensaje de error sea el útil: "eres de
+  // consulta" y no "requiere rol admin".
+  if (isReadOnlyRole(profile.role) && event.method !== 'GET') {
+    throw createError({
+      statusCode: 403,
+      statusMessage: 'Tu rol es de solo consulta: no puedes realizar cambios'
+    })
+  }
+
+  if (opts.role) {
+    const allowed = Array.isArray(opts.role) ? opts.role : [opts.role]
+    if (!allowed.includes(profile.role)) {
+      throw createError({
+        statusCode: 403,
+        statusMessage: `Requiere rol ${allowed.join(' o ')}`
+      })
+    }
   }
   return profile
 }

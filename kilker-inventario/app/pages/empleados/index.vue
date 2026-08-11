@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { ApiUser, UserRole } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
+// El observador entra en modo consulta: ve la lista, no las acciones.
+definePageMeta({ requiresRole: ['admin', 'observador'] })
 useHead({ title: 'Empleados · Inventario Kilker' })
 
 const toast = useToast()
@@ -12,9 +13,14 @@ const apiFetch = useApiFetch()
 
 onMounted(refresh)
 
+const canEdit = computed(() => me.value?.role === 'admin')
+
+// 'observador' no lleva sucursal: el formulario ya pide storeId solo cuando el
+// rol es 'empleado', así que se crea global (storeId null) como el admin.
 const roleItems = [
   { label: 'Empleado', value: 'empleado' as UserRole },
-  { label: 'Administrador', value: 'admin' as UserRole }
+  { label: 'Administrador', value: 'admin' as UserRole },
+  { label: 'Observador (solo consulta)', value: 'observador' as UserRole }
 ]
 const storeItems = computed(() =>
   stores.value
@@ -191,7 +197,13 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
           {{ total }} usuario(s) · cuentas de acceso al sistema
         </p>
       </div>
-      <UButton icon="i-lucide-plus" color="primary" :disabled="isNew" @click="openNew">
+      <UButton
+        v-if="canEdit"
+        icon="i-lucide-plus"
+        color="primary"
+        :disabled="isNew"
+        @click="openNew"
+      >
         Nuevo usuario
       </UButton>
     </header>
@@ -329,7 +341,7 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
                 />
               </td>
               <td class="px-4 py-3">
-                <div class="flex items-center justify-end gap-1">
+                <div v-if="canEdit" class="flex items-center justify-end gap-1">
                   <UButton
                     size="xs"
                     color="neutral"

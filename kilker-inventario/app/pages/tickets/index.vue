@@ -4,7 +4,7 @@ import type { ApiTicket } from '~/types/inventario'
 useHead({ title: 'Tickets de corrección · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
+const { me, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const { tickets,total, page, pageSize, pending, error, status, refresh } = useTicketsHistory()
@@ -91,6 +91,7 @@ async function confirmAction(t: ApiTicket) {
         <p class="text-sm text-muted">
           {{ tickets.length }} ticket(s)
           <template v-if="isAdmin"> · aprueba para anular la venta</template>
+          <template v-else-if="seesAllStores"> · solicitudes de anulación de todas las sucursales</template>
           <template v-else> · solicitudes de anulación de tu sucursal</template>
         </p>
       </div>

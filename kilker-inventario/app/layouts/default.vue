@@ -45,7 +45,7 @@ const allNav: NavEntry[] = [
         label: 'Historial',
         to: '/movimientos',
         icon: 'i-lucide-history',
-        roles: ['admin', 'empleado']
+        roles: ['admin', 'empleado', 'observador']
       }
     ]
   },
@@ -63,7 +63,7 @@ const allNav: NavEntry[] = [
         label: 'Historial',
         to: '/transferencias',
         icon: 'i-lucide-history',
-        roles: ['admin', 'empleado']
+        roles: ['admin', 'empleado', 'observador']
       }
     ]
   },
@@ -81,13 +81,13 @@ const allNav: NavEntry[] = [
         label: 'Historial',
         to: '/ventas',
         icon: 'i-lucide-scroll-text',
-        roles: ['admin', 'empleado']
+        roles: ['admin', 'empleado', 'observador']
       },
       {
         label: 'Correcciones',
         to: '/tickets',
         icon: 'i-lucide-ticket',
-        roles: ['admin', 'empleado']
+        roles: ['admin', 'empleado', 'observador']
       }
     ]
   },
@@ -99,7 +99,7 @@ const allNav: NavEntry[] = [
         label: 'Cortes de caja',
         to: '/cortes',
         icon: 'i-lucide-scissors',
-        roles: ['admin', 'empleado']
+        roles: ['admin', 'empleado', 'observador']
       }
     ]
   },
@@ -111,7 +111,7 @@ const allNav: NavEntry[] = [
           label: 'Lista de clientes',
           to: '/clientes',
           icon: 'i-lucide-users',
-          roles: ['admin', 'empleado']
+          roles: ['admin', 'empleado', 'observador']
         },
         
       ]
@@ -124,7 +124,7 @@ const allNav: NavEntry[] = [
         label: 'Gastos operativos',
         to: '/gastos',
         icon: 'i-lucide-credit-card',
-        roles: ['admin', 'empleado']
+        roles: ['admin', 'empleado', 'observador']
       }
     ]
   },
@@ -132,8 +132,8 @@ const allNav: NavEntry[] = [
     section: 'Administración',
     icon: 'i-lucide-shield',
     children: [
-      { label: 'Sucursales', to: '/tiendas', icon: 'i-lucide-store', roles: ['admin'] },
-      { label: 'Empleados', to: '/empleados', icon: 'i-lucide-users', roles: ['admin'] }
+      { label: 'Sucursales', to: '/tiendas', icon: 'i-lucide-store', roles: ['admin', 'observador'] },
+      { label: 'Empleados', to: '/empleados', icon: 'i-lucide-users', roles: ['admin', 'observador'] }
     ]
   }
 ]
@@ -191,24 +191,24 @@ watch(
   { immediate: true }
 )
 
-const roleLabel = computed(() =>
-  me.value?.role === 'admin'
-    ? 'Administrador'
-    : me.value?.role === 'empleado'
-      ? 'Empleado'
-      : null
-)
+const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'Administrador',
+  empleado: 'Empleado',
+  observador: 'Observador (solo consulta)'
+}
+const roleLabel = computed(() => (me.value ? ROLE_LABELS[me.value.role] : null))
 
-// Sucursal del usuario: el empleado ve la suya; el admin opera global.
+// Sucursal del usuario: el empleado ve la suya; admin y observador son globales.
 const myStore = computed(() => stores.value.find((s) => s.id === me.value?.storeId))
+const isGlobalRole = computed(
+  () => me.value?.role === 'admin' || me.value?.role === 'observador'
+)
 const storeLabel = computed(() => {
   if (!me.value) return null
-  if (me.value.role === 'admin') return 'Todas las sucursales'
+  if (isGlobalRole.value) return 'Todas las sucursales'
   return myStore.value ? myStore.value.name : 'Sin sucursal'
 })
-const storeIcon = computed(() =>
-  me.value?.role === 'admin' ? 'i-lucide-globe' : 'i-lucide-store'
-)
+const storeIcon = computed(() => (isGlobalRole.value ? 'i-lucide-globe' : 'i-lucide-store'))
 
 const sidebarOpen = ref(false)
 

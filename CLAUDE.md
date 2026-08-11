@@ -171,7 +171,8 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 ## 7. Auth y roles
 
-- **Supabase Auth** vía `@nuxtjs/supabase` (email/contraseña; roles `admin | empleado`).
+- **Supabase Auth** vía `@nuxtjs/supabase` (email/contraseña; roles
+  `admin | empleado | observador`).
 - Tabla **`profiles`** (1:1 con `auth.users`) guarda datos de aplicación + **rol** + `store_id`.
 - Roles/permisos se verifican en `server/utils/auth.ts` → `requireProfile(event,{role})`
   (en endpoints de escritura) y `getOptionalProfile(event)` (para `GET /api/me`); reforzado
@@ -190,9 +191,20 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     tickets, edición/anulación de entradas de stock (`PATCH|POST /api/movements/:id…`).
   - **Admin + empleado:** vender, registrar entradas, crear/recibir/cancelar
     transferencias, gastos y sus pagos, clientes, cortes de caja y abrir tickets.
+  - **Solo lectura (`observador`):** ve **todo** (todas las sucursales, todos los
+    listados, tickets, cortes, gastos, sucursales y empleados) pero **no puede
+    escribir nada**. El candado es central: `requireProfile` rechaza con 403
+    cualquier método distinto de `GET` para los roles de `READ_ONLY_ROLES`
+    (`server/utils/auth.ts`). Está ahí a propósito y no endpoint por endpoint —
+    hay 14 rutas de escritura que llaman `requireProfile(event)` sin exigir rol,
+    y así un endpoint nuevo nace protegido sin que nadie lo recuerde. En la UI el
+    espejo es `canWrite` de `useMe()`, que **solo esconde botones**; la
+    autorización real es la del servidor. Va sin sucursal (`store_id` null).
   - **Aislamiento por sucursal:** el empleado solo opera y solo ve la suya (el backend
-    ignora el `storeId` del body y usa `profile.storeId`); el admin ve todas y puede
-    filtrar por `?storeId`.
+    ignora el `storeId` del body y usa `profile.storeId`); admin y observador ven todas
+    y pueden filtrar por `?storeId`. Todo el scoping está escrito como
+    `if (role === 'empleado') → su tienda; si no → todas`, por eso un rol global
+    nuevo no requiere tocar ningún `GET`.
 - ⚠️ **`requireProfile` cachea el perfil** en dos niveles (`server/utils/auth.ts`):
   por request (`event.context`) y por token con **TTL de 60 s** a nivel de módulo.
   Sin esto, cada petición autenticada costaba un round-trip HTTP a

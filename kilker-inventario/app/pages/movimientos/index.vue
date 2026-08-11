@@ -3,7 +3,7 @@ useHead({ title: 'Historial de entradas · Inventario Kilker' })
 import * as XLSX from 'xlsx'
 
 
-const { me } = useMe()
+const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const { movements, total, page, pageSize, pending, error, storeId, from, to, search, refresh } = useMovementsHistory()
@@ -243,7 +243,7 @@ async function exportAll() {
     <h1 class="text-2xl font-semibold">Historial de entradas</h1>
     <p class="text-sm text-muted">
       {{ movements.length }} entrada(s)
-      <template v-if="!isAdmin"> · tu sucursal</template>
+      <template v-if="!seesAllStores"> · tu sucursal</template>
     </p>
   </div>
   <div class="flex flex-wrap gap-2">
@@ -266,7 +266,7 @@ async function exportAll() {
     >
       Exportar con Filtro
     </UButton>
-    <UButton to="/movimientos/entrada" icon="i-lucide-plus" color="primary">
+    <UButton v-if="canWrite" to="/movimientos/entrada" icon="i-lucide-plus" color="primary">
       Nueva entrada
     </UButton>
   </div>
@@ -279,7 +279,7 @@ async function exportAll() {
         v-model:to="to"
         search-placeholder="Buscar producto, SKU, factura, sucursal…"
       />
-      <USelect v-if="isAdmin" v-model="storeFilter" :items="storeItems" class="w-60" />
+      <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeItems" class="w-60" />
     </div>
 
     <UAlert
