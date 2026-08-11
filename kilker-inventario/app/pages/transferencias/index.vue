@@ -125,7 +125,7 @@ async function openDetail(t: ApiTransfer) {
         <h1 class="text-2xl font-semibold">Transferencias</h1>
         <p class="text-sm text-muted">{{ transfers.length }} transferencia(s)</p>
       </div>
-      <UButton to="/transferencias/nueva" icon="i-lucide-plus" color="primary">
+      <UButton v-if="canWrite" to="/transferencias/nueva" icon="i-lucide-plus" color="primary">
         Nueva transferencia
       </UButton>
     </header>
