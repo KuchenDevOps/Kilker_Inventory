@@ -38,8 +38,11 @@ const periodSearch = ref('')
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
-function fmtDate(s: string) {
-  return dateFmt.format(new Date(s))
+function fmtDate(s: string | null | undefined) {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  return dateFmt.format(d)
 }
 
 const IVA_RATE = 0.16
@@ -289,8 +292,11 @@ async function submitPayment() {
 }
 
 const dayFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
-function fmtDay(s: string) {
-  return dayFmt.format(new Date(`${s}T00:00:00`))
+function fmtDay(s: string | null | undefined) {
+  if (!s) return '—'
+  const d = new Date(`${s}T00:00:00`)
+  if (isNaN(d.getTime())) return '—'
+  return dayFmt.format(d)
 }
 
 const viewingTotalWithTaxes = computed(() => {
