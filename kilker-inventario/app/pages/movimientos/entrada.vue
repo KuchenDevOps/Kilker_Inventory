@@ -4,7 +4,7 @@ import { UNIT_LABELS } from '~/types/inventario'
 useHead({ title: 'Entrada de stock · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canWrite } = useMe()
 const { products } = useAllProducts()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
@@ -20,7 +20,9 @@ const employeeStoreInactive = computed(
   () => !!me.value && !isAdmin.value && !!myStore.value && !myStore.value.isActive
 )
 const employeeBlocked = computed(() => employeeNoStore.value || employeeStoreInactive.value)
-const canEdit = computed(() => !!me.value && !employeeBlocked.value)
+// canWrite excluye al observador: sin esto, un rol de solo consulta con
+// sucursal asignada podría capturar entradas desde la UI.
+const canEdit = computed(() => canWrite.value && !employeeBlocked.value)
 
 const state = reactive<{
   productId: number | undefined

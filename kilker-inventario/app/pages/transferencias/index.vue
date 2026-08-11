@@ -6,7 +6,7 @@ import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
 useHead({ title: 'Transferencias · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 const { transfers,total, page, pageSize, pending, error, storeId, status, refresh, search, from, to } = useTransferHistory()
 const { data: stores } = useStores()
@@ -48,8 +48,11 @@ function fmtDateOnly(s: string | null) {
   return s ? dateOnlyFmt.format(new Date(s)) : '—'
 }
 
+// canWrite deja fuera al observador (que si no vería 'Recibir'/'Cancelar').
 const canReceive = (t: ApiTransfer) =>
-  t.status === 'en_transito' && (isAdmin.value || me.value?.storeId === t.toStoreId)
+  canWrite.value &&
+  t.status === 'en_transito' &&
+  (isAdmin.value || me.value?.storeId === t.toStoreId)
 
 const receivingId = ref<number | null>(null)
 
@@ -68,7 +71,9 @@ async function receive(t: ApiTransfer) {
 }
 
 const canCancel = (t: ApiTransfer) =>
-  t.status === 'en_transito' && (isAdmin.value || me.value?.storeId === t.fromStoreId)
+  canWrite.value &&
+  t.status === 'en_transito' &&
+  (isAdmin.value || me.value?.storeId === t.fromStoreId)
 
 const cancelingId = ref<number | null>(null)
 const cancelReason = ref('')
@@ -120,7 +125,7 @@ async function openDetail(t: ApiTransfer) {
         <h1 class="text-2xl font-semibold">Transferencias</h1>
         <p class="text-sm text-muted">{{ transfers.length }} transferencia(s)</p>
       </div>
-      <UButton to="/transferencias/nueva" icon="i-lucide-plus" color="primary">
+      <UButton v-if="canWrite" to="/transferencias/nueva" icon="i-lucide-plus" color="primary">
         Nueva transferencia
       </UButton>
     </header>
@@ -134,7 +139,7 @@ async function openDetail(t: ApiTransfer) {
 
 
     <div class="flex flex-wrap gap-3">
-      <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+      <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
       <USelect v-model="status" :items="statusItems" class="w-44" />
     </div>
 

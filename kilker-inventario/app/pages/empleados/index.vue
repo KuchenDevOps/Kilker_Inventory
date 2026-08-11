@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { ApiUser, UserRole } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
+// El observador entra en modo consulta: ve la lista, no las acciones.
+definePageMeta({ requiresRole: ['admin', 'observador'] })
 useHead({ title: 'Empleados · Inventario Kilker' })
 
 const toast = useToast()
@@ -12,9 +13,17 @@ const apiFetch = useApiFetch()
 
 onMounted(refresh)
 
+const canEdit = computed(() => me.value?.role === 'admin')
+// La columna "Acciones" solo existe para admin: el colspan de las filas
+// vacías (cargando / sin resultados) tiene que seguirla.
+const colCount = computed(() => (canEdit.value ? 6 : 5))
+
+// 'observador' no lleva sucursal: el formulario ya pide storeId solo cuando el
+// rol es 'empleado', así que se crea global (storeId null) como el admin.
 const roleItems = [
   { label: 'Empleado', value: 'empleado' as UserRole },
-  { label: 'Administrador', value: 'admin' as UserRole }
+  { label: 'Administrador', value: 'admin' as UserRole },
+  { label: 'Observador (solo consulta)', value: 'observador' as UserRole }
 ]
 const storeItems = computed(() =>
   stores.value
@@ -179,7 +188,12 @@ async function toggleActive(u: ApiUser) {
   }
 }
 
-const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado')
+const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'Administrador',
+  empleado: 'Empleado',
+  observador: 'Observador'
+}
+const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
 </script>
 
 <template>
@@ -191,7 +205,13 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
           {{ total }} usuario(s) · cuentas de acceso al sistema
         </p>
       </div>
-      <UButton icon="i-lucide-plus" color="primary" :disabled="isNew" @click="openNew">
+      <UButton
+        v-if="canEdit"
+        icon="i-lucide-plus"
+        color="primary"
+        :disabled="isNew"
+        @click="openNew"
+      >
         Nuevo usuario
       </UButton>
     </header>
@@ -296,15 +316,15 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
               <th class="px-4 py-3 font-medium">Rol</th>
               <th class="px-4 py-3 font-medium">Sucursal</th>
               <th class="px-4 py-3 font-medium text-center">Estado</th>
-              <th class="px-4 py-3 font-medium text-right">Acciones</th>
+              <th v-if="canEdit" class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="6" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td :colspan="colCount" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!filteredUsers.length">
-              <td colspan="6" class="px-4 py-8 text-center text-muted">
+              <td :colspan="colCount" class="px-4 py-8 text-center text-muted">
                 No hay usuarios que coincidan con el filtro.
               </td>
             </tr>
@@ -314,7 +334,7 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
               <td class="px-4 py-3">
                 <UBadge
                   :label="roleLabel(u.role)"
-                  :color="u.role === 'admin' ? 'primary' : 'neutral'"
+                  :color="u.role === 'admin' ? 'primary' : u.role === 'observador' ? 'info' : 'neutral'"
                   variant="subtle"
                 />
               </td>
@@ -328,7 +348,7 @@ const roleLabel = (r: UserRole) => (r === 'admin' ? 'Administrador' : 'Empleado'
                   variant="subtle"
                 />
               </td>
-              <td class="px-4 py-3">
+              <td v-if="canEdit" class="px-4 py-3">
                 <div class="flex items-center justify-end gap-1">
                   <UButton
                     size="xs"

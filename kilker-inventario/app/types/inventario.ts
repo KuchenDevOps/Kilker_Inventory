@@ -4,7 +4,8 @@
 // Alineados al backend. IDs numéricos; los numeric llegan como string (usar Number()).
 
 /** Roles de usuario (enum user_role). */
-export type UserRole = 'admin' | 'empleado'
+/** `observador`: solo consulta. Ve todas las sucursales, no puede escribir. */
+export type UserRole = 'admin' | 'empleado' | 'observador'
 
 /** Unidades de medida del catálogo (enum `product_unit`). */
 export const PRODUCT_UNITS = ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'] as const

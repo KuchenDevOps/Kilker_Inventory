@@ -4,7 +4,7 @@ import type { ApiCustomer } from '~/types/inventario'
 useHead({ title: 'Clientes · Inventario Kilker' })
 
 const { customers, pending, error, refresh } = useAllCustomers()
-const { me } = useMe()
+const { me, canWrite } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const toast = useToast()
@@ -77,7 +77,7 @@ function openEdit(c: ApiCustomer) {
   showModal.value = true
 }
 
-const canSubmit = computed(() => form.name.trim().length > 0)
+const canSubmit = computed(() => canWrite.value && form.name.trim().length > 0)
 
 async function onSubmit() {
   if (!canSubmit.value) return
@@ -150,7 +150,7 @@ async function toggleActive(c: ApiCustomer) {
         <h1 class="text-2xl font-semibold">Clientes</h1>
         <p class="text-sm text-muted">{{ total }} cliente(s)</p>
       </div>
-      <UButton icon="i-lucide-plus" color="primary" @click="openCreate">
+      <UButton v-if="canWrite" icon="i-lucide-plus" color="primary" @click="openCreate">
         Nuevo cliente
       </UButton>
     </header>
@@ -206,7 +206,7 @@ async function toggleActive(c: ApiCustomer) {
                 />
               </td>
               <td class="px-4 py-3 text-right">
-                <div class="flex items-center justify-end gap-1">
+                <div v-if="canWrite" class="flex items-center justify-end gap-1">
                   <template v-if="confirmingId === c.id">
                     <span class="text-xs text-muted mr-1">
                       {{ c.isActive ? '¿Desactivar?' : '¿Reactivar?' }}

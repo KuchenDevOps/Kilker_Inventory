@@ -5,11 +5,14 @@
 // El email no se edita aquí. Guardas anti-lockout sobre la propia cuenta.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { profiles, stores } from '../../db/schema'
+import { profiles, stores, userRole } from '../../db/schema'
+
+/** Fuente de verdad de los roles: el propio enum de Postgres. */
+type UserRole = (typeof userRole.enumValues)[number]
 
 interface PatchUserBody {
   fullName?: string
-  role?: 'admin' | 'empleado'
+  role?: UserRole
   storeId?: number | null
   isActive?: boolean
   password?: string
@@ -37,7 +40,7 @@ export default defineEventHandler(async (event) => {
 
   const patch: {
     fullName?: string
-    role?: 'admin' | 'empleado'
+    role?: UserRole
     storeId?: number | null
     isActive?: boolean
   } = {}
@@ -51,7 +54,7 @@ export default defineEventHandler(async (event) => {
 
   // Rol (con guarda: no quitarte tu propio admin).
   if (body?.role !== undefined) {
-    if (body.role !== 'admin' && body.role !== 'empleado') {
+    if (!userRole.enumValues.includes(body.role)) {
       throw createError({ statusCode: 400, statusMessage: 'Rol inválido' })
     }
     if (editingSelf && current.role === 'admin' && body.role !== 'admin') {
@@ -63,9 +66,10 @@ export default defineEventHandler(async (event) => {
     patch.role = body.role
   }
 
-  // Sucursal coherente con el rol resultante.
+  // Sucursal coherente con el rol resultante: solo 'empleado' opera en una
+  // sucursal; admin y observador son globales (storeId null).
   const nextRole = body?.role ?? current.role
-  if (nextRole === 'admin') {
+  if (nextRole !== 'empleado') {
     patch.storeId = null
   } else {
     const targetStoreId =

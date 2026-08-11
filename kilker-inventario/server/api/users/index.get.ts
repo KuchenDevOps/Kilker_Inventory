@@ -1,13 +1,16 @@
 // ───────────────────────────────────────────────
-//  GET /api/users — usuarios/empleados (admin)
+//  GET /api/users — usuarios/empleados (admin + observador)
 // ───────────────────────────────────────────────
 // Perfiles enriquecidos con sucursal (código/nombre) y email (desde Auth).
+// El observador solo consulta: el alta (POST) y la edición (PATCH) siguen
+// siendo exclusivas de admin, y el candado central de `requireProfile` ya le
+// rechaza cualquier método distinto de GET.
 import { count } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { profiles } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: ['admin', 'observador'] })
   const query = getQuery(event)
   const db = useDb()
 

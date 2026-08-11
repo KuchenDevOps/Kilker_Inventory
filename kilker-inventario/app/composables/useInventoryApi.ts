@@ -184,7 +184,23 @@ export function useMe() {
     watch(user, () => void refresh(), { immediate: true })
   }
 
-  return { me, refresh }
+  /**
+   * false para roles de solo consulta (hoy `observador`). Espejo en la UI del
+   * candado que aplica `requireProfile` en el servidor: sirve para esconder
+   * botones, NO como seguridad — la autorización real es la del backend.
+   */
+  const canWrite = computed(() => !!me.value && me.value.role !== 'observador')
+
+  /**
+   * true para los roles GLOBALES (admin y observador): ven todas las sucursales
+   * y por tanto necesitan el filtro por tienda. Ojo: no confundir con `isAdmin`
+   * — varias pantallas usaban `isAdmin` para decidir esto, y con el rol nuevo
+   * eso dejaba al observador viendo datos de todas las tiendas pero con la
+   * leyenda "tu sucursal" y sin selector para filtrar.
+   */
+  const seesAllStores = computed(() => !!me.value && me.value.role !== 'empleado')
+
+  return { me, canWrite, seesAllStores, refresh }
 }
 
 /** Historial de ventas; el backend filtra por rol. Filtros status/storeId/fecha/q recargan. */

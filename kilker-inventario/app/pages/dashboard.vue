@@ -8,7 +8,7 @@ useHead({ title: 'Dashboard · Inventario Kilker' })
 const { products, pending: loadingProducts, error: productsError } = useAllProducts()
 const { data: stores } = useStores()
 
-const { me } = useMe()
+const { me, canWrite } = useMe()
 const isEmployee = computed(() => me.value?.role === 'empleado')
 
 // Todas las métricas agregadas en UNA petición (ver useDashboardSummary).
@@ -392,11 +392,6 @@ return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
 
 
 
-/**
- * Porcentaje que ocupa el COSTO dentro de la barra (0-100). El resto es
- * utilidad. Si el costo supera la venta (pérdida en ese producto), se topa
- * en 100% rojo — no hay "utilidad negativa" que representar visualmente.
- */
 function costSharePct(p: (typeof topProducts.value)[number]) {
   if (p.totalRevenue <= 0) return 100
   const pct = (p.totalCost / p.totalRevenue) * 100
@@ -423,7 +418,7 @@ const filteredTopProducts = computed(() => {
       </div>
       <div class="flex gap-2">
       
-        <UButton to="/productos/nuevo" icon="i-lucide-plus" color="primary">
+        <UButton v-if="canWrite"to="/productos/nuevo" icon="i-lucide-plus" color="primary">
           Nuevo producto
         </UButton>
       </div>
