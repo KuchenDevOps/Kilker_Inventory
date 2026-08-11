@@ -9,16 +9,16 @@
 //                 supplier_invoice_date (igual que GET /api/movements), y
 //                 excluyendo las facturas 'II' (lo hacía el dashboard).
 //   · Ventas    → invoices status='emitida', filtrado por issued_at.
-//   · Gastos    → expenses filtrado por paid_at; subtotal = suma de líneas,
-//                 pagado = suma de abonos, saldo = max(0, amount − pagado)
-//                 calculado POR gasto antes de sumar (igual que la UI).
+//   · Gastos    → expenses filtrado por paid_at. Todo se mide contra
+//                 `expenses.amount` (subtotal NETO; IVA y retenciones son
+//                 informativos): pagado = min(amount, abonos), saldo =
+//                 max(0, amount − abonos), ambos POR gasto antes de sumar.
 //
 // Parámetros: ?storeId (admin; el empleado siempre ve la suya), ?from, ?to
 // (ISO) y ?month (YYYY-MM) para el cierre de inventario.
 import { and, eq, gte, lt, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import {
-  expenseItems,
   expensePayments,
   expenses,
   invoices,
@@ -104,17 +104,8 @@ export default defineEventHandler(async (event) => {
   if (expenseFrom) expenseFilters.push(gte(expenses.paidAt, expenseFrom))
   if (expenseTo) expenseFilters.push(lt(expenses.paidAt, expenseTo))
 
-  // Subtotal (suma de líneas) y pagado (suma de abonos) por gasto, para poder
-  // aplicar el max(0, …) del saldo ANTES de agregar por tipo.
-  const itemsAgg = db
-    .select({
-      expenseId: expenseItems.expenseId,
-      subtotal: sql<string>`sum(${expenseItems.amount})`.as('subtotal')
-    })
-    .from(expenseItems)
-    .groupBy(expenseItems.expenseId)
-    .as('items_agg')
-
+  // Pagado por gasto, para poder topar/clampear por gasto ANTES de agregar
+  // por tipo (si no, un sobrepago compensaría el saldo de otro gasto).
   const paymentsAgg = db
     .select({
       expenseId: expensePayments.expenseId,
@@ -135,15 +126,22 @@ export default defineEventHandler(async (event) => {
       .from(invoices)
       .where(and(...saleFilters)),
 
+    // Todo se mide contra `expenses.amount` (el subtotal NETO del gasto, que el
+    // POST/PATCH mantiene igual a la suma de conceptos). El IVA y las
+    // retenciones son informativos y no entran aquí.
+    //
+    // `least(...)` en el pagado: hay abonos históricos capturados con IVA
+    // (monto × 1.16) que, sumados en crudo, inflaban esta tarjeta por encima
+    // del gasto real. Topándolo, pagado + pendiente siempre da el monto del
+    // gasto y un dato malo no descuadra el tablero.
     db
       .select({
         type: expenses.type,
-        subtotal: sql<string>`coalesce(sum(round(coalesce(${itemsAgg.subtotal}, 0), 2)), 0)`,
-        totalPaid: sql<string>`coalesce(sum(round(coalesce(${paymentsAgg.paid}, 0), 2)), 0)`,
+        subtotal: sql<string>`coalesce(sum(round(${expenses.amount}, 2)), 0)`,
+        totalPaid: sql<string>`coalesce(sum(least(round(${expenses.amount}, 2), round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
         balance: sql<string>`coalesce(sum(greatest(0, round(${expenses.amount}, 2) - round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`
       })
       .from(expenses)
-      .leftJoin(itemsAgg, eq(itemsAgg.expenseId, expenses.id))
       .leftJoin(paymentsAgg, eq(paymentsAgg.expenseId, expenses.id))
       .where(expenseFilters.length ? and(...expenseFilters) : undefined)
       .groupBy(expenses.type),
