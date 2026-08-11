@@ -5,7 +5,7 @@ import type { ApiExpense, ApiExpensePayment, PaymentMethod } from '~/types/inven
 import { PAYMENT_LABELS, EXPENSE_TYPE_LABELS, type ExpenseType } from '~/types/inventario'
 const { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh } = useExpenses()
 const { data: stores } = useStores()
-const { me } = useMe()
+const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 const toast = useToast()
 const apiFetch = useApiFetch()
@@ -149,6 +149,7 @@ const formTotalWithTaxes = computed(
 
 const canSubmit = computed(
   () =>
+    canWrite.value &&
     (isAdmin.value ? form.storeId != null : true) &&
     form.supplier.trim().length > 0 &&
     form.supplierInvoiceNumber.trim().length > 0 &&
@@ -250,6 +251,7 @@ async function refreshPayments() {
 
 const canSubmitPayment = computed(
   () =>
+    canWrite.value &&
     (paymentForm.amount ?? 0) > 0 &&
     paymentForm.paidAt.length > 0 &&
     !!viewingExpense.value &&
@@ -326,7 +328,7 @@ onMounted(() => {
         <h1 class="text-2xl font-semibold">Gastos</h1>
         <p class="text-sm text-muted">{{ total }} gasto(s)</p>
       </div>
-      <UButton icon="i-lucide-plus" color="primary" @click="openCreate">
+      <UButton v-if="canWrite" icon="i-lucide-plus" color="primary" @click="openCreate">
         Nuevo gasto
       </UButton>
     </header>
@@ -338,7 +340,7 @@ onMounted(() => {
         v-model:to="to"
       />
       <div class="flex flex-wrap gap-3">
-        <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+        <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
         <USelect v-model="type" :items="expenseTypeFilterItems" placeholder="Tipo de gasto" class="w-48" />
       </div>
     </div>
@@ -437,6 +439,7 @@ onMounted(() => {
                     @click="openPayments(e)"
                   />
                   <UButton
+                    v-if="canWrite"
                     size="xs"
                     color="neutral"
                     variant="ghost"
@@ -725,10 +728,10 @@ onMounted(() => {
               </ul>
             </div>
 
-            <USeparator v-if="viewingExpense.balance > 0" />
+            <USeparator v-if="canWrite && viewingExpense.balance > 0" />
 
-            <!-- Registrar nuevo pago -->
-            <div v-if="viewingExpense.balance > 0" class="space-y-3">
+            <!-- Registrar nuevo pago (el observador ve el historial, no el alta) -->
+            <div v-if="canWrite && viewingExpense.balance > 0" class="space-y-3">
               <h3 class="text-sm font-semibold">Registrar pago</h3>
               <div class="grid gap-3 sm:grid-cols-2">
                 <UFormField label="Monto">

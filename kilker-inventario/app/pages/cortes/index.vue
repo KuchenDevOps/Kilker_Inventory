@@ -5,7 +5,7 @@ import { PAYMENT_LABELS, type ApiCorte, type ApiCorteDetail } from '~/types/inve
 useHead({ title: 'Cortes de caja · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const { cortes, pending,total, page, pageSize, error, storeId, refresh, from, to, search } = useCortesHistory()
@@ -51,7 +51,9 @@ function cancelMakeCorte() {
   makingCorte.value = false
 }
 
-const canSubmitCorte = computed(() => (isAdmin.value ? corteStoreId.value != null : true))
+const canSubmitCorte = computed(
+  () => canWrite.value && (isAdmin.value ? corteStoreId.value != null : true)
+)
 
 async function submitCorte() {
   submittingCorte.value = true
@@ -111,10 +113,16 @@ async function toggleDetail(c: ApiCorte) {
         <h1 class="text-2xl font-semibold">Cortes de caja</h1>
         <p class="text-sm text-muted">
           {{ cortes.length }} corte(s)
-          <template v-if="!isAdmin"> · tu sucursal</template>
+          <template v-if="!seesAllStores"> · tu sucursal</template>
         </p>
       </div>
-      <UButton icon="i-lucide-scissors" color="primary" :disabled="makingCorte" @click="openMakeCorte">
+      <UButton
+        v-if="canWrite"
+        icon="i-lucide-scissors"
+        color="primary"
+        :disabled="makingCorte"
+        @click="openMakeCorte"
+      >
         Hacer corte
       </UButton>
     </header>
@@ -128,7 +136,7 @@ async function toggleDetail(c: ApiCorte) {
         search-placeholder="Buscar producto, SKU, factura, sucursal…"
       />
       
-      <USelect v-if="isAdmin" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+      <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
     </div>
  <!-- Panel: hacer corte -->
     <UCard v-if="makingCorte">

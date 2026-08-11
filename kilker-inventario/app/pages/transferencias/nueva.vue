@@ -4,14 +4,18 @@ import { UNIT_LABELS } from '~/types/inventario'
 useHead({ title: 'Nueva transferencia · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canWrite } = useMe()
 const { products } = useAllProducts()   // ← antes: const { data: products } = useProducts()
 const { data: stores } = useStores()
 const apiFetch = useApiFetch()
 
 const isAdmin = computed(() => me.value?.role === 'admin')
 const myStore = computed(() => stores.value.find((s) => s.id === me.value?.storeId))
-const canOperate = computed(() => isAdmin.value || !!myStore.value)
+// canWrite excluye al observador (que si no, con sucursal asignada podría
+// despachar transferencias desde la UI).
+const canOperate = computed(
+  () => canWrite.value && (isAdmin.value || !!myStore.value)
+)
 
 const fromStoreId = ref<number | undefined>(undefined)
 const toStoreId = ref<number | undefined>(undefined)

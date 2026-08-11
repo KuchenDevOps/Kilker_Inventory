@@ -11,7 +11,7 @@ import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
 useHead({ title: 'Historial de ventas · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const { data: stores } = useStores()
@@ -379,12 +379,12 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
         <h1 class="text-2xl font-semibold">Historial de ventas</h1>
         <p class="text-sm text-muted">
           {{ sales.length }} venta(s)
-          <template v-if="!isAdmin"> · tu sucursal</template>
+          <template v-if="!seesAllStores"> · tu sucursal</template>
         </p>
       </div>
         <div class="flex flex-wrap gap-2">
 
-      <UButton to="/ventas/nueva" icon="i-lucide-plus" color="primary"> Nueva venta </UButton>
+      <UButton v-if="canWrite" to="/ventas/nueva" icon="i-lucide-plus" color="primary"> Nueva venta </UButton>
       <UButton
       icon="i-lucide-file-spreadsheet"
       color="neutral"
@@ -416,7 +416,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
       />
       <div class="flex flex-wrap gap-3">
         <USelect v-model="status" :items="statusItems" class="w-44" />
-        <USelect v-if="isAdmin" v-model="storeFilter" :items="storeItems" class="w-60" />
+        <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeItems" class="w-60" />
          <USelectMenu
       v-model="productId"
       :items="productItems"
@@ -520,9 +520,10 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                     variant="subtle"
                     icon="i-lucide-clock"
                   />
-                  <!-- Empleado: solicita anulación (abre ticket) -->
+                  <!-- Empleado: solicita anulación (abre ticket). canWrite deja
+                       fuera al observador, que solo consulta. -->
                   <UButton
-                    v-else-if="!isAdmin && s.status === 'emitida' && requestingId !== s.id"
+                    v-else-if="canWrite && !isAdmin && s.status === 'emitida' && requestingId !== s.id"
                     size="xs"
                     color="warning"
                     variant="ghost"

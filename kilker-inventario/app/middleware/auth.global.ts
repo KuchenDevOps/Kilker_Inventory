@@ -21,9 +21,12 @@ export default defineNuxtRouteMiddleware(async (to) => {
   // Con sesión activa, /login redirige al panel.
   if (to.path === '/login') return navigateTo('/dashboard')
 
-  // Rutas que exigen rol (definePageMeta requiresRole).
-  const requiredRole = to.meta.requiresRole as UserRole | undefined
+  // Rutas que exigen rol (definePageMeta requiresRole). Acepta un rol o una
+  // lista: /tiendas y /empleados los ve admin y observador (este último en
+  // modo consulta; la propia página esconde las acciones de escritura).
+  const requiredRole = to.meta.requiresRole as UserRole | UserRole[] | undefined
   if (!requiredRole) return
+  const allowedRoles = Array.isArray(requiredRole) ? requiredRole : [requiredRole]
 
   // Carga el perfil reusando el estado compartido de useMe().
   const me = useState<Me | null>('me', () => null)
@@ -39,7 +42,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
 
   // Sin el rol requerido → al dashboard.
-  if (me.value?.role !== requiredRole) {
+  if (!me.value || !allowedRoles.includes(me.value.role)) {
     return navigateTo('/dashboard')
   }
 })
