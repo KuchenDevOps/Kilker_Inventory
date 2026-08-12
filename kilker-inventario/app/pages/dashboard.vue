@@ -187,6 +187,9 @@ function stockFor(p: (typeof products.value)[number]) {
 // Ambos los agrega ahora el servidor con SUM(), en vez de descargar todas las
 // entradas y todas las ventas del periodo para sumarlas aquí.
 const entryValue = computed(() => summary.value?.entriesValue ?? 0)
+// Pago de esas mismas compras: pagadas + por pagar = Compras.
+const entriesPaid = computed(() => summary.value?.entriesPaid ?? 0)
+const entriesBalance = computed(() => summary.value?.entriesBalance ?? 0)
 
 
 const totalLoses = computed(() => allProductsNetProfit.value - totalExpensesPaid.value)
@@ -259,7 +262,24 @@ const metricsSection2 = computed(() => {
       loading: loadingSummary.value,
       globalOnly: false
     },
-   
+    {
+      label: 'Compras pagadas',
+      value: currency.format(entriesPaid.value),
+      hint: 'abonado a las entradas del periodo',
+      icon: 'i-lucide-circle-check',
+      color: 'text-success',
+      loading: loadingSummary.value,
+      globalOnly: false
+    },
+    {
+      label: 'Compras por pagar',
+      value: currency.format(entriesBalance.value),
+      hint: 'saldo pendiente con proveedores',
+      icon: 'i-lucide-clock',
+      color: 'text-warning',
+      loading: loadingSummary.value,
+      globalOnly: false
+    }
   ]
 
  
