@@ -67,7 +67,8 @@ export default defineEventHandler(async (event) => {
     with: {
       product: { columns: { name: true, sku: true, unit: true } },
       store: { columns: { code: true, name: true } },
-      createdBy: { columns: { fullName: true } }
+      createdBy: { columns: { fullName: true } },
+      payments: { columns: { amount: true } }
     }
   })
     const movementIds = rows.map((m) => m.id)
@@ -80,25 +81,47 @@ export default defineEventHandler(async (event) => {
     for (const r of reversals) if (r.reversesMovementId != null) voided.add(r.reversesMovementId)
   }
 
-  const mapped = rows.map((m) => ({
-    id: m.id,
-    productId: m.productId,
-    productName: m.product?.name ?? null,
-    productSku: m.product?.sku ?? null,
-    unit: m.product?.unit ?? null,
-    storeId: m.storeId,
-    storeCode: m.store?.code ?? null,
-    storeName: m.store?.name ?? null,
-    quantity: m.quantity,
-    unitValue: m.unitValue,
-    totalValue: m.totalValue,
-    supplierInvoiceNumber: m.supplierInvoiceNumber,
-    supplierInvoiceDate: m.supplierInvoiceDate,
-    folio: m.inventoryEntryInvoiceNumber,
-    createdByName: m.createdBy?.fullName ?? null,
-    createdAt: m.createdAt,
-    voided: voided.has(m.id),
-  }))
+  const mapped = rows.map((m) => {
+    // Estado de pago derivado, nunca guardado (mismo criterio que gastos: una
+    // columna se desincroniza el día que alguien borre un abono). El total a
+    // pagar es el costo limpio, sin IVA ni retenciones.
+    const isVoided = voided.has(m.id)
+    const totalToPay = Math.round(Number(m.totalValue) * 100) / 100
+    const totalPaid = Math.round(m.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
+    const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
+
+    // La anulación borra los abonos, así que una entrada anulada siempre
+    // llega aquí con totalPaid en 0; se etiqueta aparte para que la UI no la
+    // muestre como "pendiente" de un dinero que ya no se debe.
+    let paymentStatus: 'pendiente' | 'parcial' | 'pagado' | 'anulada' = 'pendiente'
+    if (isVoided) paymentStatus = 'anulada'
+    else if (totalPaid >= totalToPay && totalToPay > 0) paymentStatus = 'pagado'
+    else if (totalPaid > 0) paymentStatus = 'parcial'
+
+    return {
+      id: m.id,
+      productId: m.productId,
+      productName: m.product?.name ?? null,
+      productSku: m.product?.sku ?? null,
+      unit: m.product?.unit ?? null,
+      storeId: m.storeId,
+      storeCode: m.store?.code ?? null,
+      storeName: m.store?.name ?? null,
+      quantity: m.quantity,
+      unitValue: m.unitValue,
+      totalValue: m.totalValue,
+      supplierInvoiceNumber: m.supplierInvoiceNumber,
+      supplierInvoiceDate: m.supplierInvoiceDate,
+      folio: m.inventoryEntryInvoiceNumber,
+      createdByName: m.createdBy?.fullName ?? null,
+      createdAt: m.createdAt,
+      voided: isVoided,
+      totalToPay,
+      totalPaid,
+      balance,
+      paymentStatus
+    }
+  })
 
   if (!paginate) return mapped // ← comportamiento original, usa el dashboard
 

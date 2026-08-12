@@ -329,6 +329,7 @@ export const stockMovements = pgTable(
   ]
 ).enableRLS()
 
+
 export const entryPayments = pgTable(
   'entry_payments',
   {

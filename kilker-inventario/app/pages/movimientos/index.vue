@@ -1,7 +1,15 @@
 <script setup lang="ts">
-useHead({ title: 'Historial de entradas · Inventario Kilker' })
 import * as XLSX from 'xlsx'
+import {
+  ENTRY_PAYMENT_STATUS_LABELS,
+  PAYMENT_LABELS,
+  type ApiEntryPayment,
+  type ApiMovement,
+  type EntryPaymentStatus,
+  type PaymentMethod
+} from '~/types/inventario'
 
+useHead({ title: 'Historial de entradas · Inventario Kilker' })
 
 const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -37,6 +45,12 @@ const productItems = computed(() =>
 const storeEditItems = computed(() => stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id })))
 
 const qtyFmt = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 3 })
+const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
+
+// Folio, Fecha, Producto, Sucursal, Cantidad, Total, Factura prov., Fecha
+// factura, Registró y Pago; + Acciones solo para admin. Se usa en los colspan
+// de las filas de estado y del panel de anulación.
+const colCount = computed(() => (isAdmin.value ? 11 : 10))
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
 function fmtDate(s: string | null | undefined) {
   if (!s) return '—'
@@ -135,11 +149,23 @@ function cancelVoidPanel() {
 async function confirmVoid(m: (typeof movements.value)[number]) {
   submittingVoid.value = true
   try {
-    await apiFetch(`/api/movements/${m.id}/void`, {
-      method: 'POST',
-      body: { reason: voidReason.value.trim() || undefined }
+    const res = await apiFetch<{ ok: boolean; deletedPayments: number }>(
+      `/api/movements/${m.id}/void`,
+      {
+        method: 'POST',
+        body: { reason: voidReason.value.trim() || undefined }
+      }
+    )
+    const borrados = res?.deletedPayments ?? 0
+    toast.add({
+      title: 'Entrada anulada',
+      description:
+        borrados > 0
+          ? `Se descontó el inventario y se borraron ${borrados} pago(s).`
+          : 'Se descontó el inventario.',
+      color: 'success',
+      icon: 'i-lucide-circle-check'
     })
-    toast.add({ title: 'Entrada anulada', description: 'Se descontó el inventario.', color: 'success', icon: 'i-lucide-circle-check' })
     cancelVoidPanel()
     await refresh()
     await refreshNuxtData('products')
@@ -152,6 +178,112 @@ async function confirmVoid(m: (typeof movements.value)[number]) {
     })
   } finally {
     submittingVoid.value = false
+  }
+}
+
+// ───────────────────────────────────────────────
+//  MODAL DE PAGOS DE LA ENTRADA
+// ───────────────────────────────────────────────
+// El pagable es la entrada misma: su total es el costo limpio, sin IVA ni
+// retenciones (a diferencia de gastos). Tampoco se captura quién paga: las
+// entradas siempre las cubre la misma empresa.
+const viewingMovement = ref<ApiMovement | null>(null)
+const showPaymentsModal = ref(false)
+const payments = ref<ApiEntryPayment[]>([])
+const loadingPayments = ref(false)
+const submittingPayment = ref(false)
+
+const paymentMethodItems = (Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((v) => ({
+  label: PAYMENT_LABELS[v],
+  value: v
+}))
+
+const PAYMENT_STATUS_COLORS: Record<EntryPaymentStatus, 'success' | 'warning' | 'error' | 'neutral'> = {
+  pagado: 'success',
+  parcial: 'warning',
+  pendiente: 'error',
+  anulada: 'neutral'
+}
+
+const paymentForm = reactive({
+  amount: undefined as number | undefined,
+  paidAt: '',
+  method: 'efectivo' as PaymentMethod,
+  note: ''
+})
+
+async function openPayments(m: ApiMovement) {
+  viewingMovement.value = m
+  showPaymentsModal.value = true
+  Object.assign(paymentForm, {
+    amount: undefined,
+    paidAt: new Date().toISOString().slice(0, 10),
+    method: 'efectivo',
+    note: ''
+  })
+  await refreshPayments()
+}
+
+async function refreshPayments() {
+  if (!viewingMovement.value) return
+  loadingPayments.value = true
+  try {
+    payments.value = await apiFetch<ApiEntryPayment[]>(
+      `/api/movements/${viewingMovement.value.id}/payments`
+    )
+  } catch (e) {
+    toast.add({
+      title: 'No se pudieron cargar los pagos',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    loadingPayments.value = false
+  }
+}
+
+const canSubmitPayment = computed(
+  () =>
+    canWrite.value &&
+    !!viewingMovement.value &&
+    !viewingMovement.value.voided &&
+    (paymentForm.amount ?? 0) > 0 &&
+    paymentForm.paidAt.length > 0 &&
+    // Mismo tope que aplica el servidor; aquí solo evita el viaje perdido.
+    (paymentForm.amount ?? 0) <= viewingMovement.value.balance + 0.01
+)
+
+async function submitPayment() {
+  if (!canSubmitPayment.value || !viewingMovement.value) return
+  submittingPayment.value = true
+  try {
+    await apiFetch(`/api/movements/${viewingMovement.value.id}/payments`, {
+      method: 'POST',
+      body: {
+        amount: paymentForm.amount,
+        paidAt: paymentForm.paidAt,
+        method: paymentForm.method,
+        note: paymentForm.note.trim() || undefined
+      }
+    })
+    toast.add({ title: 'Pago registrado', color: 'success', icon: 'i-lucide-circle-check' })
+    Object.assign(paymentForm, { amount: undefined, note: '' })
+    await refreshPayments()
+    await refresh()
+    // La fila del listado trae el saldo recalculado; hay que reapuntar el
+    // modal a ella o seguiría mostrando el saldo viejo.
+    const updated = movements.value.find((x) => x.id === viewingMovement.value?.id)
+    if (updated) viewingMovement.value = updated
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo registrar el pago',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submittingPayment.value = false
   }
 }
 
@@ -171,7 +303,10 @@ function movementsToSheet(rows: any[]) {
     'Factura Proveedor': m.supplierInvoiceNumber ?? '',
     'Fecha Factura': fmtDay(m.supplierInvoiceDate),
     'Registró': m.createdByName ?? '',
-    Estado: m.voided ? 'Anulada' : 'Activa'
+    Estado: m.voided ? 'Anulada' : 'Activa',
+    Pagado: Number(m.totalPaid ?? 0),
+    Saldo: Number(m.balance ?? 0),
+    'Estado de pago': ENTRY_PAYMENT_STATUS_LABELS[m.paymentStatus as EntryPaymentStatus] ?? ''
   }))
 }
 
@@ -184,7 +319,8 @@ function downloadWorkbook(rows: any[], filenamePrefix: string) {
   worksheet['!cols'] = [
     { wch: 10 }, { wch: 18 }, { wch: 25 }, { wch: 12 },
     { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 14 },
-    { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 10 }
+    { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 10 },
+    { wch: 12 }, { wch: 12 }, { wch: 14 }
   ]
 
   const fecha = new Date().toISOString().slice(0, 10)
@@ -223,8 +359,9 @@ async function exportFiltered() {
 async function exportAll() {
   exportingAll.value = true
   try {
-  const rows = await apiFetch<any[]>('/api/movements', { query })
-      if (!rows.length) {
+    // Sin query: el endpoint devuelve el arreglo completo, sin filtros.
+    const rows = await apiFetch<any[]>('/api/movements')
+    if (!rows.length) {
       toast.add({ title: 'Sin datos para exportar', color: 'warning', icon: 'i-lucide-info' })
       return
     }
@@ -311,15 +448,16 @@ async function exportAll() {
               <th class="px-4 py-3 font-medium">Factura prov.</th>
               <th class="px-4 py-3 font-medium">Fecha factura</th>
               <th class="px-4 py-3 font-medium">Registró</th>
+              <th class="px-4 py-3 font-medium">Pago</th>
               <th v-if="isAdmin" class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
        <tbody class="divide-y divide-default">
   <tr v-if="pending">
-    <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">Cargando…</td>
+    <td :colspan="colCount" class="px-4 py-8 text-center text-muted">Cargando…</td>
   </tr>
   <tr v-else-if="!movements.length">
-    <td :colspan="isAdmin ? 9 : 8" class="px-4 py-8 text-center text-muted">
+    <td :colspan="colCount" class="px-4 py-8 text-center text-muted">
       Sin entradas para el filtro actual.
     </td>
   </tr>
@@ -344,6 +482,28 @@ async function exportAll() {
         {{ fmtDay(m.supplierInvoiceDate) }}
       </td>
       <td class="px-4 py-3 text-muted">{{ m.createdByName ?? '—' }}</td>
+      <td class="px-4 py-3">
+        <div class="flex items-center gap-2 whitespace-nowrap">
+          <UBadge
+            :label="ENTRY_PAYMENT_STATUS_LABELS[m.paymentStatus]"
+            :color="PAYMENT_STATUS_COLORS[m.paymentStatus]"
+            variant="subtle"
+          />
+          <span v-if="m.paymentStatus === 'parcial'" class="text-xs text-muted tabular-nums">
+            resta {{ currency.format(m.balance) }}
+          </span>
+          <!-- Va aquí y no en "Acciones" porque esa columna es solo-admin y el
+               empleado también registra pagos. -->
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-wallet"
+            :title="m.voided ? 'Entrada anulada' : 'Ver pagos'"
+            @click="openPayments(m)"
+          />
+        </div>
+      </td>
       <td v-if="isAdmin" class="px-4 py-3 text-right">
         <div v-if="m.voided" class="flex justify-end">
           <UBadge label="Anulada" color="error" variant="subtle" size="xs" />
@@ -369,7 +529,7 @@ async function exportAll() {
     </tr>
     <!-- Panel de confirmación de anulación -->
     <tr v-if="isAdmin && voidingId === m.id" class="bg-elevated/40">
-      <td :colspan="9" class="px-4 py-3">
+      <td :colspan="colCount" class="px-4 py-3">
         <div class="flex flex-wrap items-start gap-3">
           <div class="flex-1">
             <p class="text-xs text-muted mb-1">
@@ -388,6 +548,10 @@ async function exportAll() {
         </div>
         <p class="mt-2 text-xs text-muted">
           Descuenta la cantidad del inventario. Solo es posible si aún no se ha vendido/transferido ese stock.
+        </p>
+        <p v-if="m.totalPaid > 0" class="mt-1 text-xs text-error">
+          Se borrarán los pagos registrados ({{ currency.format(m.totalPaid) }}): la mercancía se
+          devuelve, así que ese dinero deja de deberse.
         </p>
       </td>
     </tr>
@@ -455,7 +619,172 @@ async function exportAll() {
             </div>
           </form>
         </UCard>
-        
+
+      </template>
+    </UModal>
+
+    <!-- Pagos de la entrada -->
+    <UModal v-model:open="showPaymentsModal">
+      <template #content>
+        <UCard :ui="{ body: 'max-h-[75vh] overflow-y-auto' }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-wallet" class="size-5 text-primary" />
+              <div class="leading-tight">
+                <h2 class="font-semibold">{{ viewingMovement?.productName ?? 'Entrada' }}</h2>
+                <p class="font-mono text-xs text-muted">{{ viewingMovement?.folio ?? '—' }}</p>
+              </div>
+              <UBadge
+                v-if="viewingMovement"
+                :label="ENTRY_PAYMENT_STATUS_LABELS[viewingMovement.paymentStatus]"
+                :color="PAYMENT_STATUS_COLORS[viewingMovement.paymentStatus]"
+                variant="subtle"
+                class="ml-auto"
+              />
+            </div>
+          </template>
+
+          <div v-if="viewingMovement" class="space-y-5">
+            <!-- Datos de la entrada -->
+            <div class="grid gap-3 sm:grid-cols-2 text-sm">
+              <div>
+                <p class="text-muted text-xs">Sucursal</p>
+                <p class="font-medium">{{ viewingMovement.storeCode ?? '—' }}</p>
+              </div>
+              <div>
+                <p class="text-muted text-xs">Factura del proveedor</p>
+                <p class="font-medium">{{ viewingMovement.supplierInvoiceNumber ?? '—' }}</p>
+              </div>
+              <div>
+                <p class="text-muted text-xs">Cantidad</p>
+                <p class="font-medium tabular-nums">
+                  {{ qtyFmt.format(Number(viewingMovement.quantity)) }}
+                  <span class="text-muted">{{ viewingMovement.unit ?? '' }}</span>
+                </p>
+              </div>
+              <div>
+                <p class="text-muted text-xs">Costo unitario</p>
+                <p class="font-medium tabular-nums">
+                  {{ currency.format(Number(viewingMovement.unitValue)) }}
+                </p>
+              </div>
+            </div>
+
+            <USeparator />
+
+            <!-- Resumen de pago -->
+            <div class="grid gap-3 sm:grid-cols-3 text-sm rounded-lg bg-elevated/40 px-4 py-3">
+              <div>
+                <p class="text-muted text-xs">Total a pagar</p>
+                <p class="font-medium tabular-nums">
+                  {{ currency.format(viewingMovement.totalToPay) }}
+                </p>
+              </div>
+              <div>
+                <p class="text-muted text-xs">Pagado</p>
+                <p class="font-medium tabular-nums text-success">
+                  {{ currency.format(viewingMovement.totalPaid) }}
+                </p>
+              </div>
+              <div>
+                <p class="text-muted text-xs">Saldo pendiente</p>
+                <p class="font-medium tabular-nums text-error">
+                  {{ currency.format(viewingMovement.balance) }}
+                </p>
+              </div>
+            </div>
+            <p class="text-xs text-muted">
+              El total es el costo de la entrada, sin IVA ni retenciones.
+            </p>
+
+            <!-- Historial de pagos -->
+            <div>
+              <h3 class="text-sm font-semibold mb-2">Historial de pagos</h3>
+              <p v-if="loadingPayments" class="text-sm text-muted py-4 text-center">Cargando…</p>
+              <p v-else-if="!payments.length" class="text-sm text-muted py-4 text-center">
+                Sin pagos registrados todavía.
+              </p>
+              <ul v-else class="divide-y divide-default text-sm">
+                <li v-for="p in payments" :key="p.id" class="py-2">
+                  <p class="font-medium tabular-nums">{{ currency.format(Number(p.amount)) }}</p>
+                  <p class="text-xs text-muted">
+                    {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
+                    <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
+                  </p>
+                  <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Una entrada anulada no admite pagos: la anulación ya borró los suyos. -->
+            <UAlert
+              v-if="viewingMovement.voided"
+              color="neutral"
+              variant="soft"
+              icon="i-lucide-ban"
+              title="Entrada anulada"
+              description="La mercancía se devolvió, así que no hay nada que pagar."
+            />
+
+            <template v-else-if="canWrite && viewingMovement.balance > 0">
+              <USeparator />
+
+              <!-- Alta de pago (el observador solo ve el historial) -->
+              <div class="space-y-3">
+                <h3 class="text-sm font-semibold">Registrar pago</h3>
+                <div class="grid gap-3 sm:grid-cols-2">
+                  <UFormField label="Monto">
+                    <UInputNumber
+                      v-model="paymentForm.amount"
+                      :min="0"
+                      :max="viewingMovement.balance"
+                      :step="0.01"
+                      :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                      :placeholder="`máx. ${viewingMovement.balance.toFixed(2)}`"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField label="Fecha de pago">
+                    <UInput v-model="paymentForm.paidAt" type="date" class="w-full" />
+                  </UFormField>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-2">
+                  <UFormField label="Método">
+                    <USelect v-model="paymentForm.method" :items="paymentMethodItems" class="w-full" />
+                  </UFormField>
+                  <UFormField label="Nota (opcional)">
+                    <UInput v-model="paymentForm.note" placeholder="Referencia, folio…" class="w-full" />
+                  </UFormField>
+                </div>
+                <div class="flex justify-end">
+                  <UButton
+                    icon="i-lucide-plus"
+                    color="primary"
+                    :loading="submittingPayment"
+                    :disabled="!canSubmitPayment"
+                    @click="submitPayment"
+                  >
+                    Agregar pago
+                  </UButton>
+                </div>
+              </div>
+            </template>
+
+            <UAlert
+              v-else-if="viewingMovement.balance <= 0"
+              color="success"
+              variant="soft"
+              icon="i-lucide-circle-check"
+              title="Entrada completamente pagada"
+            />
+          </div>
+
+          <div class="flex justify-end pt-4">
+            <UButton variant="ghost" color="neutral" @click="showPaymentsModal = false">
+              Cerrar
+            </UButton>
+          </div>
+        </UCard>
       </template>
     </UModal>
   </UContainer>
