@@ -1,0 +1,1 @@
+ALTER TABLE "entry_payments" DROP COLUMN "paid_by";

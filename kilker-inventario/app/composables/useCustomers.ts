@@ -29,12 +29,10 @@ export function useCustomers() {
     }
   }
 
-  const watching = useState('customers-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('customers', () => {
     watch(page, () => void refresh())
     void refresh()
-  }
+  })
 
   return { customers, total, page, pageSize, pending, error, refresh }
 }
@@ -57,11 +55,9 @@ export function useAllCustomers() {
     }
   }
 
-  const watching = useState('all-customers-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('all-customers', () => {
     void refresh()
-  }
+  })
 
   return { customers, pending, error, refresh }
 }

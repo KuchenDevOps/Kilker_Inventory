@@ -2,23 +2,10 @@
 //  GET /api/dashboard/summary — todas las métricas del dashboard en 1 request
 // ───────────────────────────────────────────────
 
-//
-// Reglas replicadas tal cual de los endpoints originales, para que los
-// números no cambien:
-//   · Entradas  → stock_movements type='entrada', filtrado por
-//                 supplier_invoice_date (igual que GET /api/movements), y
-//                 excluyendo las facturas 'II' (lo hacía el dashboard).
-//   · Ventas    → invoices status='emitida', filtrado por issued_at.
-//   · Gastos    → expenses filtrado por paid_at. Todo se mide contra
-//                 `expenses.amount` (subtotal NETO; IVA y retenciones son
-//                 informativos): pagado = min(amount, abonos), saldo =
-//                 max(0, amount − abonos), ambos POR gasto antes de sumar.
-//
-// Parámetros: ?storeId (admin; el empleado siempre ve la suya), ?from, ?to
-// (ISO) y ?month (YYYY-MM) para el cierre de inventario.
 import { and, eq, gte, lt, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import {
+  entryPayments,
   expensePayments,
   expenses,
   invoices,
@@ -71,6 +58,8 @@ export default defineEventHandler(async (event) => {
       from: from ?? null,
       to: to ?? null,
       entriesValue: 0,
+      entriesPaid: 0,
+      entriesBalance: 0,
       salesValue: 0,
       expenses: { Fijo: EMPTY_EXPENSE_BUCKET, Operativo: EMPTY_EXPENSE_BUCKET },
       soldTotals: { totalCost: 0, totalRevenue: 0, totalProfit: 0 },
@@ -82,7 +71,13 @@ export default defineEventHandler(async (event) => {
   const entryFilters = [
     eq(stockMovements.type, 'entrada'),
     // El dashboard excluía las entradas con factura 'II'. NULL sí cuenta.
-    sql`coalesce(upper(trim(${stockMovements.supplierInvoiceNumber})), '') <> 'II'`
+    sql`coalesce(upper(trim(${stockMovements.supplierInvoiceNumber})), '') <> 'II'`,
+   
+    sql`not exists (
+      select 1 from "stock_movements" rev
+      where rev."type" = 'anulacion'
+        and rev."reverses_movement_id" = ${stockMovements.id}
+    )`
   ]
   if (storeId) entryFilters.push(eq(stockMovements.storeId, storeId))
   const entryFrom = toMovementDate(from)
@@ -115,10 +110,32 @@ export default defineEventHandler(async (event) => {
     .groupBy(expensePayments.expenseId)
     .as('payments_agg')
 
-  const [entryRows, saleRows, expenseRows, soldTotals, monthly] = await Promise.all([
+  // Abonado por entrada, para poder topar por entrada antes de agregar (mismo
+  // criterio que gastos: un sobrepago no debe tapar el saldo de otra).
+  const entryPaymentsAgg = db
+    .select({
+      movementId: entryPayments.movementId,
+      paid: sql<string>`sum(${entryPayments.amount})`.as('entry_paid')
+    })
+    .from(entryPayments)
+    .groupBy(entryPayments.movementId)
+    .as('entry_payments_agg')
+
+  const [entryRows, entryPaymentRows, saleRows, expenseRows, soldTotals, monthly] = await Promise.all([
     db
       .select({ value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)` })
       .from(stockMovements)
+      .where(and(...entryFilters)),
+
+    // Pagado y saldo de esas mismas entradas. `least`/`greatest` topan por
+    // entrada para que pagado + pendiente nunca exceda su costo.
+    db
+      .select({
+        totalPaid: sql<string>`coalesce(sum(least(round(${stockMovements.totalValue}, 2), round(coalesce(${entryPaymentsAgg.paid}, 0), 2))), 0)`,
+        balance: sql<string>`coalesce(sum(greatest(0, round(${stockMovements.totalValue}, 2) - round(coalesce(${entryPaymentsAgg.paid}, 0), 2))), 0)`
+      })
+      .from(stockMovements)
+      .leftJoin(entryPaymentsAgg, eq(entryPaymentsAgg.movementId, stockMovements.id))
       .where(and(...entryFilters)),
 
     db
@@ -126,14 +143,7 @@ export default defineEventHandler(async (event) => {
       .from(invoices)
       .where(and(...saleFilters)),
 
-    // Todo se mide contra `expenses.amount` (el subtotal NETO del gasto, que el
-    // POST/PATCH mantiene igual a la suma de conceptos). El IVA y las
-    // retenciones son informativos y no entran aquí.
-    //
-    // `least(...)` en el pagado: hay abonos históricos capturados con IVA
-    // (monto × 1.16) que, sumados en crudo, inflaban esta tarjeta por encima
-    // del gasto real. Topándolo, pagado + pendiente siempre da el monto del
-    // gasto y un dato malo no descuadra el tablero.
+
     db
       .select({
         type: expenses.type,
@@ -170,6 +180,8 @@ export default defineEventHandler(async (event) => {
     from: from ?? null,
     to: to ?? null,
     entriesValue: round2(Number(entryRows[0]?.value ?? 0)),
+    entriesPaid: round2(Number(entryPaymentRows[0]?.totalPaid ?? 0)),
+    entriesBalance: round2(Number(entryPaymentRows[0]?.balance ?? 0)),
     salesValue: round2(Number(saleRows[0]?.value ?? 0)),
     expenses: expensesByType,
     soldTotals,

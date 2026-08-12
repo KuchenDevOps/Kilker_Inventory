@@ -51,12 +51,10 @@ export function useProducts() {
     }
   }
 
-  const watching = useState('products-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('products', () => {
     watch(page, () => void refresh())
     void refresh()
-  }
+  })
 
   return { products, total, page, pageSize, pending, error, refresh }
 }
@@ -80,11 +78,9 @@ export function useAllProducts() {
     }
   }
 
-  const watching = useState('all-products-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('all-products', () => {
     void refresh()
-  }
+  })
 
   return { products, pending, error, refresh }
 }
@@ -122,11 +118,9 @@ export function useKits() {
     }
   }
 
-  const watching = useState('kits-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('kits', () => {
     watch(user, () => void refresh(), { immediate: true })
-  }
+  })
 
   return { kits, pending, error, refresh }
 }
@@ -177,12 +171,13 @@ export function useMe() {
     }
   }
 
-  // Solo el primer consumidor instala el watcher; el resto lee el estado compartido.
-  const watching = useState('me-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  // Solo el primer consumidor instala el watcher; el resto lee el estado
+  // compartido. Va en un scope detached (useSharedScope) porque el layout se
+  // desmonta al ir a /login y con un watch normal el perfil ya no se recargaba
+  // al volver a entrar.
+  useSharedScope('me', () => {
     watch(user, () => void refresh(), { immediate: true })
-  }
+  })
 
   /**
    * false para roles de solo consulta (hoy `observador`). Espejo en la UI del
@@ -375,13 +370,9 @@ export function useMovements() {
     }
   }
 
-  if (import.meta.client && !useNuxtApp()._movementsWatchScope) {
-    const scope = effectScope(true) // detached: no se ata al componente actual
-    useNuxtApp()._movementsWatchScope = scope
-    scope.run(() => {
-      watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
-    })
-  }
+  useSharedScope('movements', () => {
+    watch([user, storeId, from, to, search], () => void refresh(), { immediate: true })
+  })
 
   return { movements, pending, error, storeId, from, to, search, refresh }
 }
@@ -424,11 +415,9 @@ export function useTickets() {
     }
   }
 
-  const watching = useState('tickets-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('tickets', () => {
     watch([user, status], () => void refresh(), { immediate: true })
-  }
+  })
 
   return { tickets, pending, error, status, refresh }
 }
@@ -618,11 +607,9 @@ export function useUsers() {
     }
   }
 
-  const watching = useState('users-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('users', () => {
     watch(user, () => void refresh(), { immediate: true })
-  }
+  })
 
   return { users, pending, error, refresh }
 }

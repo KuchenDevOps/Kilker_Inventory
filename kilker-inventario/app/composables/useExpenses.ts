@@ -63,9 +63,7 @@ export function useExpenses() {
     }
   }
 
-  const watching = useState('expenses-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  useSharedScope('expenses', () => {
     // Volver a la página 1 al cambiar un filtro. Si `page` ya cambió, el
     // watcher de abajo hace el fetch; llamar refresh() aquí además lo
     // duplicaría.
@@ -88,7 +86,7 @@ export function useExpenses() {
     })
 
     watch(page, () => void refresh())
-  }
+  })
 
   return { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh }
 }
