@@ -38,12 +38,18 @@ const storeEditItems = computed(() => stores.value.map((s) => ({ label: `${s.cod
 
 const qtyFmt = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 3 })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
-const dayFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
-function fmtDate(s: string | null) {
-  return s ? dateFmt.format(new Date(s)) : '—'
+function fmtDate(s: string | null | undefined) {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  return dateFmt.format(d)
 }
-function fmtDay(s: string | null) {
-  return s ? dayFmt.format(new Date(`${s}T00:00:00`)) : '—'
+const dayFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
+function fmtDay(s: string | null | undefined) {
+  if (!s) return '—'
+  const d = new Date(`${s}T00:00:00`)
+  if (isNaN(d.getTime())) return '—'
+  return dayFmt.format(d)
 }
 
 // ───────────────────────────────────────────────

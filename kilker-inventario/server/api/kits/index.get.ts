@@ -1,13 +1,7 @@
 // ───────────────────────────────────────────────
 //  GET /api/kits — kits de venta con sus productos y precios
 // ───────────────────────────────────────────────
-// Cada línea de `sales_kit_items` puede traer `unit_price` con un precio
-// pactado para el kit; si viene null, la línea hereda `products.price`.
-// El endpoint resuelve esa herencia y devuelve ambos precios (el de catálogo
-// y el efectivo) para que la UI pueda mostrar cuándo el kit trae descuento.
-//
-// Filtros: ?q (SKU o nombre), ?isActive. Paginación ?page&pageSize; sin `page`
-// devuelve el arreglo completo (misma convención que el resto de listados).
+
 import { and, count, eq, ilike, or } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { salesKits } from '../../db/schema'

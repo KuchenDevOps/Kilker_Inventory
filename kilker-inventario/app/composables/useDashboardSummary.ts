@@ -4,9 +4,6 @@
 // Sustituye a las llamadas a /api/sales, /api/movements, /api/expenses,
 // /api/average-costs, /api/reports/monthly-inventory y la segunda pasada a
 // /api/reports/top-products. Todo se agrega en el servidor.
-//
-// Sin watchers propios: el dashboard orquesta cuándo recargar. Así no se
-// disparan fetches duplicados al montar la página.
 import type { ApiMonthlyInventory } from '~/types/inventario'
 
 export interface ExpenseBucket {

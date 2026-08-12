@@ -62,12 +62,12 @@ const storeFilter = computed({
 })
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
-const dateFmt = new Intl.DateTimeFormat('es-MX', {
-  dateStyle: 'medium',
-  timeStyle: 'short'
-})
-function fmtDate(s: string | null) {
-  return s ? dateFmt.format(new Date(s)) : '—'
+const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
+function fmtDate(s: string | null | undefined) {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  return dateFmt.format(d)
 }
 
 // Anulación (solo admin): confirmación inline con motivo.
@@ -180,6 +180,54 @@ async function openDetail(sale: ApiSale) {
 const exportingAll = ref(false)
 const exportingFiltered = ref(false)
 
+/** Celda de Excel: SheetJS acepta string o number tal cual. */
+type SheetRow = Record<string, string | number>
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+/** Kits distintos que participan en la venta (las líneas vienen explotadas). */
+function kitCount(s: ApiSale) {
+  const ids = new Set<number>()
+  for (const it of s.items) if (it.kitId != null) ids.add(it.kitId)
+  return ids.size
+}
+
+/**
+ * Ordena las líneas para el Excel: primero los productos sueltos y después
+ * cada kit con sus componentes juntos. El API no garantiza orden, y un kit
+ * partido en renglones salteados es ilegible en la hoja.
+ */
+function itemsGroupedByKit(items: ApiSaleItem[]): ApiSaleItem[] {
+  const loose: ApiSaleItem[] = []
+  const byKit = new Map<number, ApiSaleItem[]>()
+  for (const it of items) {
+    if (it.kitId == null) {
+      loose.push(it)
+      continue
+    }
+    const group = byKit.get(it.kitId)
+    if (group) group.push(it)
+    else byKit.set(it.kitId, [it])
+  }
+  return [...loose, ...[...byKit.values()].flat()]
+}
+
+
+function totalsToSheet(sales: ApiSale[]): SheetRow[] {
+  const bucket = (rows: ApiSale[]) => ({
+    Facturas: rows.length,
+    Subtotal: round2(rows.reduce((acc, s) => acc + Number(s.subtotalAmount), 0)),
+    Descuento: round2(rows.reduce((acc, s) => acc + Number(s.discountAmount), 0)),
+    Total: round2(rows.reduce((acc, s) => acc + Number(s.totalAmount), 0))
+  })
+
+  return [
+    { Concepto: 'Ventas emitidas', ...bucket(sales.filter((s) => s.status !== 'anulada')) },
+    { Concepto: 'Ventas anuladas', ...bucket(sales.filter((s) => s.status === 'anulada')) },
+    { Concepto: 'Total general', ...bucket(sales) }
+  ]
+}
+
 // Hoja 1: resumen de ventas
 function salesToSheet(rows: ApiSale[]) {
   return rows.map((s) => ({
@@ -187,51 +235,106 @@ function salesToSheet(rows: ApiSale[]) {
     Fecha: fmtDate(s.issuedAt),
     Sucursal: s.storeCode ?? '',
     Cliente: s.customerName ?? 'Sin cliente',
+    Kits: kitCount(s),
     'Productos (líneas)': s.itemCount,
-    Total: Number(s.totalAmount),
+    Subtotal: round2(Number(s.subtotalAmount)),
+    'Descuento %': Number(s.discountPct),
+    Descuento: round2(Number(s.discountAmount)),
+    Total: round2(Number(s.totalAmount)),
     Canal: s.channel === 'en_linea' ? 'En línea' : 'Mostrador',
     Estado: s.status === 'anulada' ? 'Anulada' : 'Emitida',
     Creó: s.createdByName ?? ''
   }))
 }
 
-// Hoja 2: desglose línea por línea de cada ticket
+
+
 function saleItemsToSheet(sales: ApiSale[]) {
-  const rows: Record<string, any>[] = []
+  const rows: SheetRow[] = []
   for (const s of sales) {
-    for (const it of s.items) {
-      rows.push({
+    const factor = 1 - Number(s.discountPct ?? 0) / 100
+    const items = itemsGroupedByKit(s.items)
+    const saleRows: SheetRow[] = []
+
+    for (const it of items) {
+      saleRows.push({
         Folio: s.folio ?? '',
         Fecha: fmtDate(s.issuedAt),
         Sucursal: s.storeCode ?? '',
         Cliente: s.customerName ?? 'Sin cliente',
+        Tipo: it.kitId != null ? 'Kit' : 'Suelto',
+        Kit: it.kitName ?? '',
+        'SKU kit': it.kitSku ?? '',
+        'Cant. kits': it.kitQuantity != null ? Number(it.kitQuantity) : '',
         Producto: it.productName ?? '',
         SKU: it.productSku ?? '',
         Cantidad: Number(it.quantity),
         'Precio unitario': Number(it.unitPrice),
-        'Total línea': Number(it.lineTotal),
+        'Total línea': round2(Number(it.lineTotal)),
+        'Descuento %': Number(s.discountPct),
+        'Total con descuento': round2(Number(it.lineTotal) * factor),
         Estado: s.status === 'anulada' ? 'Anulada' : 'Emitida'
       })
     }
+
+    // Cuadre exacto contra la hoja 1: el redondeo por línea puede dejar un
+    // par de centavos de diferencia; se ajusta la última línea de la venta.
+    const last = saleRows[saleRows.length - 1]
+    if (last) {
+      const sum = saleRows.reduce((acc, r) => acc + Number(r['Total con descuento']), 0)
+      const residual = round2(round2(Number(s.totalAmount)) - sum)
+      if (residual !== 0) {
+        last['Total con descuento'] = round2(Number(last['Total con descuento']) + residual)
+      }
+    }
+
+    rows.push(...saleRows)
   }
   return rows
+}
+
+/** Filtro por encabezado en Excel. `!ref` de json_to_sheet ya es header + datos. */
+function addAutofilter(sheet: XLSX.WorkSheet) {
+  if (sheet['!ref']) sheet['!autofilter'] = { ref: sheet['!ref'] }
 }
 
 function downloadSalesWorkbook(sales: ApiSale[], filenamePrefix: string) {
   const workbook = XLSX.utils.book_new()
 
+  // Hoja 0: va primera porque es la que responde "¿cuánto vendí?" sin filtrar.
+  const totalsSheet = XLSX.utils.json_to_sheet(totalsToSheet(sales))
+  totalsSheet['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }]
+  XLSX.utils.sheet_add_aoa(
+    totalsSheet,
+    [
+      [],
+      ['La venta del negocio es el renglón "Ventas emitidas".'],
+      ['Las anuladas salen en las demás hojas (columna Estado) pero no son venta.']
+    ],
+    { origin: -1 }
+  )
+  XLSX.utils.book_append_sheet(workbook, totalsSheet, 'Resumen')
+
   const summarySheet = XLSX.utils.json_to_sheet(salesToSheet(sales))
+  // Folio, Fecha, Sucursal, Cliente, Kits, Líneas, Subtotal, Desc. %,
+  // Descuento, Total, Canal, Estado, Creó
   summarySheet['!cols'] = [
-    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 22 },
-    { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 18 }
+    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 22 }, { wch: 7 },
+    { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 },
+    { wch: 12 }, { wch: 10 }, { wch: 18 }
   ]
+  addAutofilter(summarySheet)
   XLSX.utils.book_append_sheet(workbook, summarySheet, 'Ventas')
 
   const itemsSheet = XLSX.utils.json_to_sheet(saleItemsToSheet(sales))
+  // Folio, Fecha, Sucursal, Cliente, Tipo, Kit, SKU kit, Cant. kits,
+  // Producto, SKU, Cantidad, P. unit., Total línea, Desc. %, Total c/desc., Estado
   itemsSheet['!cols'] = [
-    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 22 },
-    { wch: 25 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }
+    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 22 }, { wch: 8 },
+    { wch: 25 }, { wch: 14 }, { wch: 10 }, { wch: 25 }, { wch: 12 },
+    { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 10 }
   ]
+  addAutofilter(itemsSheet)
   XLSX.utils.book_append_sheet(workbook, itemsSheet, 'Detalle de tickets')
 
   const fecha = new Date().toISOString().slice(0, 10)
@@ -407,7 +510,6 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
     </header>
 
     <div class="space-y-3">
-      <!-- Asegúrate de que el nombre del componente coincida -->
       <FiltroPeriodo
         v-model:search="search"
         v-model:from="from"

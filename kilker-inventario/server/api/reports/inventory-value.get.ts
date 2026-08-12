@@ -1,6 +1,5 @@
 // GET /api/reports/inventory-value?storeId=&asOf=
 // Valor de inventario "a hoy" (o a una fecha de corte) por producto y sucursal.
-// Pensado para exportación puntual — nadie lo llama automáticamente.
 import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, stockMovements } from '../../db/schema'
