@@ -17,8 +17,11 @@ const apiFetch = useApiFetch()
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
-function fmtDate(s: string | null) {
-  return s ? dateFmt.format(new Date(s)) : 'inicio'
+function fmtDate(s: string | null | undefined) {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  return dateFmt.format(d)
 }
 
 const storeFilterItems = computed(() => [

@@ -64,9 +64,15 @@ const {
 // Antes eran una segunda llamada a top-products con limit=0.
 const allProductsTotals = computed(() => summary.value?.soldTotals ?? null)
 
+const netSalesValue = computed(() => summary.value?.salesValue ?? 0)
+
+const allProductsNetProfit = computed(() =>
+  Math.round((netSalesValue.value - (allProductsTotals.value?.totalCost ?? 0)) * 100) / 100
+)
+
 const allProductsProfitPct = computed(() => {
-  if (!allProductsTotals.value || allProductsTotals.value.totalRevenue <= 0) return 0
-  return (allProductsTotals.value.totalProfit / allProductsTotals.value.totalRevenue) * 100
+  if (netSalesValue.value <= 0) return 0
+  return (allProductsNetProfit.value / netSalesValue.value) * 100
 })
 
 // --- DEFINIR PERIODFROM Y PERIODTO ---
@@ -182,7 +188,8 @@ function stockFor(p: (typeof products.value)[number]) {
 // entradas y todas las ventas del periodo para sumarlas aquí.
 const entryValue = computed(() => summary.value?.entriesValue ?? 0)
 
-const totalLoses = computed(() => (allProductsTotals.value?.totalProfit ?? 0) - totalExpensesPaid.value)
+
+const totalLoses = computed(() => allProductsNetProfit.value - totalExpensesPaid.value)
 const activeStores = computed(() => stores.value.filter((s) => s.isActive).length)
 
 const lowStock = computed(() =>
@@ -268,7 +275,7 @@ const metricsSection2 = computed(() => {
 
   all.push({
     label: 'Venta total',
-    value: currency.format(allProductsTotals.value?.totalRevenue ?? 0),
+    value: currency.format(netSalesValue.value),
     hint: 'de todos los productos vendidos',
     icon: 'i-lucide-trending-up',
     color: 'text-info',
@@ -277,10 +284,10 @@ const metricsSection2 = computed(() => {
   })
    all.push({
   label: 'Utilidad total',
-  value: currency.format(allProductsTotals.value?.totalProfit ?? 0),
+  value: currency.format(allProductsNetProfit.value),
   hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
-  icon: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
-  color: (allProductsTotals.value?.totalProfit ?? 0) >= 0 ? 'text-success' : 'text-error',
+  icon: (allProductsNetProfit.value >= 0) ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
+  color: (allProductsNetProfit.value >= 0) ? 'text-success' : 'text-error',
   loading: loadingSummary.value,
   globalOnly: false
 })
@@ -418,7 +425,7 @@ const filteredTopProducts = computed(() => {
       </div>
       <div class="flex gap-2">
       
-        <UButton v-if="canWrite"to="/productos/nuevo" icon="i-lucide-plus" color="primary">
+        <UButton v-if="canWrite" to="/productos/nuevo" icon="i-lucide-plus" color="primary">
           Nuevo producto
         </UButton>
       </div>

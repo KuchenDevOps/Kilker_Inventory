@@ -1,7 +1,6 @@
 // ───────────────────────────────────────────────
 //  VALUACIÓN DE INVENTARIO POR MES (FIFO)
 // ───────────────────────────────────────────────
-// Movido desde server/api/reports/monthly-inventory.ts para poder reusarlo
 // desde /api/dashboard/summary sin duplicar la lógica de costeo. El endpoint
 // quedó como envoltorio delgado; la lógica de aquí es la misma, sin cambios
 // de cálculo.

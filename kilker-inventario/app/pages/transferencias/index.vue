@@ -39,11 +39,14 @@ const statusItems = [
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
-const dateOnlyFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
+function fmtDate(s: string | null | undefined) {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  return dateFmt.format(d)
+}const dateOnlyFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
 
-function fmtDate(s: string | null) {
-  return s ? dateFmt.format(new Date(s)) : '—'
-}
+
 function fmtDateOnly(s: string | null) {
   return s ? dateOnlyFmt.format(new Date(s)) : '—'
 }
