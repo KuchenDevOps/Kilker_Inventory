@@ -52,16 +52,12 @@ export function useMovementsHistory() {
     }
   }
 
-  if (import.meta.client && !useNuxtApp()._movementsHistoryWatchScope) {
-    const scope = effectScope(true)
-    useNuxtApp()._movementsHistoryWatchScope = scope
-    scope.run(() => {
-      // Cambios de filtro regresan a página 1
-      watch([user, storeId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
-      // Cambio de página solo re-fetchea
-      watch(page, () => void refresh())
-    })
-  }
+  useSharedScope('movements-history', () => {
+    // Cambios de filtro regresan a página 1
+    watch([user, storeId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
+    // Cambio de página solo re-fetchea
+    watch(page, () => void refresh())
+  })
 
   return { movements, total, page, pageSize, pending, error, storeId, from, to, search, refresh }
 }
@@ -129,14 +125,10 @@ if (Array.isArray(res)) {
     }
   }
 
-  if (import.meta.client && !useNuxtApp()._salesHistoryWatchScope) {
-    const scope = effectScope(true)
-    useNuxtApp()._salesHistoryWatchScope = scope
-    scope.run(() => {
-      watch([user, status, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
-      watch(page, () => void refresh())
-    })
-  }
+  useSharedScope('sales-history', () => {
+    watch([user, status, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
+    watch(page, () => void refresh())
+  })
 
   return { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
 }
@@ -196,16 +188,12 @@ export function useTransferHistory() {
     }
   }
 
-  if (import.meta.client && !useNuxtApp()._transfersHistoryWatchScope) {
-    const scope = effectScope(true)
-    useNuxtApp()._transfersHistoryWatchScope = scope
-    scope.run(() => {
-      // Cambios de filtro regresan a página 1
-      watch([user, status, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
-      // Cambio de página solo re-fetchea
-      watch(page, () => void refresh())
-    })
-  }
+  useSharedScope('transfers-history', () => {
+    // Cambios de filtro regresan a página 1
+    watch([user, status, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
+    // Cambio de página solo re-fetchea
+    watch(page, () => void refresh())
+  })
 
   return { transfers, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
 }
@@ -259,12 +247,13 @@ export function useTicketsHistory() {
     }
   }
 
-  const watching = useState('tickets-watching', () => false)
-  if (import.meta.client && !watching.value) {
-    watching.value = true
+  // Ojo: clave propia. Antes compartía la bandera 'tickets-watching' con
+  // useTickets() de useInventoryApi.ts, así que el primero en montarse dejaba
+  // al otro sin watchers.
+  useSharedScope('tickets-history', () => {
     watch([user, status], () => { page.value = 1; void refresh() }, { immediate: true })
     watch(page, () => void refresh())
-  }
+  })
 
   return { tickets, total, page, pageSize, pending, error, status, refresh }
 }
@@ -477,14 +466,10 @@ export function useUsersHistory() {
     }
   }
 
-  if (import.meta.client && !useNuxtApp()._usersWatchScope) {
-    const scope = effectScope(true)
-    useNuxtApp()._usersWatchScope = scope
-    scope.run(() => {
-      watch(user, () => { page.value = 1; void refresh() }, { immediate: true })
-      watch(page, () => void refresh())
-    })
-  }
+  useSharedScope('users-history', () => {
+    watch(user, () => { page.value = 1; void refresh() }, { immediate: true })
+    watch(page, () => void refresh())
+  })
 
   return { users, total, page, pageSize, pending, error, refresh }
 }

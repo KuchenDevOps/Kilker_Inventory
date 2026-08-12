@@ -325,8 +325,42 @@ export interface ApiMovement {
   folio: string | null
   createdByName: string | null
   createdAt: string
-    voided: boolean
+  voided: boolean
+  /** Costo limpio de la entrada (= totalValue). Sin IVA ni retenciones. */
+  totalToPay: number
+  totalPaid: number
+  balance: number
+  /** Derivado en el servidor, no vive en la BD. `anulada` gana sobre el resto. */
+  paymentStatus: EntryPaymentStatus
+}
 
+export type EntryPaymentStatus = 'pendiente' | 'parcial' | 'pagado' | 'anulada'
+
+export const ENTRY_PAYMENT_STATUS_LABELS: Record<EntryPaymentStatus, string> = {
+  pendiente: 'Pendiente',
+  parcial: 'Parcial',
+  pagado: 'Pagado',
+  anulada: 'Anulada'
+}
+
+/** Abono de una entrada (`GET /api/movements/:id/payments`). */
+export interface ApiEntryPayment {
+  id: number
+  movementId: number
+  amount: string
+  paidAt: string
+  method: PaymentMethod
+  note: string | null
+  createdByName: string | null
+  createdAt: string
+}
+
+/** Cuerpo para registrar un abono (`POST /api/movements/:id/payments`). */
+export interface NewEntryPaymentInput {
+  amount: number
+  paidAt: string
+  method?: PaymentMethod
+  note?: string
 }
 
 /** Corte de caja (snapshot) tal como lo lista `GET /api/cortes`. Los numeric → string. */

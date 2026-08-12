@@ -5,7 +5,7 @@
 // y registra un movimiento 'anulacion' ligado al original.
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../../../db'
-import { inventory, stockMovements } from '../../../db/schema'
+import { entryPayments, inventory, stockMovements } from '../../../db/schema'
 
 interface VoidBody {
   reason?: string
@@ -67,6 +67,12 @@ export default defineEventHandler(async (event) => {
       .set({ quantity: sql`${inventory.quantity} - ${quantity}`, updatedAt: new Date() })
       .where(and(eq(inventory.productId, movement.productId), eq(inventory.storeId, movement.storeId)))
 
-    return { ok: true }
+  
+    const deletedPayments = await tx
+      .delete(entryPayments)
+      .where(eq(entryPayments.movementId, id))
+      .returning({ id: entryPayments.id })
+
+    return { ok: true, deletedPayments: deletedPayments.length }
   })
 })

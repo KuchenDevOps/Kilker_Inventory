@@ -16,8 +16,11 @@ export interface DashboardSummary {
   storeId: number | null
   from: string | null
   to: string | null
-  /** Compras del periodo (entradas, excluyendo facturas 'II'). */
+  /** Compras del periodo (entradas, excluyendo facturas 'II' y anuladas). */
   entriesValue: number
+  /** Abonado y saldo de esas mismas compras: suman `entriesValue`. */
+  entriesPaid: number
+  entriesBalance: number
   /** Ventas emitidas del periodo. */
   salesValue: number
   expenses: Record<'Fijo' | 'Operativo', ExpenseBucket>
