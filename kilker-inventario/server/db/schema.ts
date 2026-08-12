@@ -329,6 +329,24 @@ export const stockMovements = pgTable(
   ]
 ).enableRLS()
 
+export const entryPayments = pgTable(
+  'entry_payments',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    movementId: bigint('movement_id', { mode: 'number' })
+      .notNull()
+      .references(() => stockMovements.id),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    paidAt: date('paid_at').notNull(),
+    method: paymentMethod('method').notNull().default('efectivo'),
+    note: text('note'),
+    createdBy: uuid('created_by').notNull().references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [index('entry_payments_movement_idx').on(t.movementId, t.paidAt)]
+).enableRLS()
+
+
 export const entryFolioCounters = pgTable('entry_folio_counters', {
   storeId: bigint('store_id', { mode: 'number' })
     .primaryKey()
@@ -612,6 +630,17 @@ export const salesKitItemsRelations = relations(salesKitItems, ({ one }) => ({
   })
 }))
 
+export const entryPaymentsRelations = relations(entryPayments, ({ one }) => ({
+  movement: one(stockMovements, {
+    fields: [entryPayments.movementId],
+    references: [stockMovements.id]
+  }),
+  createdBy: one(profiles, {
+    fields: [entryPayments.createdBy],
+    references: [profiles.id]
+  })
+}))
+
 export const customersRelations = relations(customers, ({ many }) => ({
   invoices: many(invoices)
 }))
@@ -665,7 +694,7 @@ export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
 
 export const stockMovementsRelations = relations(
   stockMovements,
-  ({ one }) => ({
+  ({ one, many }) => ({
     product: one(products, {
       fields: [stockMovements.productId],
       references: [products.id]
@@ -690,7 +719,8 @@ export const stockMovementsRelations = relations(
     createdBy: one(profiles, {
       fields: [stockMovements.createdBy],
       references: [profiles.id]
-    })
+    }),
+    payments: many(entryPayments) 
   })
 )
 
@@ -826,3 +856,5 @@ export type SalesKit = typeof salesKits.$inferSelect
 export type NewSalesKit = typeof salesKits.$inferInsert
 export type SalesKitItem = typeof salesKitItems.$inferSelect
 export type NewSalesKitItem = typeof salesKitItems.$inferInsert
+export type EntryPayment = typeof entryPayments.$inferSelect
+export type NewEntryPayment = typeof entryPayments.$inferInsert

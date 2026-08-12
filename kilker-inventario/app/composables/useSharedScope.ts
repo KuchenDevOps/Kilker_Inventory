@@ -18,7 +18,7 @@ export function useSharedScope(key: string, setup: () => void) {
   const slot = `_sharedScope_${key}`
   if (bag[slot]) return
 
-  const scope = effectScope(true) // detached: no se ata al componente actual
+  const scope = effectScope(true) 
   bag[slot] = scope
   scope.run(setup)
 }
