@@ -214,11 +214,11 @@ const recentProducts = computed(() => {
 // petición aparte (ni se recalcula dos veces al montar).
 const monthlyInventory = computed(() => summary.value?.monthly ?? null)
 
-// Deriva YYYY-MM desde el filtro de periodo global. Si no hay periodo elegido
-// ("Todo"), cae al mes calendario actual como default razonable.
+
 const derivedMonth = computed(() => {
-  if (periodFrom.value) return periodFrom.value.slice(0, 7)
-  return new Date().toISOString().slice(0, 7)
+  const lastDay = periodTo.value ? new Date(periodTo.value) : new Date()
+  if (periodTo.value) lastDay.setDate(lastDay.getDate() - 1)
+  return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}`
 })
 
 // --- MÉTRICAS ---
