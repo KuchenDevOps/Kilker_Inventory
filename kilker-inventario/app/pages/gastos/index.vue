@@ -311,9 +311,10 @@ const viewingTotalWithTaxes = computed(() => {
 
 // Resumen de conceptos para la tabla (evita mostrar N filas por gasto).
 function reasonsSummary(e: ApiExpense) {
-  if (!e.items?.length) return '—'
-  if (e.items.length === 1) return e.items[0].reason
-  return `${e.items[0].reason} +${e.items.length - 1} más`
+  const first = e.items?.[0]
+  if (!first) return '—'
+  if (e.items.length === 1) return first.reason
+  return `${first.reason} +${e.items.length - 1} más`
 }
 
 onMounted(() => {

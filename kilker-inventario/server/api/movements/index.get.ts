@@ -125,6 +125,7 @@ export default defineEventHandler(async (event) => {
     // Después de traer `rows`, antes del return:
 
 
-  const [{ value: total }] = await db.select({ value: count() }).from(stockMovements).where(whereClause)
+  const total =
+    (await db.select({ value: count() }).from(stockMovements).where(whereClause))[0]?.value ?? 0
   return { data: mapped, total, page, pageSize }
 })

@@ -3,7 +3,11 @@
 // Cálculo de costo FIFO compartido entre endpoints (transferencias, reportes)
 // y scripts de corrección. 
 import { and, eq, inArray } from 'drizzle-orm'
+import type { Db } from '../db'
 import { invoiceItems, invoices, stockMovements } from '../db/schema'
+
+/** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 const EPSILON = 0.0005
 
@@ -14,7 +18,7 @@ export interface FifoLayer {
 
 
 export async function getFifoLayers(
-  tx: any,
+  tx: Tx,
   productId: number,
   storeId: number,
   asOf: Date = new Date()
@@ -28,20 +32,20 @@ export async function getFifoLayers(
     with: { transfer: { columns: { issuedAt: true, receivedAt: true } } }
   })
 
-  const movementTypeById = new Map(movements.map((m: any) => [m.id, m.type]))
+  const movementTypeById = new Map(movements.map((m) => [m.id, m.type]))
 
   const items = await tx.query.invoiceItems.findMany({
     where: eq(invoiceItems.productId, productId),
     columns: { quantity: true, unitPrice: true, invoiceId: true }
   })
-  const invoiceIds = [...new Set(items.map((i: any) => i.invoiceId))]
+  const invoiceIds = [...new Set(items.map((i) => i.invoiceId))]
   const relatedInvoices = invoiceIds.length
     ? await tx.query.invoices.findMany({
         where: and(eq(invoices.status, 'emitida'), eq(invoices.storeId, storeId), inArray(invoices.id, invoiceIds)),
         columns: { id: true, issuedAt: true }
       })
     : []
-  const invoiceById = new Map(relatedInvoices.map((inv: any) => [inv.id, inv]))
+  const invoiceById = new Map(relatedInvoices.map((inv) => [inv.id, inv]))
 
   type Txn = { date: Date; type: 'entrada' | 'salida'; quantity: number; unitValue: number }
   const transactions: Txn[] = []
@@ -107,7 +111,7 @@ export async function getFifoLayers(
  * valuar una venta, transferencia o cualquier salida de inventario.
  */
 export async function getFifoUnitCost(
-  tx: any,
+  tx: Tx,
   productId: number,
   storeId: number,
   quantityNeeded: number,

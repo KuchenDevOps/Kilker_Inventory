@@ -235,8 +235,9 @@ async function exportInventoryValue() {
       Producto: string
       Categoría: string
       Sucursal: string
-      Existencia: number
-      'Valor de inventario': number
+      // null en las filas separadoras: deja la celda en blanco en Excel.
+      Existencia: number | null
+      'Valor de inventario': number | null
     }
     const sheetRows: SheetRow[] = []
 

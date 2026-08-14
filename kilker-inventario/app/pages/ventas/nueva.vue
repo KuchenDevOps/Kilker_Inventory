@@ -181,15 +181,10 @@ async function onSubmit() {
     let issuedAt: string | undefined
     if (saleDate.value) {
       const now = new Date()
-      const [year, month, day] = saleDate.value.split('-').map(Number)
-      const combined = new Date(
-        year,
-        month - 1,
-        day,
-        now.getHours(),
-        now.getMinutes(),
-        now.getSeconds()
-      )
+      // `YYYY-MM-DD` + 'T00:00:00' (sin sufijo Z) se interpreta en hora LOCAL,
+      // igual que el `new Date(año, mes, día)` que había aquí antes.
+      const combined = new Date(`${saleDate.value}T00:00:00`)
+      combined.setHours(now.getHours(), now.getMinutes(), now.getSeconds())
       issuedAt = combined.toISOString()
     }
 
