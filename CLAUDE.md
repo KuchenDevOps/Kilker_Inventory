@@ -303,6 +303,14 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   transferencias (para valuar la salida) y los reportes de valuación/utilidad. **No hay
   costeo por lote en la captura**: la entrada toma `products.cost` (costo estándar de la
   marca) salvo que se mande `unitValue` explícito.
+- **Valuación de inventario a un corte arbitrario** (`server/utils/monthlyInventory.ts`):
+  pese al nombre, ya no es solo "por mes cerrado". Acepta `from`/`to` (`to` **exclusivo**) y
+  valúa el inventario **al instante `to`**; sin ellos cae al mes completo de `month`. El
+  dashboard le pasa el rango del filtro de periodo, así que con "Semana" (o "Día") el
+  inventario queda cortado al último día del rango, no al fin de mes. Ojo: los flujos que
+  devuelve (`entriesValue`, `exitsValue`, transferencias, anulaciones, ajustes) también se
+  miden sobre esa ventana, no sobre el mes. `month` se sigue mandando y sirve de etiqueta y
+  de default; el dashboard lo deriva del **último día** del rango (`derivedMonth`).
 - **Folios.** Ventas: `<CODE_TIENDA>-0001`, correlativo por tienda (`count(*)+1` bajo
   `SELECT … FOR UPDATE` de la tienda). Entradas: `<CODE_TIENDA>-E-0001`, con contador
   dedicado `entry_folio_counters` (upsert atómico).

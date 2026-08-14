@@ -214,11 +214,28 @@ const recentProducts = computed(() => {
 // petición aparte (ni se recalcula dos veces al montar).
 const monthlyInventory = computed(() => summary.value?.monthly ?? null)
 
-// Deriva YYYY-MM desde el filtro de periodo global. Si no hay periodo elegido
-// ("Todo"), cae al mes calendario actual como default razonable.
+
 const derivedMonth = computed(() => {
-  if (periodFrom.value) return periodFrom.value.slice(0, 7)
-  return new Date().toISOString().slice(0, 7)
+  const lastDay = periodTo.value ? new Date(periodTo.value) : new Date()
+  if (periodTo.value) lastDay.setDate(lastDay.getDate() - 1)
+  return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}`
+})
+
+const dateLabel = new Intl.DateTimeFormat('es-MX', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric'
+})
+
+// Día al que quedó valuado el inventario. Se toma de la respuesta (`to`, que es
+// exclusivo → se retrocede un día) para que el rótulo no pueda desmentir al
+// número. Sin periodo elegido ("Todo") el corte es el fin del mes.
+const cutoffLabel = computed(() => {
+  const iso = monthlyInventory.value?.to ?? periodTo.value
+  if (!iso) return `cierre de ${derivedMonth.value}`
+  const lastDay = new Date(iso)
+  lastDay.setDate(lastDay.getDate() - 1)
+  return dateLabel.format(lastDay)
 })
 
 // --- MÉTRICAS ---
@@ -239,7 +256,7 @@ const metricsSection1 = computed(() => {
     {
       label: 'Existencias',
       value: number.format(monthlyInventory.value?.endingUnits ?? 0),
-      hint: `al cierre de ${derivedMonth.value}`,
+      hint: `al ${cutoffLabel.value}`,
       icon: 'i-lucide-boxes',
       color: 'text-info',
       loading: loadingProducts.value || loadingSummary.value,
@@ -510,15 +527,15 @@ const filteredTopProducts = computed(() => {
   <template #header>
     <div class="flex items-center gap-2 py-0">
       <UIcon name="i-lucide-calendar-range" class="size-4 text-primary" />
-      <h2 class="text-sm font-semibold">Cierre de inventario por mes</h2>
-      <span class="ml-auto text-xs text-muted">{{ derivedMonth }}</span>
+      <h2 class="text-sm font-semibold">Valor de inventario al corte</h2>
+      <span class="ml-auto text-xs text-muted">{{ cutoffLabel }}</span>
     </div>
   </template>
 
   <p v-if="loadingSummary" class="text-xs text-muted py-2 text-center">Calculando…</p>
   <div v-else-if="monthlyInventory" class="grid gap-4 sm:grid-cols-3">
     <div>
-      <p class="text-xs text-muted">Inventario al cierre</p>
+      <p class="text-xs text-muted">Inventario al {{ cutoffLabel }}</p>
       <p class="mt-0.5 text-lg font-semibold text-success">
         {{ currency.format(monthlyInventory.endingInventoryValue) }}
       </p>
