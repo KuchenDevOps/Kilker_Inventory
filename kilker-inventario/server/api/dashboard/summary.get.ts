@@ -63,7 +63,7 @@ export default defineEventHandler(async (event) => {
       salesValue: 0,
       expenses: { Fijo: EMPTY_EXPENSE_BUCKET, Operativo: EMPTY_EXPENSE_BUCKET },
       soldTotals: { totalCost: 0, totalRevenue: 0, totalProfit: 0 },
-      monthly: await computeMonthlyInventory({ profile, month })
+      monthly: await computeMonthlyInventory({ profile, month, from, to })
     }
   }
 
@@ -158,7 +158,9 @@ export default defineEventHandler(async (event) => {
 
     computeSoldTotals({ profile, storeId, from, to }),
 
-    computeMonthlyInventory({ profile, month, storeId })
+    // El inventario se valúa al corte del periodo elegido (from/to), no al fin
+    // de mes: con "Todo" no hay periodo y cae al mes completo de `month`.
+    computeMonthlyInventory({ profile, month, storeId, from, to })
   ])
 
   const round2 = (n: number) => Math.round(n * 100) / 100

@@ -20,5 +20,16 @@ export default defineEventHandler(async (event) => {
 
   const storeId = query.storeId ? Number(query.storeId) || undefined : undefined
 
-  return computeMonthlyInventory({ profile, month, storeId })
+  // Opcionales: acotan la ventana de valuación a un rango concreto (`to`
+  // EXCLUSIVO) para cortar "hasta el día X" en vez de al fin de mes. Sin
+  // ellos, el comportamiento es el de siempre: el mes completo.
+  const from = query.from ? String(query.from) : undefined
+  const to = query.to ? String(query.to) : undefined
+  for (const [name, value] of [['from', from], ['to', to]] as const) {
+    if (value && Number.isNaN(new Date(value).getTime())) {
+      throw createError({ statusCode: 400, statusMessage: `Parámetro ${name} inválido` })
+    }
+  }
+
+  return computeMonthlyInventory({ profile, month, storeId, from, to })
 })
