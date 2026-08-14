@@ -404,9 +404,11 @@ export interface ApiAverageCost {
   totalCost: number
 }
 
-/** Valuación de inventario de un mes (`GET /api/reports/monthly-inventory`). */
+
 export interface ApiMonthlyInventory {
   month: string
+  from: string
+  to: string
   entriesValue: number
   exitsValue: number
   endingInventoryValue: number

@@ -36,7 +36,9 @@ const EMPTY_RESULT = {
 
 const EPSILON = 0.0005
 
-export type MonthlyInventoryResult = { month: string } & typeof EMPTY_RESULT
+/** `from`/`to` son la ventana realmente usada (ISO); `to` es EXCLUSIVO. */
+export type MonthlyInventoryResult = { month: string; from: string; to: string } &
+  typeof EMPTY_RESULT
 
 export interface MonthlyInventoryParams {
   profile: SessionProfile
@@ -44,6 +46,21 @@ export interface MonthlyInventoryParams {
   month: string
   /** Sucursal solicitada (admin). Se ignora para empleados. */
   storeId?: number
+  /**
+   * Ventana de valuación explícita (ISO), con `to` EXCLUSIVO. Cuando viene, el
+   * corte deja de ser el fin de mes y pasa a ser ese instante: sirve para
+   * valuar el inventario "hasta el día X" (p. ej. el último día del rango
+   * elegido en el dashboard) en vez de solo al cierre del mes. Cada una que
+   * falte se completa con el mes de `month`.
+   */
+  from?: string
+  to?: string
+}
+
+function parseIsoDate(value?: string): Date | null {
+  if (!value) return null
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
 }
 
 export async function computeMonthlyInventory(
@@ -55,12 +72,19 @@ export async function computeMonthlyInventory(
   const monthEnd = new Date(monthStart)
   monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1)
 
+  // Ventana de valuación: el periodo explícito si vino, o el mes completo.
+  // `windowEnd` es el corte al que se valúa el inventario (exclusivo).
+  const windowStart = parseIsoDate(params.from) ?? monthStart
+  const windowEnd = parseIsoDate(params.to) ?? monthEnd
+
+  const windowMeta = { from: windowStart.toISOString(), to: windowEnd.toISOString() }
+
   const db = useDb()
 
   // Sucursales a incluir: una específica, o todas las relevantes para el rol.
   let storeIds: number[] | undefined // undefined = sin restricción (se resuelve más abajo)
   if (profile.role === 'empleado') {
-    if (profile.storeId == null) return { month, ...EMPTY_RESULT }
+    if (profile.storeId == null) return { month, ...windowMeta, ...EMPTY_RESULT }
     storeIds = [profile.storeId]
   } else if (params.storeId) {
     storeIds = [params.storeId]
@@ -108,7 +132,7 @@ export async function computeMonthlyInventory(
   }
 
   // --- 2. Ventas emitidas hasta el cierre del mes, con sus líneas. ---
-  const invoiceFilters = [eq(invoices.status, 'emitida'), lt(invoices.issuedAt, monthEnd)]
+  const invoiceFilters = [eq(invoices.status, 'emitida'), lt(invoices.issuedAt, windowEnd)]
   if (storeIds && storeIds.length === 1) {
     const singleStoreId = storeIds[0]
     if (singleStoreId != null) {
@@ -181,21 +205,21 @@ export async function computeMonthlyInventory(
 
     const entriesInMonth = entries.filter((e) => {
       const date = e.supplierInvoiceDate ? new Date(e.supplierInvoiceDate) : e.createdAt
-      return date >= monthStart && date < monthEnd
+      return date >= windowStart && date < windowEnd
     })
     for (const e of entriesInMonth) entriesValue += Number(e.totalValue)
 
     for (const m of productMovements) {
       if (m.type === 'transferencia_salida') {
         const issuedAt = m.transfer?.issuedAt
-        if (issuedAt && issuedAt >= monthStart && issuedAt < monthEnd) {
+        if (issuedAt && issuedAt >= windowStart && issuedAt < windowEnd) {
           transfersOutUnits += Math.abs(Number(m.quantity))
           transfersOutValue += Math.abs(Number(m.totalValue))
         }
       }
       if (m.type === 'transferencia_entrada') {
         const receivedAt = m.transfer?.receivedAt
-        if (receivedAt && receivedAt >= monthStart && receivedAt < monthEnd) {
+        if (receivedAt && receivedAt >= windowStart && receivedAt < windowEnd) {
           transfersInUnits += Number(m.quantity)
           transfersInValue += Number(m.totalValue)
         }
@@ -210,7 +234,7 @@ export async function computeMonthlyInventory(
           : undefined
 
         if (originalType === 'entrada') {
-          if (m.createdAt >= monthStart && m.createdAt < monthEnd) {
+          if (m.createdAt >= windowStart && m.createdAt < windowEnd) {
             voidsUnits += Number(m.quantity) // negativo: resta stock
             voidsValue += Number(m.totalValue)
           }
@@ -221,14 +245,14 @@ export async function computeMonthlyInventory(
       // El ajuste puede sumar o restar stock según el signo de quantity.
       if (m.type === 'ajuste') {
         const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
-        if (date >= monthStart && date < monthEnd) {
+        if (date >= windowStart && date < windowEnd) {
           adjustmentsUnits += Number(m.quantity) // conserva el signo, útil para ver si fue alta o baja
           adjustmentsValue += Number(m.totalValue)
         }
       }
     }
 
-    const salesInMonth = productSales.filter((s) => s.issuedAt >= monthStart && s.issuedAt < monthEnd)
+    const salesInMonth = productSales.filter((s) => s.issuedAt >= windowStart && s.issuedAt < windowEnd)
     for (const s of salesInMonth) {
       exitsValue += s.totalValue
       exitsUnits += s.quantity
@@ -239,7 +263,7 @@ export async function computeMonthlyInventory(
 
     for (const e of entries) {
       const date = e.supplierInvoiceDate ? new Date(e.supplierInvoiceDate) : e.createdAt
-      if (date >= monthEnd) continue
+      if (date >= windowEnd) continue
       transactions.push({
         date,
         type: 'entrada',
@@ -250,7 +274,7 @@ export async function computeMonthlyInventory(
     }
 
     for (const s of productSales) {
-      if (s.issuedAt >= monthEnd) continue
+      if (s.issuedAt >= windowEnd) continue
       transactions.push({
         date: s.issuedAt,
         type: 'salida',
@@ -263,7 +287,7 @@ export async function computeMonthlyInventory(
     for (const m of productMovements) {
       if (m.type === 'transferencia_entrada') {
         const receivedAt = m.transfer?.receivedAt
-        if (receivedAt && receivedAt < monthEnd) {
+        if (receivedAt && receivedAt < windowEnd) {
           transactions.push({
             date: receivedAt,
             type: 'entrada',
@@ -275,7 +299,7 @@ export async function computeMonthlyInventory(
       }
       if (m.type === 'transferencia_salida') {
         const issuedAt = m.transfer?.issuedAt
-        if (issuedAt && issuedAt < monthEnd) {
+        if (issuedAt && issuedAt < windowEnd) {
           transactions.push({
             date: issuedAt,
             type: 'salida',
@@ -291,7 +315,7 @@ export async function computeMonthlyInventory(
       // salida equivalente. Anulación de una VENTA: se ignora — la venta
       // original nunca entró al FIFO (invoice status != 'emitida'), así
       // que no hay nada que revertir.
-      if (m.type === 'anulacion' && m.createdAt < monthEnd) {
+      if (m.type === 'anulacion' && m.createdAt < windowEnd) {
         const originalType = m.reversesMovementId
           ? movementTypeById.get(m.reversesMovementId)
           : undefined
@@ -310,7 +334,7 @@ export async function computeMonthlyInventory(
       // El ajuste puede sumar o restar stock según el signo de quantity.
       if (m.type === 'ajuste') {
         const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
-        if (date < monthEnd) {
+        if (date < windowEnd) {
           const qty = Number(m.quantity)
           if (qty > 0) {
             transactions.push({
@@ -379,6 +403,7 @@ export async function computeMonthlyInventory(
 
   return {
     month,
+    ...windowMeta,
     entriesValue: Math.round(entriesValue * 100) / 100,
     exitsValue: Math.round(exitsValue * 100) / 100,
     exitsUnits: Math.round(exitsUnits * 100) / 100,
