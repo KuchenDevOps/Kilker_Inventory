@@ -1,6 +1,9 @@
 <!-- pages/ventas/index.vue -->
 <script setup lang="ts">
 import type { ApiSale, ApiSaleDetail, ApiSaleItem } from '~/types/inventario'
+import type { TicketGroup } from '~/utils/ticket'
+import { groupSaleItemsByKit } from '~/utils/ticket'
+import { buildSaleTicketDoc } from '~/utils/ticketPdf'
 import * as XLSX from 'xlsx'
 const { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
 
@@ -174,6 +177,39 @@ async function openDetail(sale: ApiSale) {
     showDetailModal.value = false
   } finally {
     loadingDetail.value = false
+  }
+}
+
+const downloadingTicket = ref(false)
+
+/**
+ * Descarga el ticket de la venta abierta como PDF (utils/ticketPdf.ts arma el
+ * documento). pdfmake se importa bajo demanda porque el bundle con las fuentes
+ * embebidas pesa ~2 MB: cargarlo de entrada penalizaría a todas las páginas
+ * para algo que sólo se usa al pedir un ticket. El import dinámico además lo
+ * mantiene fuera del bundle de servidor (pdfmake sólo corre en el navegador).
+ */
+async function downloadTicket() {
+  if (!detail.value) return
+  downloadingTicket.value = true
+  try {
+    const [{ default: pdfMake }, { default: vfs }] = await Promise.all([
+      import('pdfmake/build/pdfmake'),
+      import('pdfmake/build/vfs_fonts')
+    ])
+    // Las fuentes van en base64 dentro del propio bundle: nada de archivos ni
+    // de rutas, que es lo que rompería esto en Vercel si fuera del lado servidor.
+    pdfMake.addVirtualFileSystem(vfs)
+    pdfMake.createPdf(buildSaleTicketDoc(detail.value)).download(`ticket-${detail.value.folio}.pdf`)
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo generar el PDF',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    downloadingTicket.value = false
   }
 }
 
@@ -406,59 +442,10 @@ const detailIva = computed(() => (detail.value ? Number(detail.value.totalAmount
 // ───────────────────────────────────────────────
 //  TICKET: agrupar las líneas por kit
 // ───────────────────────────────────────────────
-// El backend guarda un kit explotado en líneas de producto marcadas con
-// kit_id/kit_sku/kit_name. Para el ticket las volvemos a juntar: cada kit se
-// muestra como un bloque con su nombre, SKU y los productos que lo componen
-// con su precio. Un producto suelto es un grupo de kitId null con una línea.
-interface TicketGroup {
-  key: string
-  kitId: number | null
-  kitSku: string | null
-  kitName: string | null
-  kitQuantity: number
-  items: ApiSaleItem[]
-  /** Importe del grupo antes del descuento de la venta. */
-  subtotal: number
-}
-
-const detailGroups = computed<TicketGroup[]>(() => {
-  const groups: TicketGroup[] = []
-  const byKit = new Map<number, TicketGroup>()
-
-  for (const it of detail.value?.items ?? []) {
-    if (it.kitId == null) {
-      groups.push({
-        key: `p-${it.id}`,
-        kitId: null,
-        kitSku: null,
-        kitName: null,
-        kitQuantity: 0,
-        items: [it],
-        subtotal: Number(it.lineTotal)
-      })
-      continue
-    }
-
-    let group = byKit.get(it.kitId)
-    if (!group) {
-      group = {
-        key: `k-${it.kitId}`,
-        kitId: it.kitId,
-        kitSku: it.kitSku,
-        kitName: it.kitName,
-        kitQuantity: Number(it.kitQuantity ?? 1),
-        items: [],
-        subtotal: 0
-      }
-      byKit.set(it.kitId, group)
-      groups.push(group)
-    }
-    group.items.push(it)
-    group.subtotal += Number(it.lineTotal)
-  }
-
-  return groups
-})
+// La agrupación vive en ~/utils/ticket porque TicketVenta.vue (el ticket
+// impreso) necesita exactamente la misma: lo que se ve en el modal y lo que
+// sale por la impresora tienen que coincidir renglón por renglón.
+const detailGroups = computed<TicketGroup[]>(() => groupSaleItemsByKit(detail.value?.items ?? []))
 
 /** Factor del descuento de la venta (1 = sin descuento). Se aplica igual a
  *  todas las líneas, así que un kit se descuenta completo. */
@@ -888,8 +875,17 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
           </div>
 
           <template #footer>
-            <div class="flex justify-end">
+            <div class="flex justify-end gap-2">
               <UButton variant="ghost" color="neutral" @click="showDetailModal = false">Cerrar</UButton>
+              <UButton
+                v-if="detail"
+                icon="i-lucide-file-down"
+                color="primary"
+                :loading="downloadingTicket"
+                @click="downloadTicket"
+              >
+                Descargar PDF
+              </UButton>
             </div>
           </template>
         </UCard>
