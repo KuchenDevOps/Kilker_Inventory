@@ -1,6 +1,6 @@
 import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { products, profiles, stockMovements, stores } from '../../db/schema'
+import { products, profiles, stockMovements, stores, tickets } from '../../db/schema'
 
 
 export default defineEventHandler(async (event) => {
@@ -73,12 +73,22 @@ export default defineEventHandler(async (event) => {
   })
     const movementIds = rows.map((m) => m.id)
   const voided = new Set<number>()
+  // Entradas con ticket de corrección abierto: la UI esconde el botón de
+  // solicitar otro y muestra "pendiente" (mismo criterio que /api/sales).
+  const pendingCorrection = new Set<number>()
   if (movementIds.length) {
-    const reversals = await db
-      .select({ reversesMovementId: stockMovements.reversesMovementId })
-      .from(stockMovements)
-      .where(and(eq(stockMovements.type, 'anulacion'), inArray(stockMovements.reversesMovementId, movementIds)))
+    const [reversals, openTickets] = await Promise.all([
+      db
+        .select({ reversesMovementId: stockMovements.reversesMovementId })
+        .from(stockMovements)
+        .where(and(eq(stockMovements.type, 'anulacion'), inArray(stockMovements.reversesMovementId, movementIds))),
+      db
+        .select({ movementId: tickets.movementId })
+        .from(tickets)
+        .where(and(eq(tickets.status, 'abierto'), inArray(tickets.movementId, movementIds)))
+    ])
     for (const r of reversals) if (r.reversesMovementId != null) voided.add(r.reversesMovementId)
+    for (const t of openTickets) if (t.movementId != null) pendingCorrection.add(t.movementId)
   }
 
   const mapped = rows.map((m) => {
@@ -113,6 +123,7 @@ export default defineEventHandler(async (event) => {
       createdByName: m.createdBy?.fullName ?? null,
       createdAt: m.createdAt,
       voided: isVoided,
+      pendingCorrection: pendingCorrection.has(m.id),
       totalToPay,
       totalPaid,
       balance,

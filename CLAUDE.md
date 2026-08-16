@@ -188,7 +188,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 - **Reparto de permisos vigente (lo que hace el código hoy):**
   - **Solo admin:** alta/edición/borrado de productos y categorías, alta/edición de
     sucursales y usuarios, anulación de ventas (`POST /api/sales/:id/void`), resolución de
-    tickets, edición/anulación de entradas de stock (`PATCH|POST /api/movements/:id…`).
+    tickets, anulación de entradas de stock (`POST /api/movements/:id/void`).
   - **Admin + empleado:** vender, registrar entradas, crear/recibir/cancelar
     transferencias, gastos y sus pagos, clientes, cortes de caja y abrir tickets.
   - **Solo lectura (`observador`):** ve **todo** (todas las sucursales, todos los
@@ -264,13 +264,13 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
 |--------|-----------|-----------|
 | **Catálogo** | `productos/index`, `productos/nuevo`, `productos/[id]/editar` | `GET/POST /api/products`, `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
 | **Categorías** | `categorias/index` | `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id` |
-| **Entradas de stock** | `movimientos/entrada`, `movimientos/index` | `POST /api/movements/entrada`, `GET /api/movements`, `PATCH /api/movements/:id`, `POST /api/movements/:id/void` |
+| **Entradas de stock** | `movimientos/entrada`, `movimientos/index` | `POST /api/movements/entrada`, `GET /api/movements`, `POST /api/movements/:id/void` |
 | **Ventas** | `ventas/nueva`, `ventas/index` | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void` |
 | **Transferencias** | `transferencias/nueva`, `transferencias/index` | `POST/GET /api/transfers`, `GET /api/transfers/:id`, `POST /api/transfers/:id/receive`, `POST /api/transfers/:id/cancel` |
 | **Clientes** | `clientes/index` | `GET/POST /api/customers`, `PATCH/DELETE /api/customers/:id` |
 | **Gastos** | `gastos/index` | `GET/POST /api/expenses` (filtros `?q`, `?paidBy`, `?type`, `?storeId`, fechas), `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments` |
 | **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id` |
-| **Tickets de corrección** | `tickets/index` | `GET/POST /api/tickets`, `POST /api/tickets/:id/resolve` |
+| **Tickets de corrección** | `tickets/ventas`, `tickets/entradas` (ambas montan `components/TicketsPanel.vue`; `tickets/index` solo redirige a ventas) | `GET/POST /api/tickets` (filtro `?target=factura\|movimiento`), `POST /api/tickets/:id/resolve` |
 | **Administración** | `tiendas/index`, `empleados/index` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id` |
 | **Reportes / Dashboard** | `dashboard` | `GET /api/dashboard/summary` (agregado del dashboard), `GET /api/reports/monthly-inventory`, `/api/reports/top-products`, `/api/reports/inventory-value`, `/api/average-costs` |
 
@@ -353,7 +353,14 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   (`useSalesHistory`, `useMovementsHistory`) y `useExpenses`. `useSales` además registra su
   `watch` y su listener de `visibilitychange` **sin guard** (cada montaje acumulaba otro);
   está inerte mientras nadie lo llame, pero conviene borrarlo antes de que alguien lo use.
-- **Tickets:** solo `target='factura'`; `movimiento` sigue sin implementarse.
+- **Tickets:** cubren los dos `target`, con **una pantalla por tipo** —
+  `/tickets/ventas` y `/tickets/entradas`, ambas montando el mismo
+  `components/TicketsPanel.vue` parametrizado por `target`. `factura` → aprobar anula la
+  venta; `movimiento` → aprobar anula la entrada de stock. Ambos comparten
+  `voidInvoiceTx`/`voidMovementTx` de `server/utils/corrections.ts` con los endpoints de
+  anulación directa del admin.
+  ⚠️ `useTicketsHistory(target)` **namespacea su `useState` por target**: con claves
+  compartidas, una pantalla pisaba el listado y el filtro de la otra.
 - **Hardening:** policies de RLS (hoy innecesarias: todo el acceso es server-side),
   migrar `SUPABASE_SERVICE_KEY` → `NUXT_SUPABASE_SECRET_KEY`, confirmar planes/regiones de
   Vercel y Supabase, backups.
