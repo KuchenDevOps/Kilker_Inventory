@@ -59,9 +59,10 @@ export function useTransfers() {
     }
     document.addEventListener('visibilitychange', visibilityHandler)
 
-    // Cleanup cuando la app se cierra
-    const nuxtApp = useNuxtApp()
-    nuxtApp.hook('app:beforeUnmount', () => {
+    // Cleanup al desecharse el scope compartido (useSharedScope). Antes esto
+    // colgaba de nuxtApp.hook('app:beforeUnmount'), que no es un hook real de
+    // Nuxt: nunca se emitía y el listener no se quitaba jamás.
+    onScopeDispose(() => {
       document.removeEventListener('visibilitychange', visibilityHandler)
     })
   }

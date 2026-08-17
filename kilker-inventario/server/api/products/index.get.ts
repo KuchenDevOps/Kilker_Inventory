@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
 
   if (!paginate) return mapped
 
-  const [{ value: totalCount }] = await db.select({ value: count() }).from(products)
+  const totalCount = (await db.select({ value: count() }).from(products))[0]?.value ?? 0
 
   return {
     data: mapped,

@@ -65,10 +65,8 @@ const rows = await db.query.tickets.findMany({
 
   if (!paginate) return mapped
 
-  const [{ value: totalCount }] = await db
-    .select({ value: count() })
-    .from(tickets)
-    .where(where)
+  const totalCount =
+    (await db.select({ value: count() }).from(tickets).where(where))[0]?.value ?? 0
 
   return {
     data: mapped,

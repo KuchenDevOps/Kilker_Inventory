@@ -151,6 +151,7 @@ export default defineEventHandler(async (event) => {
   }))
   if (!paginate) return mapped
 
-  const [{ value: total }] = await db.select({ value: count() }).from(invoices).where(whereClause)
+  const total =
+    (await db.select({ value: count() }).from(invoices).where(whereClause))[0]?.value ?? 0
   return { data: mapped, total, page, pageSize }
 })

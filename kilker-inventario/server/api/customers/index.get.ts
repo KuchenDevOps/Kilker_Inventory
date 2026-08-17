@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
 
   if (!paginate) return rows
 
-  const [{ value: totalCount }] = await db.select({ value: count() }).from(customers)
+  const totalCount = (await db.select({ value: count() }).from(customers))[0]?.value ?? 0
 
   return {
     data: rows,

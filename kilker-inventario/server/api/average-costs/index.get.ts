@@ -1,7 +1,7 @@
 // server/api/average-costs/index.get.ts
-import { eq, sql, and, desc, gte, lt, or } from 'drizzle-orm'
+import { eq, type SQL } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { inventory, stockMovements, products, stores } from '../../db/schema'
+import { inventory } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -10,8 +10,8 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
 
   // Construir filtros base
-  const storeFilters = []
-  
+  const storeFilters: SQL[] = []
+
   // Empleado solo ve su tienda
   if (profile.role === 'empleado') {
     if (profile.storeId == null) {
@@ -28,13 +28,8 @@ export default defineEventHandler(async (event) => {
   // Obtener el inventario actual (cantidades disponibles por producto/sucursal)
   // Solo productos con stock > 0
   const inventoryItems = await db.query.inventory.findMany({
-    where: (inv, { and, gt }) => {
-      const conditions = [gt(inv.quantity, 0)]
-      if (storeFilters.length > 0) {
-        conditions.push(and(...storeFilters))
-      }
-      return and(...conditions)
-    },
+    // `quantity` es numeric: se compara contra string para no perder precisión.
+    where: (inv, { and, gt }) => and(gt(inv.quantity, '0'), ...storeFilters),
     with: {
       product: {
         columns: {
