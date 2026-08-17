@@ -11,6 +11,7 @@ import {
   invoices,
   stockMovements
 } from '../../db/schema'
+import { effectiveMovementDateBetween } from '../../utils/movementDates'
 import { computeMonthlyInventory } from '../../utils/monthlyInventory'
 import { computeSoldTotals } from '../../utils/topProducts'
 
@@ -80,10 +81,11 @@ export default defineEventHandler(async (event) => {
     )`
   ]
   if (storeId) entryFilters.push(eq(stockMovements.storeId, storeId))
-  const entryFrom = toMovementDate(from)
-  const entryTo = toMovementDate(to)
-  if (entryFrom) entryFilters.push(gte(stockMovements.supplierInvoiceDate, entryFrom))
-  if (entryTo) entryFilters.push(lt(stockMovements.supplierInvoiceDate, entryTo))
+  // Fecha EFECTIVA (factura del proveedor, o captura si no la hay): filtrar
+  // por `supplier_invoice_date` a secas descartaba en silencio toda entrada
+  // sin factura, y además era otra regla de fecha que la de
+  // `computeMonthlyInventory` en esta misma respuesta.
+  entryFilters.push(...effectiveMovementDateBetween(toMovementDate(from), toMovementDate(to)))
 
   // ─── Ventas emitidas ───
   const saleFilters = [eq(invoices.status, 'emitida')]

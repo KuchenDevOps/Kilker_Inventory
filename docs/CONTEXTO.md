@@ -129,6 +129,18 @@ Vercel.**
 - [ ] ¿Hace falta capturar **movimientos de ajuste** de inventario? (enum listo, sin UI)
 - [ ] ¿El corte de caja debe incluir **conteo físico de efectivo** (hoy es solo el resumen
       automático de ventas)?
+- [ ] **Ventas retroactivas vs. cortes de caja — decisión pendiente.** El corte toma la
+      ventana `[último periodTo, ahora)` sobre `invoices.issued_at`, pero una venta se
+      puede capturar con fecha pasada. Si esa fecha es anterior al último corte, la venta
+      **no entra en ningún corte, nunca**. Opciones sobre la mesa:
+      **(a)** cortar por `created_at` (la venta se corta cuando se capturó, que es cuando
+      entró el dinero al cajón) — el corte cuadra con la caja física, pero el corte deja de
+      coincidir con la fecha declarada de la venta;
+      **(b)** bloquear la captura de ventas con fecha anterior al último corte de esa
+      sucursal — el corte queda intacto, pero obliga a que las correcciones tardías pasen
+      por anulación en vez de por fecha retroactiva.
+      Mientras se decide, el corte ya es **transaccional** (candado sobre la tienda), así
+      que el doble conteo por cortes simultáneos está resuelto; lo retroactivo no.
 
 ---
 

@@ -20,6 +20,12 @@ export async function voidInvoiceTx(
   tx: Tx,
   opts: { invoiceId: number; profileId: string; reason: string | null }
 ) {
+  // Candado de fila ANTES de leer el estado: en READ COMMITTED dos
+  // anulaciones simultáneas de la misma venta (doble clic, o el admin
+  // anulando mientras se resuelve el ticket) leen ambas 'emitida' y reponen
+  // el stock dos veces. Con FOR UPDATE la segunda espera y ve 'anulada'.
+  await tx.execute(sql`SELECT id FROM ${invoices} WHERE id = ${opts.invoiceId} FOR UPDATE`)
+
   const invoice = await tx.query.invoices.findFirst({
     where: eq(invoices.id, opts.invoiceId)
   })

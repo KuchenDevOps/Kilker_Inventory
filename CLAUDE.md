@@ -297,6 +297,21 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   migración `0001`); toda corrección es una fila nueva `anulacion` ligada por
   `reverses_movement_id`. `inventory.quantity` es el saldo materializado que se mueve en la
   misma transacción.
+- ⚠️ **Toda operación que valida un estado y luego actúa bloquea la fila primero**
+  (`SELECT … FOR UPDATE` dentro de la transacción). En READ COMMITTED, leer
+  `status` y decidir sin candado deja pasar dos peticiones simultáneas —basta un
+  doble clic— y el efecto se aplica dos veces (stock duplicado, corte repetido).
+  Ya lo hacen: `transfers/:id/receive`, `transfers/:id/cancel`, `tickets/:id/resolve`,
+  `voidInvoiceTx`, `voidMovementTx`, `POST /api/sales` (folio) y `POST /api/cortes`.
+  **Cualquier endpoint nuevo con el patrón "leer estado → actuar" debe hacer lo mismo.**
+- **Fecha efectiva de un movimiento** (`server/utils/movementDates.ts`):
+  `coalesce(supplier_invoice_date, created_at)` — la de la factura del proveedor si
+  existe, si no la de captura. `supplier_invoice_date` es **nullable**, y compararla a
+  secas hacía desaparecer del filtro por periodo toda entrada sin factura (`NULL >= …`
+  es falso en SQL). El helper existe en las dos formas —`effectiveMovementDateSql()`
+  para los filtros y `effectiveMovementDate()` para las reconstrucciones FIFO en TS—
+  precisamente para que las dos no vuelvan a divergir. Úsalo siempre; no compares
+  `supplier_invoice_date` directamente.
 - **Costeo FIFO** (`server/utils/inventoryFifo.ts`): reconstruye capas de costo desde el
   histórico completo (entradas, transferencias, ajustes, anulaciones y ventas emitidas,
   ordenadas por fecha efectiva —`supplier_invoice_date` cuando existe—). Lo usan las
@@ -319,12 +334,28 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   Admiten **fecha retroactiva**: si la fecha es pasada, además del stock actual se valida
   que **a esa fecha** el kardex ya tuviera existencia suficiente. La anulación revierte
   kardex e inventario y marca la factura `anulada`.
+- ⚠️ **El descuento es de la FACTURA, no de la línea.** `invoice_items.line_total` es
+  **bruto**: no lleva descuento aplicado. Todo reporte que sume ingresos por línea tiene
+  que prorratearlo (`line_total * (1 - discount_pct/100)`) o dará una cifra de ventas
+  distinta a `sum(invoices.total_amount)`. Ya lo hacen `topProducts` (ingreso y
+  `soldTotals`) y `monthlyInventory` (`exitsValue`). Si algún día hay descuento por
+  línea, lo correcto será guardar el neto en la BD (`line_total_net`) en vez de seguir
+  reconstruyéndolo.
 - **IVA (16%) es informativo y se calcula en la app**, no se guarda en la BD: en el detalle
   de venta y en gastos. Las ventas se registran sin desglose fiscal (no hay CFDI/SAT).
 - **Transferencias en dos fases.** Al crearlas descuentan el origen y quedan
   `en_transito`; el destino (o un admin) confirma la recepción y ahí se suma el inventario
   destino; cancelar repone el origen. Un empleado solo despacha desde su tienda y solo
   recibe en la suya.
+  ⚠️ **La reversa de una cancelación es `anulacion`, no `ajuste`** (ligada por
+  `reverses_movement_id` a la `transferencia_salida`). Con `ajuste` los reportes la leían
+  como una **entrada nueva**: creaba una capa FIFO fechada el día de la cancelación en
+  vez de restaurar la original, y contaminaba `adjustmentsValue` del dashboard.
+  Y en todas las reconstrucciones FIFO (`inventoryFifo`, `monthlyInventory`,
+  `topProducts`, ambos `inventory-value`) los movimientos de una transferencia
+  `cancelada` **se ignoran por completo** —la salida *y* su reversa— con un
+  `if (transfer.status === 'cancelada') continue`. Así el FIFO queda como si nunca
+  hubiera salido, y una transferencia cancelada deja de inflar `transfersOut*`.
 - **Gastos.** Cabecera + `expense_items` (conceptos) + `expense_payments` (parcialidades,
   con `paid_by` y método). Tipo `Fijo|Operativo`, retenciones IVA/ISR opcionales; el
   endpoint deriva `subtotal`, `iva`, `totalToPay`, `totalPaid`, `balance` y
@@ -336,8 +367,16 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
 
 ### 10.3 Pendiente / deuda técnica
 
+- ⚠️ **Ventas retroactivas vs. cortes de caja — abierto, decisión del cliente.** El corte
+  toma la ventana `[último periodTo, ahora)` sobre `invoices.issued_at`, pero una venta se
+  puede capturar con fecha pasada: si esa fecha es anterior al último corte, la venta **no
+  cae en ningún corte, nunca**. El doble conteo por cortes simultáneos ya está resuelto
+  (el corte es transaccional, con la tienda bloqueada); esto no. Las dos salidas —cortar
+  por `created_at`, o prohibir capturar ventas anteriores al último corte— están en
+  [`docs/CONTEXTO.md`](docs/CONTEXTO.md) → "Preguntas abiertas".
 - **Movimientos de `ajuste`:** el enum y el soporte en los cálculos FIFO existen, pero
-  **no hay endpoint ni pantalla** para capturarlos.
+  **no hay endpoint ni pantalla** para capturarlos. Ojo: hoy **ninguna** fila de la BD es
+  un `ajuste` real, así que el tipo está libre para cuando se implemente.
 - **Vista de kardex unificado:** `/movimientos` solo lista `type='entrada'`. Faltan
   ventas/anulaciones/transferencias/ajustes en una sola vista.
 - **`GET /api/reports/unsold-products` es un stub** (devuelve `'Hello Nitro'`); la UI cubre
