@@ -24,6 +24,7 @@ import {
   transfers
 } from '../db/schema'
 import type { SessionProfile } from './auth'
+import { effectiveMovementDate } from './movementDates'
 
 interface Transaction {
   date: Date
@@ -132,7 +133,10 @@ export async function computeTopProducts(
       productSku: products.sku,
       unit: products.unit,
       totalQuantity: sql<string>`sum(${invoiceItems.quantity})`,
-      totalRevenue: sql<string>`sum(${invoiceItems.lineTotal})`
+      // El descuento es a nivel FACTURA (`discount_pct`), no de línea: hay que
+      // prorratearlo aquí o el ingreso sale inflado y no cuadra con
+      // sum(invoices.total_amount) del dashboard.
+      totalRevenue: sql<string>`sum(${invoiceItems.lineTotal} * (1 - coalesce(${invoices.discountPct}, 0) / 100))`
     })
     .from(invoiceItems)
     .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
@@ -188,7 +192,8 @@ export async function computeTopProducts(
           reversesMovementId: stockMovements.reversesMovementId,
           createdAt: stockMovements.createdAt,
           transferIssuedAt: transfers.issuedAt,
-          transferReceivedAt: transfers.receivedAt
+          transferReceivedAt: transfers.receivedAt,
+          transferStatus: transfers.status
         })
         .from(stockMovements)
         .leftJoin(transfers, eq(stockMovements.transferId, transfers.id))
@@ -243,8 +248,13 @@ export async function computeTopProducts(
       const transactions: Transaction[] = []
 
       for (const m of productMovements) {
+        // Transferencia cancelada: se ignoran todos sus movimientos (la salida
+        // y su reversa). Contar solo la reversa la trataría como una entrada
+        // nueva y desordenaría las capas FIFO que respaldan el costo.
+        if (m.transferStatus === 'cancelada') continue
+
         if (m.type === 'entrada') {
-          const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+          const date = effectiveMovementDate(m)
           if (date < periodEnd) {
             transactions.push({
               date,
@@ -298,7 +308,7 @@ export async function computeTopProducts(
           }
         }
         if (m.type === 'ajuste') {
-          const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+          const date = effectiveMovementDate(m)
           if (date < periodEnd) {
             const qty = Number(m.quantity)
             if (qty > 0) {

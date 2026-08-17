@@ -237,18 +237,35 @@ export type InvoiceStatus = 'emitida' | 'anulada'
 /** Estado de un ticket de corrección (enum `ticket_status`). */
 export type TicketStatus = 'abierto' | 'aprobado' | 'rechazado'
 
+/**
+ * Documento al que apunta el ticket (enum `ticket_target`):
+ * `factura` = venta, `movimiento` = entrada de stock. Cada uno tiene su
+ * pantalla: /tickets/ventas y /tickets/entradas.
+ */
+export type TicketTarget = 'factura' | 'movimiento'
+
 /** Ticket de corrección tal como lo lista `GET /api/tickets`. */
 export interface ApiTicket {
   id: number
-  target: 'factura' | 'movimiento'
+  target: TicketTarget
   status: TicketStatus
   reason: string
   storeId: number
   storeCode: string | null
+  // ─── target 'factura' ───
   invoiceId: number | null
   invoiceFolio: string | null
   invoiceStatus: InvoiceStatus | null
   invoiceTotal: string | null
+  // ─── target 'movimiento': entrada de stock ───
+  movementId: number | null
+  movementFolio: string | null
+  movementProductName: string | null
+  movementProductSku: string | null
+  movementUnit: ProductUnit | null
+  movementQuantity: string | null
+  movementTotal: string | null
+  movementSupplierInvoice: string | null
   raisedByName: string | null
   resolvedByName: string | null
   resolutionNote: string | null
@@ -326,6 +343,8 @@ export interface ApiMovement {
   createdByName: string | null
   createdAt: string
   voided: boolean
+  /** Hay un ticket de corrección abierto contra esta entrada. */
+  pendingCorrection: boolean
   /** Costo limpio de la entrada (= totalValue). Sin IVA ni retenciones. */
   totalToPay: number
   totalPaid: number

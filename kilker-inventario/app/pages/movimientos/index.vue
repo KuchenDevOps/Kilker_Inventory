@@ -18,7 +18,6 @@ const { movements, total, page, pageSize, pending, error, storeId, from, to, sea
 
 
 const { data: stores } = useStores()
-const { products } = useAllProducts()
 const toast = useToast()
 const apiFetch = useApiFetch()
 
@@ -37,20 +36,14 @@ const storeFilter = computed({
   }
 })
 
-// Opciones para los selects del modal de edición (todas las sucursales/productos,
-// sin importar el filtro activo de la tabla).
-const productItems = computed(() =>
-  products.value.map((p) => ({ label: `${p.sku} · ${p.name}`, value: p.id }))
-)
-const storeEditItems = computed(() => stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id })))
-
 const qtyFmt = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 3 })
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 
 // Folio, Fecha, Producto, Sucursal, Cantidad, Total, Factura prov., Fecha
-// factura, Registró y Pago; + Acciones solo para admin. Se usa en los colspan
-// de las filas de estado y del panel de anulación.
-const colCount = computed(() => (isAdmin.value ? 11 : 10))
+// factura, Registró y Pago; + Acciones para quien pueda escribir (admin anula
+// directo, empleado solicita corrección). Se usa en los colspan de las filas
+// de estado y de los paneles inline.
+const colCount = computed(() => (canWrite.value ? 11 : 10))
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
 function fmtDate(s: string | null | undefined) {
   if (!s) return '—'
@@ -67,69 +60,54 @@ function fmtDay(s: string | null | undefined) {
 }
 
 // ───────────────────────────────────────────────
-//  EDICIÓN DE ENTRADA (solo admin)
+//  SOLICITUD DE CORRECCIÓN (empleado)
 // ───────────────────────────────────────────────
-const editingId = ref<number | null>(null)
-const showEditModal = ref(false)
-const submittingEdit = ref(false)
+// El empleado no anula ni edita: abre un ticket que el admin resuelve en
+// /tickets, igual que en ventas. Antes existía aquí un modal "Editar entrada"
+// que hacía PATCH sobre el kardex; se eliminó porque `stock_movements` es
+// append-only (trigger de la migración 0001) y editar la fila en sitio o
+// reventaba o rompía la trazabilidad.
+const requestingId = ref<number | null>(null)
+const requestReason = ref('')
+const submittingRequest = ref(false)
 
-const editForm = reactive({
-  productId: 0,
-  storeId: 0,
-  quantity: 0,
-  unitValue: 0,
-  reason: '',
-  supplierInvoiceNumber: '',
-  supplierInvoiceDate: ''
-})
-
-function openEdit(m: (typeof movements.value)[number]) {
-  editingId.value = m.id
-  Object.assign(editForm, {
-    productId: m.productId,
-    storeId: m.storeId,
-    quantity: Number(m.quantity),
-    unitValue: Number(m.unitValue),
-    reason: '',
-    supplierInvoiceNumber: m.supplierInvoiceNumber ?? '',
-    supplierInvoiceDate: m.supplierInvoiceDate ?? ''
-  })
-  showEditModal.value = true
+function openRequest(m: ApiMovement) {
+  requestingId.value = m.id
+  requestReason.value = ''
+}
+function cancelRequest() {
+  requestingId.value = null
+  requestReason.value = ''
 }
 
-const canSubmitEdit = computed(
-  () => editForm.productId > 0 && editForm.storeId > 0 && editForm.quantity > 0
-)
-
-async function onSubmitEdit() {
-  if (!canSubmitEdit.value || editingId.value == null) return
-  submittingEdit.value = true
+async function confirmRequest(m: ApiMovement) {
+  if (!requestReason.value.trim()) {
+    toast.add({ title: 'Escribe el motivo', color: 'error', icon: 'i-lucide-triangle-alert' })
+    return
+  }
+  submittingRequest.value = true
   try {
-    await apiFetch(`/api/movements/${editingId.value}`, {
-      method: 'PATCH',
-      body: {
-        productId: editForm.productId,
-        storeId: editForm.storeId,
-        quantity: editForm.quantity,
-        unitValue: editForm.unitValue,
-        reason: editForm.reason.trim() || null,
-        supplierInvoiceNumber: editForm.supplierInvoiceNumber.trim() || null,
-        supplierInvoiceDate: editForm.supplierInvoiceDate || null
-      }
+    await apiFetch('/api/tickets', {
+      method: 'POST',
+      body: { movementId: m.id, reason: requestReason.value.trim() }
     })
-    toast.add({ title: 'Entrada actualizada', color: 'success', icon: 'i-lucide-circle-check' })
-    showEditModal.value = false
+    toast.add({
+      title: 'Solicitud enviada',
+      description: `Se abrió un ticket para anular la entrada ${m.folio ?? ''}. Un admin lo revisará.`,
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    cancelRequest()
     await refresh()
-    await refreshNuxtData('products')
   } catch (e) {
     toast.add({
-      title: 'No se pudo actualizar la entrada',
+      title: 'No se pudo enviar la solicitud',
       description: apiErrorMessage(e),
       color: 'error',
       icon: 'i-lucide-triangle-alert'
     })
   } finally {
-    submittingEdit.value = false
+    submittingRequest.value = false
   }
 }
 
@@ -449,7 +427,7 @@ async function exportAll() {
               <th class="px-4 py-3 font-medium">Fecha factura</th>
               <th class="px-4 py-3 font-medium">Registró</th>
               <th class="px-4 py-3 font-medium">Pago</th>
-              <th v-if="isAdmin" class="px-4 py-3 font-medium text-right">Acciones</th>
+              <th v-if="canWrite" class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
        <tbody class="divide-y divide-default">
@@ -504,27 +482,71 @@ async function exportAll() {
           />
         </div>
       </td>
-      <td v-if="isAdmin" class="px-4 py-3 text-right">
+      <td v-if="canWrite" class="px-4 py-3 text-right">
         <div v-if="m.voided" class="flex justify-end">
           <UBadge label="Anulada" color="error" variant="subtle" size="xs" />
         </div>
+        <div v-else-if="m.pendingCorrection" class="flex justify-end">
+          <UBadge label="Corrección pendiente" color="warning" variant="subtle" size="xs" />
+        </div>
+        <!-- El admin anula directo; el empleado solicita y el admin resuelve. -->
         <div v-else class="flex items-center justify-end gap-1">
           <UButton
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-pencil"
-            @click="openEdit(m)"
-          />
-          <UButton
-            v-if="voidingId !== m.id"
+            v-if="isAdmin && voidingId !== m.id"
             size="xs"
             color="error"
             variant="ghost"
             icon="i-lucide-ban"
+            title="Anular entrada"
             @click="openVoid(m)"
           />
+          <UButton
+            v-else-if="!isAdmin && requestingId !== m.id"
+            size="xs"
+            color="warning"
+            variant="ghost"
+            icon="i-lucide-message-square-warning"
+            title="Solicitar corrección"
+            @click="openRequest(m)"
+          />
         </div>
+      </td>
+    </tr>
+    <!-- Panel de solicitud de corrección (empleado) -->
+    <tr v-if="!isAdmin && requestingId === m.id" class="bg-elevated/40">
+      <td :colspan="colCount" class="px-4 py-3">
+        <div class="flex flex-wrap items-start gap-3">
+          <div class="flex-1">
+            <p class="text-xs text-muted mb-1">
+              Solicitar corrección de <strong>{{ m.productName }}</strong>
+              ({{ qtyFmt.format(Number(m.quantity)) }} {{ m.unit }}) · folio
+              <span class="font-mono">{{ m.folio ?? '—' }}</span>
+            </p>
+            <UInput
+              v-model="requestReason"
+              placeholder="Motivo (obligatorio): qué está mal en esta entrada…"
+              class="max-w-md"
+            />
+          </div>
+          <div class="flex items-center gap-2">
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              :disabled="submittingRequest"
+              @click="cancelRequest"
+            >
+              Cancelar
+            </UButton>
+            <UButton size="xs" color="warning" :loading="submittingRequest" @click="confirmRequest(m)">
+              Enviar solicitud
+            </UButton>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-muted">
+          No anula nada todavía: abre un ticket para que un administrador lo revise. Si lo
+          aprueba, la entrada se anula y tendrás que volver a capturarla corregida.
+        </p>
       </td>
     </tr>
     <!-- Panel de confirmación de anulación -->
@@ -566,62 +588,6 @@ async function exportAll() {
       <p class="text-xs text-muted">Mostrando {{ movements.length }} de {{ total }} entrada(s)</p>
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
-
-    <!-- Modal de edición (solo admin) -->
-
-    <!-- Modal de edición (solo admin) -->
-    <UModal v-model:open="showEditModal">
-      <template #content>
-        <UCard>
-          <template #header>
-            <h2 class="font-semibold">Editar entrada</h2>
-          </template>
-
-          <form class="space-y-4" @submit.prevent="onSubmitEdit">
-            <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Producto" required>
-                <USelect v-model="editForm.productId" :items="productItems" class="w-full" />
-              </UFormField>
-              <UFormField label="Sucursal" required>
-                <USelect v-model="editForm.storeId" :items="storeEditItems" class="w-full" />
-              </UFormField>
-            </div>
-
-            <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Cantidad" required>
-                <UInput v-model.number="editForm.quantity" type="number" step="0.001" min="0" class="w-full" />
-              </UFormField>
-              <UFormField label="Valor unitario">
-                <UInput v-model.number="editForm.unitValue" type="number" step="0.01" min="0" class="w-full" />
-              </UFormField>
-            </div>
-
-            <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Factura del proveedor">
-                <UInput v-model="editForm.supplierInvoiceNumber" class="w-full" />
-              </UFormField>
-              <UFormField label="Fecha de factura">
-                <UInput v-model="editForm.supplierInvoiceDate" type="date" class="w-full" />
-              </UFormField>
-            </div>
-
-            <UFormField label="Motivo/Referencia">
-              <UTextarea v-model="editForm.reason" placeholder="compra proveedor, # factura..." class="w-full" />
-            </UFormField>
-
-            <div class="flex justify-end gap-2 pt-2">
-              <UButton type="button" variant="ghost" color="neutral" @click="showEditModal = false">
-                Cancelar
-              </UButton>
-              <UButton type="submit" color="primary" :loading="submittingEdit" :disabled="!canSubmitEdit">
-                Guardar cambios
-              </UButton>
-            </div>
-          </form>
-        </UCard>
-
-      </template>
-    </UModal>
 
     <!-- Pagos de la entrada -->
     <UModal v-model:open="showPaymentsModal">

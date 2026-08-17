@@ -15,6 +15,12 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
 
   return await db.transaction(async (tx) => {
+    // Candado de fila ANTES de leer el estado: en READ COMMITTED dos
+    // recepciones simultáneas (o un doble clic) leen ambas 'en_transito',
+    // pasan las dos la validación y suman el inventario destino dos veces.
+    // Con FOR UPDATE la segunda espera y al leer ya ve 'recibida' → 400 limpio.
+    await tx.execute(sql`SELECT id FROM ${transfers} WHERE id = ${id} FOR UPDATE`)
+
     const transfer = await tx.query.transfers.findFirst({
       where: eq(transfers.id, id),
       with: { items: true }

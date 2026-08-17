@@ -1,4 +1,12 @@
-import type { ApiMovement, ApiSale, ApiTransfer, ApiUser, ApiTicket, ApiCorte } from '~/types/inventario'
+import type {
+  ApiMovement,
+  ApiSale,
+  ApiTransfer,
+  ApiUser,
+  ApiTicket,
+  ApiCorte,
+  TicketTarget
+} from '~/types/inventario'
 
 
 export function useMovementsHistory() {
@@ -199,15 +207,23 @@ export function useTransferHistory() {
 }
 
 
-export function useTicketsHistory() {
-  const tickets = useState<ApiTicket[]>('tickets', () => [])
-  const total = useState('tickets-total', () => 0)
-  const page = useState('tickets-page', () => 1)
-  const pageSize = useState('tickets-pagesize', () => 100)
-  const pending = useState('tickets-pending', () => false)
-  const error = useState<string | null>('tickets-error', () => null)
+/**
+ * Tickets de corrección de UN objetivo concreto ('factura' o 'movimiento').
+ *
+ * ⚠️ Todo el estado va namespaced por `target`: /tickets/ventas y
+ * /tickets/entradas usan este mismo composable, y con claves compartidas de
+ * `useState` una pantalla pisaría el listado y el filtro de la otra.
+ */
+export function useTicketsHistory(target: TicketTarget) {
+  const ns = `tickets-${target}`
+  const tickets = useState<ApiTicket[]>(ns, () => [])
+  const total = useState(`${ns}-total`, () => 0)
+  const page = useState(`${ns}-page`, () => 1)
+  const pageSize = useState(`${ns}-pagesize`, () => 100)
+  const pending = useState(`${ns}-pending`, () => false)
+  const error = useState<string | null>(`${ns}-error`, () => null)
   const status = useState<'todos' | 'abierto' | 'aprobado' | 'rechazado'>(
-    'tickets-status',
+    `${ns}-status`,
     () => 'todos'
   )
   const user = useSupabaseUser()
@@ -229,6 +245,7 @@ export function useTicketsHistory() {
         return
       }
       const q = new URLSearchParams()
+      q.set('target', target)
       if (status.value !== 'todos') q.set('status', status.value)
       q.set('page', String(page.value))
       q.set('pageSize', String(pageSize.value))
@@ -250,7 +267,7 @@ export function useTicketsHistory() {
   // Ojo: clave propia. Antes compartía la bandera 'tickets-watching' con
   // useTickets() de useInventoryApi.ts, así que el primero en montarse dejaba
   // al otro sin watchers.
-  useSharedScope('tickets-history', () => {
+  useSharedScope(`${ns}-history`, () => {
     watch([user, status], () => { page.value = 1; void refresh() }, { immediate: true })
     watch(page, () => void refresh())
   })

@@ -5,6 +5,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db'
 import { invoiceItems, invoices, stockMovements } from '../db/schema'
+import { effectiveMovementDate } from './movementDates'
 
 /** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -29,7 +30,7 @@ export async function getFifoLayers(
       id: true, type: true, quantity: true, unitValue: true,
       supplierInvoiceDate: true, reversesMovementId: true, createdAt: true
     },
-    with: { transfer: { columns: { issuedAt: true, receivedAt: true } } }
+    with: { transfer: { columns: { issuedAt: true, receivedAt: true, status: true } } }
   })
 
   const movementTypeById = new Map(movements.map((m) => [m.id, m.type]))
@@ -51,8 +52,15 @@ export async function getFifoLayers(
   const transactions: Txn[] = []
 
   for (const m of movements) {
+    // Transferencia cancelada: se ignoran TODOS sus movimientos (la salida y
+    // su reversa). Sumar la reversa como movimiento aparte dejaría la capa
+    // original consumida y crearía otra con fecha de la cancelación; saltarse
+    // las dos deja el FIFO exactamente como si la transferencia nunca hubiera
+    // salido, que es lo que significa cancelarla.
+    if (m.transfer?.status === 'cancelada') continue
+
     if (m.type === 'entrada') {
-      const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+      const date = effectiveMovementDate(m)
       transactions.push({ date, type: 'entrada', quantity: Number(m.quantity), unitValue: Number(m.unitValue) })
     }
     if (m.type === 'transferencia_entrada' && m.transfer?.receivedAt) {
@@ -68,7 +76,7 @@ export async function getFifoLayers(
       }
     }
     if (m.type === 'ajuste') {
-      const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+      const date = effectiveMovementDate(m)
       const qty = Number(m.quantity)
       if (qty > 0) transactions.push({ date, type: 'entrada', quantity: qty, unitValue: Number(m.unitValue) })
       else if (qty < 0) transactions.push({ date, type: 'salida', quantity: Math.abs(qty), unitValue: Number(m.unitValue) })
