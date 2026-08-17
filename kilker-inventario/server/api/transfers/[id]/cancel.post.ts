@@ -20,6 +20,11 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
 
   return await db.transaction(async (tx) => {
+    // Candado de fila ANTES de leer el estado: sin esto, dos cancelaciones
+    // simultáneas (o un doble clic) pasan ambas la validación de estado y
+    // reponen el inventario del origen dos veces.
+    await tx.execute(sql`SELECT id FROM ${transfers} WHERE id = ${id} FOR UPDATE`)
+
     const transfer = await tx.query.transfers.findFirst({ where: eq(transfers.id, id) })
     if (!transfer) throw createError({ statusCode: 404, statusMessage: 'Transferencia no existe' })
     if (transfer.status !== 'en_transito') {
@@ -47,11 +52,15 @@ export default defineEventHandler(async (event) => {
         .set({ quantity: sql`${inventory.quantity} + ${quantity}`, updatedAt: new Date() })
         .where(and(eq(inventory.productId, m.productId), eq(inventory.storeId, m.storeId)))
 
-      // Movimiento de reversa, ligado al original.
+      // Movimiento de reversa, ligado al original. Es 'anulacion', NO 'ajuste':
+      // un ajuste positivo lo leen los reportes como una ENTRADA nueva, que
+      // crearía una capa FIFO fechada el día de la cancelación en vez de
+      // restaurar la original, y ensuciaría "ajustes de inventario" del
+      // dashboard con algo que no es un ajuste.
       await tx.insert(stockMovements).values({
         productId: m.productId,
         storeId: m.storeId,
-        type: 'ajuste',
+        type: 'anulacion',
         quantity: String(quantity),
         unitValue: m.unitValue,
         totalValue: String(Number(m.unitValue) * quantity),

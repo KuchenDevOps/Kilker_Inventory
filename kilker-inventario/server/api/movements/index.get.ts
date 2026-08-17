@@ -1,6 +1,7 @@
-import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
+import { and, count, desc, eq, ilike, inArray, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { products, profiles, stockMovements, stores } from '../../db/schema'
+import { products, profiles, stockMovements, stores, tickets } from '../../db/schema'
+import { effectiveMovementDateBetween, effectiveMovementDateSql } from '../../utils/movementDates'
 
 
 export default defineEventHandler(async (event) => {
@@ -20,14 +21,12 @@ export default defineEventHandler(async (event) => {
     if (storeId) filters.push(eq(stockMovements.storeId, storeId))
   }
 
-  if (query.from) {
-    const fromDate = new Date(String(query.from)).toISOString().slice(0, 10)
-    filters.push(gte(stockMovements.supplierInvoiceDate, fromDate))
-  }
-  if (query.to) {
-    const toDate = new Date(String(query.to)).toISOString().slice(0, 10)
-    filters.push(lt(stockMovements.supplierInvoiceDate, toDate))
-  }
+  // Fecha EFECTIVA: `supplier_invoice_date` es NULL en las entradas sin
+  // factura de proveedor, y compararla a secas las hacía desaparecer del
+  // listado en cuanto se elegía un periodo. Misma regla que el dashboard.
+  const fromDate = query.from ? new Date(String(query.from)).toISOString().slice(0, 10) : null
+  const toDate = query.to ? new Date(String(query.to)).toISOString().slice(0, 10) : null
+  filters.push(...effectiveMovementDateBetween(fromDate, toDate))
 
   const q = String(query.q ?? '').trim()
   if (q) {
@@ -62,7 +61,10 @@ export default defineEventHandler(async (event) => {
 
   const rows = await db.query.stockMovements.findMany({
     where: whereClause,
-    orderBy: [desc(stockMovements.supplierInvoiceDate), desc(stockMovements.createdAt)],
+    // Se ordena por la fecha efectiva, no por `supplier_invoice_date`: en un
+    // DESC Postgres pone los NULL primero, así que las entradas sin factura
+    // de proveedor se quedaban clavadas arriba del listado para siempre.
+    orderBy: [desc(effectiveMovementDateSql()), desc(stockMovements.createdAt)],
     ...(paginate ? { limit: pageSize, offset: (page - 1) * pageSize } : {}),
     with: {
       product: { columns: { name: true, sku: true, unit: true } },
@@ -73,12 +75,22 @@ export default defineEventHandler(async (event) => {
   })
     const movementIds = rows.map((m) => m.id)
   const voided = new Set<number>()
+  // Entradas con ticket de corrección abierto: la UI esconde el botón de
+  // solicitar otro y muestra "pendiente" (mismo criterio que /api/sales).
+  const pendingCorrection = new Set<number>()
   if (movementIds.length) {
-    const reversals = await db
-      .select({ reversesMovementId: stockMovements.reversesMovementId })
-      .from(stockMovements)
-      .where(and(eq(stockMovements.type, 'anulacion'), inArray(stockMovements.reversesMovementId, movementIds)))
+    const [reversals, openTickets] = await Promise.all([
+      db
+        .select({ reversesMovementId: stockMovements.reversesMovementId })
+        .from(stockMovements)
+        .where(and(eq(stockMovements.type, 'anulacion'), inArray(stockMovements.reversesMovementId, movementIds))),
+      db
+        .select({ movementId: tickets.movementId })
+        .from(tickets)
+        .where(and(eq(tickets.status, 'abierto'), inArray(tickets.movementId, movementIds)))
+    ])
     for (const r of reversals) if (r.reversesMovementId != null) voided.add(r.reversesMovementId)
+    for (const t of openTickets) if (t.movementId != null) pendingCorrection.add(t.movementId)
   }
 
   const mapped = rows.map((m) => {
@@ -113,6 +125,7 @@ export default defineEventHandler(async (event) => {
       createdByName: m.createdBy?.fullName ?? null,
       createdAt: m.createdAt,
       voided: isVoided,
+      pendingCorrection: pendingCorrection.has(m.id),
       totalToPay,
       totalPaid,
       balance,

@@ -46,6 +46,12 @@ const allNav: NavEntry[] = [
         to: '/movimientos',
         icon: 'i-lucide-history',
         roles: ['admin', 'empleado', 'observador']
+      },
+      {
+        label: 'Correcciones',
+        to: '/tickets/entradas',
+        icon: 'i-lucide-ticket',
+        roles: ['admin', 'empleado', 'observador']
       }
     ]
   },
@@ -85,7 +91,7 @@ const allNav: NavEntry[] = [
       },
       {
         label: 'Correcciones',
-        to: '/tickets',
+        to: '/tickets/ventas',
         icon: 'i-lucide-ticket',
         roles: ['admin', 'empleado', 'observador']
       }

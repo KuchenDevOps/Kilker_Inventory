@@ -18,6 +18,7 @@ import {
   stockMovements,
   stores
 } from '../../db/schema'
+import { effectiveMovementDate } from '../../utils/movementDates'
 
 interface SaleItem {
   productId: number
@@ -245,11 +246,7 @@ export default defineEventHandler(async (event) => {
         // de referencia (puede diferir de created_at por captura retroactiva).
         // Se re-filtra usando esa fecha "efectiva" cuando exista.
         const netAtDate = priorMovements.reduce((sum, m) => {
-          const effective =
-            m.type === 'entrada' && m.supplierInvoiceDate
-              ? new Date(m.supplierInvoiceDate)
-              : m.createdAt
-          if (effective > effectiveDate) return sum
+          if (effectiveMovementDate(m) > effectiveDate) return sum
           return sum + Number(m.quantity)
         }, 0)
 

@@ -3,6 +3,7 @@
 import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, stockMovements } from '../../db/schema'
+import { effectiveMovementDate } from '../../utils/movementDates'
 
 const EPSILON = 0.0005 
 
@@ -45,7 +46,7 @@ export default defineEventHandler(async (event) => {
       unitValue: true, totalValue: true, supplierInvoiceDate: true,
       reversesMovementId: true, createdAt: true
     },
-    with: { transfer: { columns: { issuedAt: true, receivedAt: true } } }
+    with: { transfer: { columns: { issuedAt: true, receivedAt: true, status: true } } }
   })
 
   const movementTypeById = new Map(allMovements.map((m) => [m.id, m.type]))
@@ -94,8 +95,13 @@ export default defineEventHandler(async (event) => {
     const transactions: Transaction[] = []
 
     for (const m of productMovements) {
+      // Transferencia cancelada: se ignoran la salida y su reversa, para que
+      // el FIFO quede como si nunca hubiera salido (mismo criterio que
+      // monthlyInventory y inventoryFifo).
+      if (m.transfer?.status === 'cancelada') continue
+
       if (m.type === 'entrada') {
-        const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+        const date = effectiveMovementDate(m)
         if (date < asOf) transactions.push({ date, type: 'entrada', quantity: Number(m.quantity), unitValue: Number(m.unitValue) })
       }
       if (m.type === 'transferencia_entrada' && m.transfer?.receivedAt && m.transfer.receivedAt < asOf) {
@@ -111,7 +117,7 @@ export default defineEventHandler(async (event) => {
         }
       }
       if (m.type === 'ajuste') {
-        const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+        const date = effectiveMovementDate(m)
         if (date < asOf) {
           const qty = Number(m.quantity)
           if (qty > 0) transactions.push({ date, type: 'entrada', quantity: qty, unitValue: Number(m.unitValue) })

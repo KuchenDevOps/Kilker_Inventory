@@ -8,6 +8,7 @@ import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../db'
 import { invoices, stockMovements } from '../db/schema'
 import type { SessionProfile } from './auth'
+import { effectiveMovementDate } from './movementDates'
 
 interface Transaction {
   date: Date
@@ -117,7 +118,7 @@ export async function computeMonthlyInventory(
       createdAt: true
     },
     with: {
-      transfer: { columns: { issuedAt: true, receivedAt: true } }
+      transfer: { columns: { issuedAt: true, receivedAt: true, status: true } }
     }
   })
 
@@ -141,7 +142,7 @@ export async function computeMonthlyInventory(
   }
   const allInvoicesUpToEnd = await db.query.invoices.findMany({
     where: and(...invoiceFilters),
-    columns: { id: true, storeId: true, issuedAt: true },
+    columns: { id: true, storeId: true, issuedAt: true, discountPct: true },
     with: {
       items: { columns: { productId: true, quantity: true, unitPrice: true, lineTotal: true } }
     }
@@ -153,13 +154,18 @@ export async function computeMonthlyInventory(
   type SaleLine = { issuedAt: Date; quantity: number; totalValue: number; unitValue: number }
   const salesByKey = new Map<string, SaleLine[]>()
   for (const invoice of allInvoicesUpToEnd) {
+    // El descuento vive en la factura, no en la línea: se prorratea para que
+    // `exitsValue` sea el ingreso NETO y cuadre con `sum(total_amount)` del
+    // dashboard. `unitValue` se deja bruto a propósito: es el precio snapshot
+    // de la línea, y el FIFO no lo usa para valuar salidas.
+    const netFactor = 1 - Number(invoice.discountPct ?? 0) / 100
     for (const item of invoice.items) {
       const key = `${item.productId}-${invoice.storeId}`
       if (!salesByKey.has(key)) salesByKey.set(key, [])
       salesByKey.get(key)!.push({
         issuedAt: invoice.issuedAt,
         quantity: Number(item.quantity),
-        totalValue: Number(item.lineTotal),
+        totalValue: Number(item.lineTotal) * netFactor,
         unitValue: Number(item.unitPrice)
       })
     }
@@ -197,19 +203,22 @@ export async function computeMonthlyInventory(
 
     const entries = productMovements
       .filter((m) => m.type === 'entrada')
-      .sort((a, b) => {
-        const dateA = a.supplierInvoiceDate ? new Date(a.supplierInvoiceDate) : a.createdAt
-        const dateB = b.supplierInvoiceDate ? new Date(b.supplierInvoiceDate) : b.createdAt
-        return dateA.getTime() - dateB.getTime()
-      })
+      .sort(
+        (a, b) => effectiveMovementDate(a).getTime() - effectiveMovementDate(b).getTime()
+      )
 
     const entriesInMonth = entries.filter((e) => {
-      const date = e.supplierInvoiceDate ? new Date(e.supplierInvoiceDate) : e.createdAt
+      const date = effectiveMovementDate(e)
       return date >= windowStart && date < windowEnd
     })
     for (const e of entriesInMonth) entriesValue += Number(e.totalValue)
 
     for (const m of productMovements) {
+      // Transferencia cancelada: no cuenta como salida (inflaba
+      // transfersOut*) ni su reversa como ajuste/anulación. Se ignoran todos
+      // sus movimientos, que es lo que significa cancelarla.
+      if (m.transfer?.status === 'cancelada') continue
+
       if (m.type === 'transferencia_salida') {
         const issuedAt = m.transfer?.issuedAt
         if (issuedAt && issuedAt >= windowStart && issuedAt < windowEnd) {
@@ -244,7 +253,7 @@ export async function computeMonthlyInventory(
 
       // El ajuste puede sumar o restar stock según el signo de quantity.
       if (m.type === 'ajuste') {
-        const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+        const date = effectiveMovementDate(m)
         if (date >= windowStart && date < windowEnd) {
           adjustmentsUnits += Number(m.quantity) // conserva el signo, útil para ver si fue alta o baja
           adjustmentsValue += Number(m.totalValue)
@@ -262,7 +271,7 @@ export async function computeMonthlyInventory(
     const transactions: Transaction[] = []
 
     for (const e of entries) {
-      const date = e.supplierInvoiceDate ? new Date(e.supplierInvoiceDate) : e.createdAt
+      const date = effectiveMovementDate(e)
       if (date >= windowEnd) continue
       transactions.push({
         date,
@@ -285,6 +294,10 @@ export async function computeMonthlyInventory(
     }
 
     for (const m of productMovements) {
+      // Misma exclusión que arriba: una transferencia cancelada no tocó el
+      // FIFO ni con la salida ni con su reversa.
+      if (m.transfer?.status === 'cancelada') continue
+
       if (m.type === 'transferencia_entrada') {
         const receivedAt = m.transfer?.receivedAt
         if (receivedAt && receivedAt < windowEnd) {
@@ -333,7 +346,7 @@ export async function computeMonthlyInventory(
 
       // El ajuste puede sumar o restar stock según el signo de quantity.
       if (m.type === 'ajuste') {
-        const date = m.supplierInvoiceDate ? new Date(m.supplierInvoiceDate) : m.createdAt
+        const date = effectiveMovementDate(m)
         if (date < windowEnd) {
           const qty = Number(m.quantity)
           if (qty > 0) {
