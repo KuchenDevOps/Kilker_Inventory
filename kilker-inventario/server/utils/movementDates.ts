@@ -12,6 +12,7 @@
 // venían divergiendo: el mismo payload del dashboard traía dos cifras de
 // "entradas" calculadas con dos reglas de fecha distintas.
 import { sql } from 'drizzle-orm'
+import { parseBusinessDate } from './businessTime'
 import type { SQL } from 'drizzle-orm'
 import { stockMovements } from '../db/schema'
 
@@ -45,6 +46,6 @@ export function effectiveMovementDate(movement: {
   createdAt: Date
 }): Date {
   return movement.supplierInvoiceDate
-    ? new Date(movement.supplierInvoiceDate)
+    ? parseBusinessDate(movement.supplierInvoiceDate)
     : movement.createdAt
 }

@@ -24,20 +24,7 @@ import {
   transfers
 } from '../db/schema'
 import type { SessionProfile } from './auth'
-import { effectiveMovementDate } from './movementDates'
-
-interface Transaction {
-  date: Date
-  type: 'entrada' | 'salida'
-  quantity: number
-  unitValue: number
-  totalValue: number
-  // Solo las 'salida' que vienen de una venta real cuentan como COGS del
-  // periodo. Transferencias, anulaciones de entrada y ajustes negativos
-  // también consumen capas (afectan qué queda disponible), pero no son
-  // "costo de lo vendido".
-  isSale: boolean
-}
+import { buildFifoEvents, runFifo } from './fifoEngine'
 
 type ProductUnit = (typeof products.$inferSelect)['unit']
 
@@ -245,148 +232,33 @@ export async function computeTopProducts(
       const productMovements = movementsByKey.get(key) ?? []
       const productSales = salesByKey.get(key) ?? []
 
-      const transactions: Transaction[] = []
-
-      for (const m of productMovements) {
-        // Transferencia cancelada: se ignoran todos sus movimientos (la salida
-        // y su reversa). Contar solo la reversa la trataría como una entrada
-        // nueva y desordenaría las capas FIFO que respaldan el costo.
-        if (m.transferStatus === 'cancelada') continue
-
-        if (m.type === 'entrada') {
-          const date = effectiveMovementDate(m)
-          if (date < periodEnd) {
-            transactions.push({
-              date,
-              type: 'entrada',
-              quantity: Number(m.quantity),
-              unitValue: Number(m.unitValue),
-              totalValue: Number(m.totalValue),
-              isSale: false
-            })
-          }
-        }
-        if (m.type === 'transferencia_entrada') {
-          const receivedAt = m.transferReceivedAt
-          if (receivedAt && receivedAt < periodEnd) {
-            transactions.push({
-              date: receivedAt,
-              type: 'entrada',
-              quantity: Number(m.quantity),
-              unitValue: Number(m.unitValue),
-              totalValue: Number(m.totalValue),
-              isSale: false
-            })
-          }
-        }
-        if (m.type === 'transferencia_salida') {
-          const issuedAt = m.transferIssuedAt
-          if (issuedAt && issuedAt < periodEnd) {
-            transactions.push({
-              date: issuedAt,
-              type: 'salida',
-              quantity: Math.abs(Number(m.quantity)),
-              unitValue: Number(m.unitValue),
-              totalValue: Math.abs(Number(m.totalValue)),
-              isSale: false
-            })
-          }
-        }
-        if (m.type === 'anulacion' && m.createdAt < periodEnd) {
-          const originalType = m.reversesMovementId
-            ? movementTypeById.get(m.reversesMovementId)
-            : undefined
-          if (originalType === 'entrada') {
-            transactions.push({
-              date: m.createdAt,
-              type: 'salida',
-              quantity: Math.abs(Number(m.quantity)),
-              unitValue: Number(m.unitValue),
-              totalValue: Math.abs(Number(m.totalValue)),
-              isSale: false
-            })
-          }
-        }
-        if (m.type === 'ajuste') {
-          const date = effectiveMovementDate(m)
-          if (date < periodEnd) {
-            const qty = Number(m.quantity)
-            if (qty > 0) {
-              transactions.push({
-                date,
-                type: 'entrada',
-                quantity: qty,
-                unitValue: Number(m.unitValue),
-                totalValue: Number(m.totalValue),
-                isSale: false
-              })
-            } else if (qty < 0) {
-              transactions.push({
-                date,
-                type: 'salida',
-                quantity: Math.abs(qty),
-                unitValue: Number(m.unitValue),
-                totalValue: Math.abs(Number(m.totalValue)),
-                isSale: false
-              })
-            }
-          }
-        }
-      }
-
-      for (const s of productSales) {
-        if (s.issuedAt < periodEnd) {
-          transactions.push({
-            date: s.issuedAt,
-            type: 'salida',
+      // Mismo motor que la valuación de inventario: el costo de lo vendido
+      // sale del consumo real de capas, no de una aproximación aparte.
+      const fifo = runFifo(
+        buildFifoEvents(
+          productMovements.map((m) => ({
+            id: m.id,
+            type: m.type,
+            quantity: m.quantity,
+            unitValue: m.unitValue,
+            supplierInvoiceDate: m.supplierInvoiceDate,
+            reversesMovementId: m.reversesMovementId,
+            createdAt: m.createdAt,
+            transferIssuedAt: m.transferIssuedAt,
+            transferReceivedAt: m.transferReceivedAt,
+            transferStatus: m.transferStatus
+          })),
+          productSales.map((s) => ({
+            issuedAt: s.issuedAt,
             quantity: s.quantity,
-            unitValue: s.unitValue,
-            totalValue: s.totalValue,
-            isSale: true
-          })
-        }
-      }
+            unitPrice: s.unitValue
+          })),
+          movementTypeById
+        ),
+        { from: periodStart ?? undefined, to: periodEnd }
+      )
 
-      transactions.sort((a, b) => a.date.getTime() - b.date.getTime())
-
-      const inventoryLayers: Array<{ qty: number; unitCost: number }> = []
-      let periodCost = 0
-
-      for (const txn of transactions) {
-        if (txn.type === 'entrada') {
-          inventoryLayers.push({ qty: txn.quantity, unitCost: txn.unitValue })
-          continue
-        }
-
-        // Solo importa para el costo del periodo si es venta real Y cae dentro
-        // de [periodStart, periodEnd). Aun así, SIEMPRE hay que consumir las
-        // capas (ventas fuera de rango también "gastan" inventario, y eso
-        // afecta qué capas quedan disponibles para las ventas del periodo).
-        const inPeriod = txn.isSale && (!periodStart || txn.date >= periodStart)
-
-        let qtyToConsume = txn.quantity
-        let index = 0
-        while (qtyToConsume > 0 && index < inventoryLayers.length) {
-          const layer = inventoryLayers[index]
-          if (!layer) break
-          const consumeQty = Math.min(layer.qty, qtyToConsume)
-          if (inPeriod) periodCost += consumeQty * layer.unitCost
-          layer.qty -= consumeQty
-          qtyToConsume -= consumeQty
-          if (layer.qty === 0) index++
-        }
-        inventoryLayers.splice(0, index)
-
-        if (qtyToConsume > 0 && inPeriod) {
-          // Faltante de capas: no hay costo histórico que respalde esta venta
-          // (dato inconsistente, mismo caso que "stock fantasma"). Se usa el
-          // unitValue de la propia venta como aproximación de emergencia para
-          // no dejar el costo en 0 artificialmente.
-          periodCost += qtyToConsume * txn.unitValue
-        }
-      }
-
-      costByProduct.set(productId, (costByProduct.get(productId) ?? 0) + periodCost)
+      costByProduct.set(productId, (costByProduct.get(productId) ?? 0) + fifo.saleCost)
     }
   }
 

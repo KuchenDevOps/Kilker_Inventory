@@ -5,17 +5,15 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db'
 import { invoiceItems, invoices, stockMovements } from '../db/schema'
-import { effectiveMovementDate } from './movementDates'
+import { buildFifoEvents, runFifo } from './fifoEngine'
+import type { FifoLayer } from './fifoEngine'
 
 /** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 const EPSILON = 0.0005
 
-export interface FifoLayer {
-  qty: number
-  unitCost: number
-}
+export type { FifoLayer } from './fifoEngine'
 
 
 export async function getFifoLayers(
@@ -48,69 +46,32 @@ export async function getFifoLayers(
     : []
   const invoiceById = new Map(relatedInvoices.map((inv) => [inv.id, inv]))
 
-  type Txn = { date: Date; type: 'entrada' | 'salida'; quantity: number; unitValue: number }
-  const transactions: Txn[] = []
+  const events = buildFifoEvents(
+    movements.map((m) => ({
+      id: m.id,
+      type: m.type,
+      quantity: m.quantity,
+      unitValue: m.unitValue,
+      supplierInvoiceDate: m.supplierInvoiceDate,
+      reversesMovementId: m.reversesMovementId,
+      createdAt: m.createdAt,
+      transferIssuedAt: m.transfer?.issuedAt ?? null,
+      transferReceivedAt: m.transfer?.receivedAt ?? null,
+      transferStatus: m.transfer?.status ?? null
+    })),
+    items.flatMap((item) => {
+      const invoice = invoiceById.get(item.invoiceId)
+      return invoice
+        ? [{ issuedAt: invoice.issuedAt, quantity: item.quantity, unitPrice: item.unitPrice }]
+        : []
+    }),
+    movementTypeById
+  )
 
-  for (const m of movements) {
-    // Transferencia cancelada: se ignoran TODOS sus movimientos (la salida y
-    // su reversa). Sumar la reversa como movimiento aparte dejaría la capa
-    // original consumida y crearía otra con fecha de la cancelación; saltarse
-    // las dos deja el FIFO exactamente como si la transferencia nunca hubiera
-    // salido, que es lo que significa cancelarla.
-    if (m.transfer?.status === 'cancelada') continue
-
-    if (m.type === 'entrada') {
-      const date = effectiveMovementDate(m)
-      transactions.push({ date, type: 'entrada', quantity: Number(m.quantity), unitValue: Number(m.unitValue) })
-    }
-    if (m.type === 'transferencia_entrada' && m.transfer?.receivedAt) {
-      transactions.push({ date: m.transfer.receivedAt, type: 'entrada', quantity: Number(m.quantity), unitValue: Number(m.unitValue) })
-    }
-    if (m.type === 'transferencia_salida' && m.transfer?.issuedAt) {
-      transactions.push({ date: m.transfer.issuedAt, type: 'salida', quantity: Math.abs(Number(m.quantity)), unitValue: Number(m.unitValue) })
-    }
-    if (m.type === 'anulacion') {
-      const originalType = m.reversesMovementId ? movementTypeById.get(m.reversesMovementId) : undefined
-      if (originalType === 'entrada') {
-        transactions.push({ date: m.createdAt, type: 'salida', quantity: Math.abs(Number(m.quantity)), unitValue: Number(m.unitValue) })
-      }
-    }
-    if (m.type === 'ajuste') {
-      const date = effectiveMovementDate(m)
-      const qty = Number(m.quantity)
-      if (qty > 0) transactions.push({ date, type: 'entrada', quantity: qty, unitValue: Number(m.unitValue) })
-      else if (qty < 0) transactions.push({ date, type: 'salida', quantity: Math.abs(qty), unitValue: Number(m.unitValue) })
-    }
-  }
-  for (const item of items) {
-    const invoice = invoiceById.get(item.invoiceId)
-    if (!invoice) continue
-    transactions.push({ date: invoice.issuedAt, type: 'salida', quantity: Number(item.quantity), unitValue: Number(item.unitPrice) })
-  }
-
-  transactions.sort((a, b) => a.date.getTime() - b.date.getTime())
-
-  const layers: FifoLayer[] = []
-  for (const txn of transactions) {
-    if (txn.date > asOf) continue
-    if (txn.type === 'entrada') {
-      layers.push({ qty: txn.quantity, unitCost: txn.unitValue })
-    } else {
-      let qtyToConsume = txn.quantity
-      let index = 0
-      while (qtyToConsume > EPSILON && index < layers.length) {
-        const layer = layers[index]
-        if (!layer) break
-        const consume = Math.min(layer.qty, qtyToConsume)
-        layer.qty -= consume
-        qtyToConsume -= consume
-        if (layer.qty <= EPSILON) index++
-      }
-      layers.splice(0, index)
-    }
-  }
-
-  return layers
+  // `asOf` es inclusivo aquí (así lo usaban los llamadores), y el motor corta
+  // en exclusivo: se le suma 1 ms.
+  const cutoff = new Date(asOf.getTime() + 1)
+    return runFifo(events, { to: cutoff }).layers
 }
 
 /**
@@ -131,6 +92,9 @@ export async function getFifoUnitCost(
   let totalCost = 0
   for (const layer of layers) {
     if (remaining <= EPSILON) break
+    // Una capa negativa es deuda (se vendió sin existencia), no inventario
+    // disponible: no puede costear una salida.
+    if (layer.qty <= EPSILON) continue
     const take = Math.min(layer.qty, remaining)
     totalCost += take * layer.unitCost
     remaining -= take

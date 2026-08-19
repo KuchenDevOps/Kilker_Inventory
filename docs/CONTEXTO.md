@@ -92,6 +92,15 @@ Vercel.**
 > Lo marcado **[x]** ya está **resuelto por implementación** (así funciona el código hoy).
 > Lo marcado **[ ]** sigue sin confirmar.
 
+### Zona horaria del negocio
+- [ ] **¿Todas las sucursales operan en el centro de México (UTC−6)?** Las columnas
+  `date` (p. ej. `supplier_invoice_date`) no traen hora, y los periodos del dashboard
+  se arman en hora local del navegador. Para que una entrada fechada el día 1 no caiga
+  en el mes anterior, `server/utils/businessTime.ts` fija el offset en **UTC−6** (el
+  país dejó el horario de verano en octubre de 2022). **Supuesto del agente.** Si
+  llega a haber sucursales en Quintana Roo (UTC−5) o Baja California (con horario de
+  verano), el offset tiene que pasar a ser por sucursal.
+
 ### Plataforma / costos — **siguen pendientes, hoy son lo bloqueante**
 - [ ] **Vercel Pro** confirmado para uso comercial (~$20 USD/mes/usuario)?
 - [ ] **Plan de Supabase**: ¿Free para arrancar y Pro (~$25/mes) en producción? Límites.

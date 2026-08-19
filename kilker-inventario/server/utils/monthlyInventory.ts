@@ -8,15 +8,8 @@ import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../db'
 import { invoices, stockMovements } from '../db/schema'
 import type { SessionProfile } from './auth'
+import { buildFifoEvents, runFifo } from './fifoEngine'
 import { effectiveMovementDate } from './movementDates'
-
-interface Transaction {
-  date: Date
-  type: 'entrada' | 'salida'
-  quantity: number
-  unitValue: number
-  totalValue: number
-}
 
 const EMPTY_RESULT = {
   entriesValue: 0,
@@ -32,7 +25,14 @@ const EMPTY_RESULT = {
   voidsValue: 0,
   voidsUnits: 0,
   adjustmentsValue: 0,
-  adjustmentsUnits: 0
+  adjustmentsUnits: 0,
+  openingInventoryValue: 0,
+  openingUnits: 0,
+  inflowsValue: 0,
+  soldCost: 0,
+  otherOutflowsCost: 0,
+  uncoveredSaleUnits: 0,
+  uncoveredSaleValue: 0
 }
 
 const EPSILON = 0.0005
@@ -196,6 +196,14 @@ export async function computeMonthlyInventory(
   let voidsUnits = 0
   let adjustmentsValue = 0
   let adjustmentsUnits = 0
+  // Flujos del FIFO: con ellos cuadra inicial + entradas − consumos = final.
+  let openingInventoryValue = 0
+  let openingUnits = 0
+  let inflowsValue = 0
+  let soldCost = 0
+  let otherOutflowsCost = 0
+  let uncoveredSaleUnits = 0
+  let uncoveredSaleValue = 0
 
   for (const key of allKeys) {
     const productMovements = movementsByKey.get(key) ?? []
@@ -267,149 +275,41 @@ export async function computeMonthlyInventory(
       exitsUnits += s.quantity
     }
 
-    // --- FIFO acotado a esta sucursal específica ---
-    const transactions: Transaction[] = []
+    // --- FIFO de esta sucursal, con el motor compartido ---
+    const fifo = runFifo(
+      buildFifoEvents(
+        productMovements.map((m) => ({
+          id: m.id,
+          type: m.type,
+          quantity: m.quantity,
+          unitValue: m.unitValue,
+          supplierInvoiceDate: m.supplierInvoiceDate,
+          reversesMovementId: m.reversesMovementId,
+          createdAt: m.createdAt,
+          transferIssuedAt: m.transfer?.issuedAt ?? null,
+          transferReceivedAt: m.transfer?.receivedAt ?? null,
+          transferStatus: m.transfer?.status ?? null
+        })),
+        productSales.map((s) => ({
+          issuedAt: s.issuedAt,
+          quantity: s.quantity,
+          unitPrice: s.unitValue
+        })),
+        movementTypeById
+      ),
+      { from: windowStart, to: windowEnd }
+    )
 
-    for (const e of entries) {
-      const date = effectiveMovementDate(e)
-      if (date >= windowEnd) continue
-      transactions.push({
-        date,
-        type: 'entrada',
-        quantity: Number(e.quantity),
-        unitValue: Number(e.unitValue),
-        totalValue: Number(e.totalValue)
-      })
-    }
-
-    for (const s of productSales) {
-      if (s.issuedAt >= windowEnd) continue
-      transactions.push({
-        date: s.issuedAt,
-        type: 'salida',
-        quantity: s.quantity,
-        unitValue: s.unitValue,
-        totalValue: s.totalValue
-      })
-    }
-
-    for (const m of productMovements) {
-      // Misma exclusión que arriba: una transferencia cancelada no tocó el
-      // FIFO ni con la salida ni con su reversa.
-      if (m.transfer?.status === 'cancelada') continue
-
-      if (m.type === 'transferencia_entrada') {
-        const receivedAt = m.transfer?.receivedAt
-        if (receivedAt && receivedAt < windowEnd) {
-          transactions.push({
-            date: receivedAt,
-            type: 'entrada',
-            quantity: Number(m.quantity),
-            unitValue: Number(m.unitValue),
-            totalValue: Number(m.totalValue)
-          })
-        }
-      }
-      if (m.type === 'transferencia_salida') {
-        const issuedAt = m.transfer?.issuedAt
-        if (issuedAt && issuedAt < windowEnd) {
-          transactions.push({
-            date: issuedAt,
-            type: 'salida',
-            quantity: Math.abs(Number(m.quantity)),
-            unitValue: Number(m.unitValue),
-            totalValue: Math.abs(Number(m.totalValue))
-          })
-        }
-      }
-
-      // Anulación de una ENTRADA: la entrada original sigue viva en
-      // `transactions` (arriba), así que aquí hay que cancelarla con una
-      // salida equivalente. Anulación de una VENTA: se ignora — la venta
-      // original nunca entró al FIFO (invoice status != 'emitida'), así
-      // que no hay nada que revertir.
-      if (m.type === 'anulacion' && m.createdAt < windowEnd) {
-        const originalType = m.reversesMovementId
-          ? movementTypeById.get(m.reversesMovementId)
-          : undefined
-
-        if (originalType === 'entrada') {
-          transactions.push({
-            date: m.createdAt,
-            type: 'salida',
-            quantity: Math.abs(Number(m.quantity)),
-            unitValue: Number(m.unitValue),
-            totalValue: Math.abs(Number(m.totalValue))
-          })
-        }
-      }
-
-      // El ajuste puede sumar o restar stock según el signo de quantity.
-      if (m.type === 'ajuste') {
-        const date = effectiveMovementDate(m)
-        if (date < windowEnd) {
-          const qty = Number(m.quantity)
-          if (qty > 0) {
-            transactions.push({
-              date,
-              type: 'entrada',
-              quantity: qty,
-              unitValue: Number(m.unitValue),
-              totalValue: Number(m.totalValue)
-            })
-          } else if (qty < 0) {
-            transactions.push({
-              date,
-              type: 'salida',
-              quantity: Math.abs(qty),
-              unitValue: Number(m.unitValue),
-              totalValue: Math.abs(Number(m.totalValue))
-            })
-          }
-        }
-      }
-    }
-
-    transactions.sort((a, b) => a.date.getTime() - b.date.getTime())
-
-    let remainingQty = 0
-    const inventoryLayers: Array<{ qty: number; unitCost: number }> = []
-
-    for (const txn of transactions) {
-      if (txn.type === 'entrada') {
-        inventoryLayers.push({ qty: txn.quantity, unitCost: txn.unitValue })
-        remainingQty += txn.quantity
-      } else {
-        let qtyToConsume = txn.quantity
-        let index = 0
-        while (qtyToConsume > EPSILON && index < inventoryLayers.length) {
-          const layer = inventoryLayers[index]
-          if (!layer) break
-          const consumeQty = Math.min(layer.qty, qtyToConsume)
-          layer.qty -= consumeQty
-          qtyToConsume -= consumeQty
-          remainingQty -= consumeQty
-          if (layer.qty <= EPSILON) index++
-        }
-        inventoryLayers.splice(0, index)
-        if (qtyToConsume > EPSILON) {
-          // Faltante de capas: venta sin entrada histórica que la respalde.
-          remainingQty -= qtyToConsume
-        }
-      }
-    }
-
-    let productInventoryValue = 0
-    for (const layer of inventoryLayers) productInventoryValue += layer.qty * layer.unitCost
-
-    const roundedRemainingQty = Math.round(remainingQty * 1000) / 1000
-    if (roundedRemainingQty === 0) {
-      productInventoryValue = 0
-    }
-
-    endingInventoryValue += productInventoryValue
-    if (remainingQty > EPSILON) {
-      endingUnits += remainingQty
+    endingInventoryValue += fifo.endingValue
+    openingInventoryValue += fifo.openingValue
+    if (fifo.openingUnits > EPSILON) openingUnits += fifo.openingUnits
+    inflowsValue += fifo.inflowValue
+    soldCost += fifo.saleCost
+    otherOutflowsCost += fifo.otherOutflowCost
+    uncoveredSaleUnits += fifo.uncoveredUnits
+    uncoveredSaleValue += fifo.uncoveredValue
+    if (fifo.endingUnits > EPSILON) {
+      endingUnits += fifo.endingUnits
       productsWithStock++
     }
   }
@@ -430,6 +330,13 @@ export async function computeMonthlyInventory(
     voidsUnits: Math.round(voidsUnits * 100) / 100,
     adjustmentsUnits: Math.round(adjustmentsUnits * 100) / 100,
     adjustmentsValue: Math.round(adjustmentsValue * 100) / 100,
+    openingInventoryValue: Math.round(openingInventoryValue * 100) / 100,
+    openingUnits: Math.round(openingUnits * 100) / 100,
+    inflowsValue: Math.round(inflowsValue * 100) / 100,
+    soldCost: Math.round(soldCost * 100) / 100,
+    otherOutflowsCost: Math.round(otherOutflowsCost * 100) / 100,
+    uncoveredSaleUnits: Math.round(uncoveredSaleUnits * 100) / 100,
+    uncoveredSaleValue: Math.round(uncoveredSaleValue * 100) / 100,
     productsWithStock
   }
 }

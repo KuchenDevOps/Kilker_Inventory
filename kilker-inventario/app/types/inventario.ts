@@ -439,6 +439,19 @@ export interface ApiMonthlyInventory {
   transfersInValue: number
   transfersInUnits: number
   productsWithStock: number
+  // Flujos del FIFO. Con estos cuadra, al peso:
+  //   apertura + inflowsValue − soldCost − otherOutflowsCost = endingInventoryValue
+  // No confundir `inflowsValue` con la tarjeta "Compras" ni `soldCost` con
+  // "Costo total": esas dos dejan fuera transferencias, anulaciones y la carga
+  // inicial, y por eso con ellas la cuenta no cierra.
+  openingInventoryValue: number
+  openingUnits: number
+  inflowsValue: number
+  soldCost: number
+  otherOutflowsCost: number
+  /** Unidades vendidas sin existencia registrada dentro del periodo. */
+  uncoveredSaleUnits: number
+  uncoveredSaleValue: number
 }
 
 export interface ApiTopProduct {

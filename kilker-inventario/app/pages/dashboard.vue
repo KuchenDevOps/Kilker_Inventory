@@ -238,6 +238,58 @@ const cutoffLabel = computed(() => {
   return dateLabel.format(lastDay)
 })
 
+/** Fecha de apertura del periodo (el `from` que se usó para valuar). */
+const openingLabel = computed(() => {
+  const iso = monthlyInventory.value?.from ?? periodFrom.value
+  return iso ? dateLabel.format(new Date(iso)) : 'inicio del periodo'
+})
+
+// Conciliación del inventario. "Compras" y "Costo total" responden otra
+// pregunta (lo comprado al proveedor, lo que costó lo vendido) y por eso
+// dejan fuera transferencias, anulaciones y la carga inicial: con ellas dos
+// la cuenta NO cierra. Estos son los flujos que de verdad mueven el almacén,
+// y su suma tiene que dar el inventario final al peso.
+const reconciliation = computed(() => {
+  const m = monthlyInventory.value
+  if (!m) return null
+
+  const expected = m.openingInventoryValue + m.inflowsValue - m.soldCost - m.otherOutflowsCost
+  return {
+    rows: [
+      {
+        label: `Inventario al ${openingLabel.value}`,
+        detail: `${number.format(m.openingUnits)} artículos`,
+        amount: m.openingInventoryValue,
+        sign: ''
+      },
+      {
+        label: 'Entradas al inventario',
+        detail: `compras ${currency.format(m.entriesValue)} · transferencias recibidas ${currency.format(m.transfersInValue)}`,
+        amount: m.inflowsValue,
+        sign: '+'
+      },
+      {
+        label: 'Costo de lo vendido',
+        detail: 'lo que salió del almacén por ventas, a costo',
+        amount: -m.soldCost,
+        sign: '−'
+      },
+      {
+        label: 'Otras salidas',
+        detail: `transferencias despachadas ${currency.format(m.transfersOutValue)} · anulaciones de entrada`,
+        amount: -m.otherOutflowsCost,
+        sign: '−'
+      }
+    ],
+    expected,
+    actual: m.endingInventoryValue,
+    // Debe ser 0. Si no lo es, algo volvió a desalinearse y hay que verlo.
+    gap: Math.round((expected - m.endingInventoryValue) * 100) / 100,
+    uncoveredValue: m.uncoveredSaleValue,
+    uncoveredUnits: m.uncoveredSaleUnits
+  }
+})
+
 // --- MÉTRICAS ---
 const totalProducts = computed(() => products.value.length)
 const activeProducts = computed(() => products.value.filter((p) => p.isActive).length)
@@ -542,6 +594,65 @@ const filteredTopProducts = computed(() => {
     </div>
   </div>
 </UCard>
+
+<!--<UCard class="sm:col-span-2 lg:col-span-3" :ui="{ body: 'p-3 sm:p-4' }">
+  <template #header>
+    <div class="flex items-center gap-2 py-0">
+      <UIcon name="i-lucide-scale" class="size-4 text-primary" />
+      <h2 class="text-sm font-semibold">Cómo se llegó al inventario final</h2>
+      <span class="ml-auto text-xs text-muted">{{ openingLabel }} → {{ cutoffLabel }}</span>
+    </div>
+  </template>
+
+  <p v-if="loadingSummary" class="text-xs text-muted py-2 text-center">Calculando…</p>
+  <div v-else-if="reconciliation">
+    <div
+      v-for="row in reconciliation.rows"
+      :key="row.label"
+      class="flex items-baseline justify-between gap-3 border-b border-default py-1.5"
+    >
+      <div class="min-w-0">
+        <p class="text-sm">
+          <span class="inline-block w-3 text-muted">{{ row.sign }}</span>{{ row.label }}
+        </p>
+        <p class="pl-3 text-xs text-muted">{{ row.detail }}</p>
+      </div>
+      <p
+        class="shrink-0 text-sm font-medium tabular-nums"
+        :class="row.amount < 0 ? 'text-error' : ''"
+      >
+        {{ currency.format(row.amount) }}
+      </p>
+    </div>
+
+    <div class="flex items-baseline justify-between gap-3 pt-2.5">
+      <p class="text-sm font-semibold">= Inventario al {{ cutoffLabel }}</p>
+      <p class="shrink-0 text-lg font-semibold tabular-nums text-success">
+        {{ currency.format(reconciliation.actual) }}
+      </p>
+    </div>
+
+    <UAlert
+      v-if="reconciliation.gap !== 0"
+      class="mt-3"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      :title="`La cuenta no cierra por ${currency.format(reconciliation.gap)}`"
+      description="Los renglones de arriba deberían sumar exactamente el inventario final."
+    />
+
+    <UAlert
+      v-if="reconciliation.uncoveredUnits > 0"
+      class="mt-3"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-package-x"
+      :title="`${number.format(reconciliation.uncoveredUnits)} artículo(s) se vendieron sin existencia registrada`"
+      :description="`Se costearon en ${currency.format(reconciliation.uncoveredValue)} con la compra que los cubrió después. Conviene capturar la entrada antes de la venta.`"
+    />
+  </div> 
+</UCard>-->
       <UCard v-for="m in metricsSection2" :key="m.label">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0 flex-1">

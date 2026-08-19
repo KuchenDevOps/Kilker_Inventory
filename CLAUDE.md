@@ -302,7 +302,11 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   `status` y decidir sin candado deja pasar dos peticiones simultáneas —basta un
   doble clic— y el efecto se aplica dos veces (stock duplicado, corte repetido).
   Ya lo hacen: `transfers/:id/receive`, `transfers/:id/cancel`, `tickets/:id/resolve`,
-  `voidInvoiceTx`, `voidMovementTx`, `POST /api/sales` (folio) y `POST /api/cortes`.
+  `voidInvoiceTx`, `voidMovementTx`, `POST /api/sales` (folio **y existencias**) y
+  `POST /api/cortes`. ⚠️ En ventas el candado de la tienda se toma **antes** de validar
+  el stock: cuando se tomaba después (solo para el folio), dos ventas simultáneas del
+  último artículo leían el mismo saldo, las dos pasaban y el stock quedaba en negativo
+  — que es como nacen las ventas sin respaldo que descuadran el inventario.
   **Cualquier endpoint nuevo con el patrón "leer estado → actuar" debe hacer lo mismo.**
 - **Fecha efectiva de un movimiento** (`server/utils/movementDates.ts`):
   `coalesce(supplier_invoice_date, created_at)` — la de la factura del proveedor si
@@ -312,12 +316,27 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   para los filtros y `effectiveMovementDate()` para las reconstrucciones FIFO en TS—
   precisamente para que las dos no vuelvan a divergir. Úsalo siempre; no compares
   `supplier_invoice_date` directamente.
-- **Costeo FIFO** (`server/utils/inventoryFifo.ts`): reconstruye capas de costo desde el
-  histórico completo (entradas, transferencias, ajustes, anulaciones y ventas emitidas,
-  ordenadas por fecha efectiva —`supplier_invoice_date` cuando existe—). Lo usan las
-  transferencias (para valuar la salida) y los reportes de valuación/utilidad. **No hay
-  costeo por lote en la captura**: la entrada toma `products.cost` (costo estándar de la
-  marca) salvo que se mande `unitValue` explícito.
+- **Costeo FIFO** — motor único en **`server/utils/fifoEngine.ts`**. Reconstruye capas de
+  costo desde el histórico completo (entradas, transferencias, ajustes, anulaciones y
+  ventas emitidas, ordenadas por fecha efectiva —`supplier_invoice_date` cuando existe—).
+  Lo consumen `monthlyInventory.ts` (valuación), `topProducts.ts` (costo de lo vendido) e
+  `inventoryFifo.ts` (transferencias, vía `getFifoUnitCost`). **Estaba triplicado y las
+  tres copias divergían**, y de ahí salía el descuadre entre el inventario final y
+  "inicial + compras − costo". Dos reglas no obvias:
+  - **Vender sin existencia deja una deuda explícita** (capa negativa), costeada con la
+    compra que termina cubriéndola. Antes el faltante se cobraba a *precio de venta* en el
+    costo y el inventario lo borraba de golpe cuando el saldo volvía a cero, sin dejar
+    rastro. El valor al corte **puede ser negativo**: significa que se vendió lo que no
+    había.
+  - **Anular una entrada revierte su propia capa**, no la más antigua (por
+    `reverses_movement_id`). Si no, anular una entrada capturada con costo $0 sacaba del
+    almacén una pieza que valía miles.
+  - `computeMonthlyInventory` devuelve `inflowsValue`, `soldCost`, `otherOutflowsCost` y
+    `uncoveredSale*`: con ellos **cuadra exacto** `inicial + entradas − costo de lo vendido
+    − otras salidas = final` (verificado a $0.00 en ene–ago 2026, global y por sucursal).
+  **No hay costeo por lote en la captura**: la entrada toma `products.cost` salvo que se
+  mande `unitValue` explícito. ⚠️ `products.cost` está en **NULL en 254 de 264 productos**,
+  así que hoy ese respaldo no existe y hay 23 entradas capturadas con costo $0.
 - **Valuación de inventario a un corte arbitrario** (`server/utils/monthlyInventory.ts`):
   pese al nombre, ya no es solo "por mes cerrado". Acepta `from`/`to` (`to` **exclusivo**) y
   valúa el inventario **al instante `to`**; sin ellos cae al mes completo de `month`. El

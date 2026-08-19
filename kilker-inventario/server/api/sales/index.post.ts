@@ -192,6 +192,15 @@ export default defineEventHandler(async (event) => {
       }
     }
 
+    // Candado de fila ANTES de leer existencias. En READ COMMITTED, dos ventas
+    // simultáneas del último artículo (o un doble clic) leen el mismo saldo,
+    // las dos pasan la validación y el stock termina en negativo — que es
+    // exactamente como nacen las "ventas sin respaldo" que descuadran el
+    // inventario. La tienda ya se bloqueaba para el folio, así que las ventas
+    // de una sucursal ya se serializaban: lo único que cambia es que ahora el
+    // candado se toma ANTES de validar, no después.
+    await tx.execute(sql`SELECT id FROM ${stores} WHERE id = ${storeId} FOR UPDATE`)
+
     // ─── 2. Validar existencia UNA sola vez por producto, con la cantidad
     //         TOTAL requerida. Un mismo producto puede venir suelto y además
     //         dentro de un kit en la misma venta: validar cada línea por
@@ -283,8 +292,6 @@ export default defineEventHandler(async (event) => {
     const discountPct = Math.min(Math.max(Number(body?.discount ?? 0), 0), 100)
     const discountAmount = subTotal * (discountPct / 100)
     const totalAmount = subTotal - discountAmount
-
-    await tx.execute(sql`SELECT id FROM ${stores} WHERE id = ${storeId} FOR UPDATE`)
 
     const [folioRow] = await tx
       .select({ count: sql<number>`count(*)::int` })
