@@ -16,6 +16,7 @@ import type {
   Me,
   ProductUnit
 } from '~/types/inventario'
+import { CATALOG_MANAGER_ROLES, STORE_SCOPED_ROLES } from '~/types/inventario'
 
 // transform coalesce undefined→default por si el endpoint responde 204 (cuerpo vacío).
 
@@ -194,9 +195,30 @@ export function useMe() {
    * eso dejaba al observador viendo datos de todas las tiendas pero con la
    * leyenda "tu sucursal" y sin selector para filtrar.
    */
-  const seesAllStores = computed(() => !!me.value && me.value.role !== 'empleado')
+  const seesAllStores = computed(
+    () => !!me.value && !STORE_SCOPED_ROLES.includes(me.value.role)
+  )
 
-  return { me, canWrite, seesAllStores, refresh }
+  /**
+   * true para los roles ACOTADOS a una sucursal (`empleado`, `admin_tienda`):
+   * el selector de sucursal se bloquea en la suya. No es `!seesAllStores`: con
+   * el perfil todavía sin cargar (`me === null`) ambos son false, y tratar ese
+   * limbo como "acotado" bloqueaba el selector del admin durante la carga.
+   */
+  const isStoreScoped = computed(
+    () => !!me.value && STORE_SCOPED_ROLES.includes(me.value.role)
+  )
+
+  /**
+   * true para los roles que dan de alta y editan catálogo: `admin` y
+   * `admin_tienda`. Espejo de CATALOG_MANAGER_ROLES del servidor; sirve para
+   * habilitar formularios, NO como seguridad.
+   */
+  const canManageCatalog = computed(
+    () => !!me.value && CATALOG_MANAGER_ROLES.includes(me.value.role)
+  )
+
+  return { me, canWrite, seesAllStores, isStoreScoped, canManageCatalog, refresh }
 }
 
 /** Historial de ventas; el backend filtra por rol. Filtros status/storeId/fecha/q recargan. */

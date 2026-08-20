@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // El empleado solo puede transferir DESDE su propia sucursal.
-  if (profile.role === 'empleado' && profile.storeId !== fromStoreId) {
+  if (isStoreScopedRole(profile.role) && profile.storeId !== fromStoreId) {
     throw createError({ statusCode: 403, statusMessage: 'Solo puedes transferir desde tu sucursal' })
   }
 

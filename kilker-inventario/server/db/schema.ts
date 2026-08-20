@@ -43,7 +43,18 @@ const timestamps = () => ({
 // ───────────────────────────────────────────────
 // `observador`: solo consulta. Ve todas las sucursales (como admin) pero no
 // puede escribir nada; el candado está en requireProfile (server/utils/auth.ts).
-export const userRole = pgEnum('user_role', ['admin', 'empleado', 'observador'])
+//
+// `admin_tienda`: administrador de UNA sucursal (el encargado de la tienda), a
+// diferencia de `admin`, que es la administración de la empresa. Opera acotado
+// a su sucursal igual que un empleado —ver STORE_SCOPED_ROLES en
+// server/utils/auth.ts— pero además gestiona el catálogo compartido
+// (productos, kits y categorías: alta y edición, no borrado).
+export const userRole = pgEnum('user_role', [
+  'admin',
+  'empleado',
+  'observador',
+  'admin_tienda'
+])
 
 export const movementType = pgEnum('movement_type', [
   'venta',

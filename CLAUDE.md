@@ -172,7 +172,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 ## 7. Auth y roles
 
 - **Supabase Auth** vía `@nuxtjs/supabase` (email/contraseña; roles
-  `admin | empleado | observador`).
+  `admin | empleado | observador | admin_tienda`).
 - Tabla **`profiles`** (1:1 con `auth.users`) guarda datos de aplicación + **rol** + `store_id`.
 - Roles/permisos se verifican en `server/utils/auth.ts` → `requireProfile(event,{role})`
   (en endpoints de escritura) y `getOptionalProfile(event)` (para `GET /api/me`); reforzado
@@ -191,6 +191,14 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     tickets, anulación de entradas de stock (`POST /api/movements/:id/void`).
   - **Admin + empleado:** vender, registrar entradas, crear/recibir/cancelar
     transferencias, gastos y sus pagos, clientes, cortes de caja y abrir tickets.
+  - **`admin_tienda` (administrador de sucursal):** es el encargado de UNA tienda,
+    distinto del `admin` de la empresa. **Opera acotado a su sucursal igual que un
+    empleado** (vende, captura entradas, transfiere, gastos, cortes, tickets) y
+    además **gestiona el catálogo compartido**: alta y edición de productos, kits
+    y categorías (rutas `/productos/nuevo`, `/productos/:id/editar`, `/categorias`).
+    **No puede:** borrar del catálogo, anular ventas o entradas (abre ticket de
+    corrección como el empleado), resolver tickets, ni administrar sucursales y
+    usuarios. Lleva `store_id` obligatorio, igual que el empleado.
   - **Solo lectura (`observador`):** ve **todo** (todas las sucursales, todos los
     listados, tickets, cortes, gastos, sucursales y empleados) pero **no puede
     escribir nada**. El candado es central: `requireProfile` rechaza con 403
@@ -200,11 +208,23 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     y así un endpoint nuevo nace protegido sin que nadie lo recuerde. En la UI el
     espejo es `canWrite` de `useMe()`, que **solo esconde botones**; la
     autorización real es la del servidor. Va sin sucursal (`store_id` null).
-  - **Aislamiento por sucursal:** el empleado solo opera y solo ve la suya (el backend
-    ignora el `storeId` del body y usa `profile.storeId`); admin y observador ven todas
-    y pueden filtrar por `?storeId`. Todo el scoping está escrito como
-    `if (role === 'empleado') → su tienda; si no → todas`, por eso un rol global
-    nuevo no requiere tocar ningún `GET`.
+  - ⚠️ **Aislamiento por sucursal: el corte es `isStoreScopedRole(role)`, NO
+    `role === 'empleado'`** (`server/utils/auth.ts`, espejo en la UI:
+    `STORE_SCOPED_ROLES` de `app/types/inventario.ts` y `isStoreScoped`/
+    `seesAllStores` de `useMe()`). Los roles acotados —hoy `empleado` y
+    `admin_tienda`— solo operan y solo ven su tienda (el backend ignora el
+    `storeId` del body y usa `profile.storeId`); `admin` y `observador` ven todas y
+    pueden filtrar por `?storeId`. El literal `role === 'empleado'` estaba repetido
+    en ~30 endpoints: cada copia era un sitio donde olvidar un rol acotado nuevo lo
+    dejaba leyendo las ventas de las demás sucursales. **Un rol acotado nuevo se
+    agrega en `STORE_SCOPED_ROLE_LIST` y nada más**; uno global no requiere tocar
+    ningún `GET`. Los roles acotados exigen `store_id` (lo validan
+    `POST /api/users` y `PATCH /api/users/:id`) y la baja de una sucursal los
+    desactiva en cascada.
+  - **Catálogo compartido:** `CATALOG_MANAGER_ROLES` (`admin`, `admin_tienda`) es lo
+    que exigen los `POST`/`PATCH` de products, kits y categories. Los `DELETE` siguen
+    pidiendo `role: 'admin'` a secas. En la UI el espejo es `canManageCatalog` de
+    `useMe()` (esconde botones; la autorización real es la del servidor).
 - ⚠️ **`requireProfile` cachea el perfil** en dos niveles (`server/utils/auth.ts`):
   por request (`event.context`) y por token con **TTL de 60 s** a nivel de módulo.
   Sin esto, cada petición autenticada costaba un round-trip HTTP a
@@ -252,7 +272,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
 clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
-datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022` en
+datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0028` en
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
 
 > Este apartado es un **resumen**, no un changelog. La verdad está en el código:
@@ -262,7 +282,7 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
 
 | Módulo | Pantallas | Endpoints |
 |--------|-----------|-----------|
-| **Catálogo** | `productos/index`, `productos/nuevo`, `productos/[id]/editar` | `GET/POST /api/products`, `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
+| **Catálogo** | `productos/index`, `productos/nuevo` (pestañas Producto / Kit / **Muestras**, esta última vacía a propósito — ver `docs/CONTEXTO.md`), `productos/[id]/editar` | `GET/POST /api/products`, `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
 | **Categorías** | `categorias/index` | `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id` |
 | **Entradas de stock** | `movimientos/entrada`, `movimientos/index` | `POST /api/movements/entrada`, `GET /api/movements`, `POST /api/movements/:id/void` |
 | **Ventas** | `ventas/nueva`, `ventas/index` | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void` |
@@ -393,6 +413,11 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   (el corte es transaccional, con la tienda bloqueada); esto no. Las dos salidas —cortar
   por `created_at`, o prohibir capturar ventas anteriores al último corte— están en
   [`docs/CONTEXTO.md`](docs/CONTEXTO.md) → "Preguntas abiertas".
+- **Pestaña "Muestras" (`/productos/nuevo`) es un placeholder:** el tercer botón del
+  toggle existe y renderiza un aviso de "no disponible", pero **no hay tabla, endpoint
+  ni formulario**. Falta definir con el cliente qué es una muestra (si descuenta stock,
+  si tiene costo, si se liga a cliente/venta). Ver `docs/CONTEXTO.md` → "Preguntas
+  abiertas" → Muestras.
 - **Movimientos de `ajuste`:** el enum y el soporte en los cálculos FIFO existen, pero
   **no hay endpoint ni pantalla** para capturarlos. Ojo: hoy **ninguna** fila de la BD es
   un `ajuste` real, así que el tipo está libre para cuando se implemente.

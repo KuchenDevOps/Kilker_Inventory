@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/kits/:id — edición de kit de venta (admin)
+//  PATCH /api/kits/:id — edición de kit de venta (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Permite actualizar sku, name, isActive y/o reemplazar por completo las
 // líneas del kit (items). Si `items` no viene en el body, las líneas
@@ -38,7 +38,7 @@ function optionalAmount(v: unknown, field: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
 
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isInteger(id) || id <= 0) {

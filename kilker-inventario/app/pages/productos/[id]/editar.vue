@@ -9,18 +9,16 @@ import {
   type ProductUnit
 } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
+definePageMeta({ requiresRole: ['admin', 'admin_tienda'] })
 useHead({ title: 'Editar producto · Inventario Kilker' })
 
 const route = useRoute()
 const id = Number(route.params.id)
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canManageCatalog } = useMe()
 const { data: categories } = useCategories()
 const apiFetch = useApiFetch()
-
-const isAdmin = computed(() => me.value?.role === 'admin')
 
 const { data: product, pending, error } = useFetch<ApiProductDetail>(
   `/api/products/${id}`,
@@ -167,12 +165,12 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
     </header>
 
     <UAlert
-      v-if="me && !isAdmin"
+      v-if="me && !canManageCatalog"
       color="warning"
       variant="soft"
       icon="i-lucide-lock"
       title="Acceso restringido"
-      description="Solo un administrador puede editar productos."
+      description="Solo un administrador (de empresa o de tienda) puede editar productos."
       class="mb-6"
     />
     <UAlert
@@ -190,7 +188,7 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
       v-else
       :state="state"
       :validate="validate"
-      :disabled="!isAdmin"
+      :disabled="!canManageCatalog"
       class="space-y-6"
       @submit="onSubmit"
     >
@@ -316,7 +314,7 @@ async function onSubmit(event: FormSubmitEvent<FormState>) {
           icon="i-lucide-save"
           color="primary"
           :loading="submitting"
-          :disabled="!isAdmin"
+          :disabled="!canManageCatalog"
         >
           Guardar cambios
         </UButton>

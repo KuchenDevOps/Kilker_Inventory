@@ -8,24 +8,44 @@ import {
   type ProductUnit
 } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
+// Catálogo compartido: lo da de alta el admin de empresa y el de tienda.
+definePageMeta({ requiresRole: ['admin', 'admin_tienda'] })
 useHead({ title: 'Nuevo producto · Inventario Kilker' })
 const apiFetch = useApiFetch()
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canManageCatalog } = useMe()
 const { data: categories } = useCategories()
 const { products } = useProducts()
 // Para el picker de productos dentro de un kit necesitamos el catálogo
 // completo (no paginado) — useProducts() puede venir paginado y truncar la
 // lista, ver nota en memoria del proyecto sobre useAllProducts().
 const { products: allProducts } = useAllProducts()
-const isAdmin = computed(() => me.value?.role === 'admin')
 
 // ───────────────────────────────────────────────
-//  TOGGLE: ¿estamos dando de alta un producto o un kit?
+//  TOGGLE: ¿producto, kit o muestra?
 // ───────────────────────────────────────────────
-const mode = ref<'product' | 'kit'>('product')
+// 'sample' (Muestras) todavía no tiene formulario: la pestaña existe y queda
+// reservada para la función de muestras de color. Ver docs/CONTEXTO.md →
+// "Preguntas abiertas" antes de implementarla.
+type CreateMode = 'product' | 'kit' | 'sample'
+const mode = ref<CreateMode>('product')
+
+const MODE_META: Record<CreateMode, { title: string; description: string }> = {
+  product: {
+    title: 'Nuevo producto',
+    description: 'Alta de un producto del catálogo.'
+  },
+  kit: {
+    title: 'Nuevo kit',
+    description: 'Alta de un kit de productos.'
+  },
+  sample: {
+    title: 'Muestras',
+    description: 'Registro de muestras de producto.'
+  }
+}
+const modeMeta = computed(() => MODE_META[mode.value])
 
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -302,26 +322,22 @@ function onResetKit() {
       >
         Volver al catálogo
       </UButton>
-      <h1 class="text-2xl font-semibold">
-        {{ mode === 'product' ? 'Nuevo producto' : 'Nuevo kit' }}
-      </h1>
+      <h1 class="text-2xl font-semibold">{{ modeMeta.title }}</h1>
       <p class="text-sm text-muted">
-        {{
-          mode === 'product'
-            ? 'Alta de un producto del catálogo.'
-            : 'Alta de un kit de productos'
-        }}
-        Los campos con <span class="text-error">*</span> son obligatorios.
+        {{ modeMeta.description }}
+        <template v-if="mode !== 'sample'">
+          Los campos con <span class="text-error">*</span> son obligatorios.
+        </template>
       </p>
     </header>
 
     <UAlert
-      v-if="me && !isAdmin"
+      v-if="me && !canManageCatalog"
       color="warning"
       variant="soft"
       icon="i-lucide-lock"
       title="Acceso restringido"
-      description="Solo un administrador puede dar de alta productos o kits."
+      description="Solo un administrador (de empresa o de tienda) puede dar de alta productos o kits."
       class="mb-6"
     />
     <UAlert
@@ -349,6 +365,13 @@ function onResetKit() {
         :variant="mode === 'kit' ? 'solid' : 'outline'"
         @click="mode = 'kit'"
       />
+      <UButton
+        label="Muestras"
+        icon="i-lucide-palette"
+        :color="mode === 'sample' ? 'primary' : 'neutral'"
+        :variant="mode === 'sample' ? 'solid' : 'outline'"
+        @click="mode = 'sample'"
+      />
     </UButtonGroup>
 
     <!-- ─────────────────────────  PRODUCTO  ───────────────────────── -->
@@ -356,7 +379,7 @@ function onResetKit() {
       v-if="mode === 'product'"
       :state="state"
       :validate="validate"
-      :disabled="!isAdmin"
+      :disabled="!canManageCatalog"
       class="space-y-6"
       @submit="onSubmit"
     >
@@ -480,7 +503,7 @@ function onResetKit() {
           icon="i-lucide-save"
           color="primary"
           :loading="submitting"
-          :disabled="!isAdmin"
+          :disabled="!canManageCatalog"
         >
           Guardar producto
         </UButton>
@@ -489,10 +512,10 @@ function onResetKit() {
 
     <!-- ───────────────────────────  KIT  ─────────────────────────── -->
     <UForm
-      v-else
+      v-else-if="mode === 'kit'"
       :state="kitState"
       :validate="validateKit"
-      :disabled="!isAdmin"
+      :disabled="!canManageCatalog"
       class="space-y-6"
       @submit="onSubmitKit"
     >
@@ -617,11 +640,27 @@ function onResetKit() {
           icon="i-lucide-save"
           color="primary"
           :loading="kitSubmitting"
-          :disabled="!isAdmin"
+          :disabled="!canManageCatalog"
         >
           Guardar kit
         </UButton>
       </div>
     </UForm>
+
+    <!-- ─────────────────────────  MUESTRAS  ─────────────────────────
+      Pestaña reservada: la función de muestras todavía no está definida, así
+      que aquí no hay formulario ni endpoint. Vive junto a Producto y Kit
+      porque comparte el mismo punto de entrada del catálogo.
+    -->
+    <UCard v-else>
+      <div class="flex flex-col items-center gap-3 py-12 text-center">
+        <UIcon name="i-lucide-palette" class="size-10 text-muted" />
+        <p class="font-medium">Muestras</p>
+        <p class="max-w-sm text-sm text-muted">
+          Esta sección todavía no está disponible. Aquí se dará de alta el
+          registro de muestras.
+        </p>
+      </div>
+    </UCard>
   </UContainer>
 </template>

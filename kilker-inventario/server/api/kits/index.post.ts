@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  POST /api/kits — alta de kit de venta (admin)
+//  POST /api/kits — alta de kit de venta (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Cabecera en sales_kits + líneas en sales_kit_items, en una transacción.
 // unitPrice null = la línea usa el precio normal de products.price.
@@ -38,7 +38,7 @@ function optionalAmount(v: unknown, field: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
   const body = await readBody<NewKitBody>(event)
 
   const sku = cleanText(body?.sku)

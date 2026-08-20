@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  POST /api/products — alta de producto (admin)
+//  POST /api/products — alta de producto (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Inserta en products; no crea inventario. Los numeric se guardan como string.
 import { eq } from 'drizzle-orm'
@@ -40,7 +40,7 @@ function optionalAmount(v: unknown, field: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
   const body = await readBody<NewProductBody>(event)
 
   const sku = cleanText(body?.sku)

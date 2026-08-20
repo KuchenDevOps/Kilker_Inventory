@@ -103,7 +103,7 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  if (profile.role === 'empleado' && profile.storeId !== storeId) {
+  if (isStoreScopedRole(profile.role) && profile.storeId !== storeId) {
     throw createError({
       statusCode: 403,
       statusMessage: 'El empleado solo puede vender en su tienda'

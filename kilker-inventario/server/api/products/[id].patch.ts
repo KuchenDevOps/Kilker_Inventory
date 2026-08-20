@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/products/:id — editar producto (admin)
+//  PATCH /api/products/:id — editar producto (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Actualiza datos comerciales (precio/costo estándar, etc.). El SKU no se edita.
 import { eq } from 'drizzle-orm'
@@ -39,7 +39,7 @@ function optionalAmount(v: unknown, field: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
 
   const id = Number(getRouterParam(event, 'id'))
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id inválido' })

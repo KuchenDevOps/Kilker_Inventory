@@ -111,7 +111,24 @@ Vercel.**
 - [x] **Proveedor de login:** email + contraseña de Supabase Auth. **No hay invitación por
       correo**: el admin crea la cuenta y **define la contraseña** (`POST /api/users`, con
       `email_confirm`). Dar de baja = `is_active = false` (no se borra el usuario de Auth).
-- [x] **Roles y permisos:** `admin` y `empleado` (detalle en §2 y en `CLAUDE.md` §7).
+- [x] **Roles y permisos:** `admin`, `empleado`, `observador` y `admin_tienda`
+      (detalle en §2 y en `CLAUDE.md` §7).
+- [ ] **Alcance real del `admin_tienda` (administrador de sucursal).** Confirmado con
+      el cliente que es el encargado de UNA tienda —opera acotado a su sucursal como
+      el empleado— y que además da de alta y edita el catálogo compartido (productos,
+      kits y categorías). **Sin confirmar:** si debería poder **anular** ventas y
+      entradas de su propia sucursal, en vez de tener que abrir un ticket de
+      corrección al admin de empresa como hace hoy. Tampoco puede borrar del catálogo
+      ni administrar sucursales/usuarios (eso sigue siendo del admin de empresa).
+
+### Muestras (pestaña nueva en `/productos/nuevo`)
+- [ ] **¿Qué es exactamente una "muestra"?** La pestaña **Muestras** ya existe junto a
+      Producto y Kit, pero **está vacía a propósito**: no hay tabla, ni endpoint, ni
+      formulario. Falta definir con el cliente qué se captura y cómo se comporta —
+      si consume inventario (¿descuenta stock al entregarla?), si tiene costo, si se
+      liga a un cliente o a una venta, y si se reporta aparte. **No inventar el
+      modelo**: hasta que haya respuesta, la pestaña solo muestra el aviso de "no
+      disponible".
 
 ### Negocio / dominio
 - [x] **Atributos del catálogo:** se descartaron `base`/`acabado`/`volumen`/`marca`. El

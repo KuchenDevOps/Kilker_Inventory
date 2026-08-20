@@ -44,6 +44,32 @@ export function isReadOnlyRole(role: UserRole): boolean {
   return READ_ONLY_ROLES.has(role)
 }
 
+/**
+ * Roles ACOTADOS A SU SUCURSAL: solo ven y solo operan sobre `profile.storeId`.
+ * El resto (`admin`, `observador`) son globales y pueden filtrar por `?storeId`.
+ *
+ * Está aquí y no repetido como `role === 'empleado'` porque ese literal estaba
+ * esparcido en ~30 endpoints: cada uno era un lugar donde olvidar el rol nuevo
+ * dejaba a un administrador de tienda leyendo las ventas de las demás
+ * sucursales. Con el helper, agregar un rol acotado es tocar esta línea.
+ */
+export const STORE_SCOPED_ROLE_LIST: UserRole[] = ['empleado', 'admin_tienda']
+
+const STORE_SCOPED_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(
+  STORE_SCOPED_ROLE_LIST
+)
+
+/** true si el rol solo puede ver/operar su propia sucursal. */
+export function isStoreScopedRole(role: UserRole): boolean {
+  return STORE_SCOPED_ROLES.has(role)
+}
+
+/**
+ * Roles que gestionan el CATÁLOGO compartido (productos, kits y categorías):
+ * alta y edición. El borrado duro sigue siendo exclusivo de `admin`.
+ */
+export const CATALOG_MANAGER_ROLES: UserRole[] = ['admin', 'admin_tienda']
+
 const PROFILE_CACHE_TTL_MS = 60_000
 /** Tope de entradas: evita crecimiento sin límite en procesos de larga vida. */
 const PROFILE_CACHE_MAX_ENTRIES = 500

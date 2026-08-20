@@ -27,7 +27,7 @@
 
 | Enum | Valores |
 |------|---------|
-| `user_role` | `admin`, `empleado`, `observador` (solo consulta: ve todo, no escribe) |
+| `user_role` | `admin`, `empleado`, `observador` (solo consulta: ve todo, no escribe), `admin_tienda` (encargado de UNA sucursal: opera acotado a ella como el empleado y además da de alta/edita el catálogo) |
 | `movement_type` | `venta`, `entrada`, `ajuste`, `transferencia_salida`, `transferencia_entrada`, `anulacion` |
 | `invoice_status` | `emitida`, `anulada` |
 | `transfer_status` | `pendiente`, `en_transito`, `recibida`, `cancelada` |
@@ -48,7 +48,7 @@
 | Tabla | Contenido |
 |-------|-----------|
 | `stores` | Sucursales. `name`, `code` (**único**, se usa en folios y **no se edita**), `address`, `is_active`. |
-| `profiles` | Perfil de app 1:1 con `auth.users`. `full_name`, `role`, `store_id` (null = rol global: admin u observador), `is_active` (desactivar = dar de baja el acceso). |
+| `profiles` | Perfil de app 1:1 con `auth.users`. `full_name`, `role`, `store_id` (null = rol global: admin u observador; obligatorio para los roles acotados a sucursal: empleado y admin_tienda), `is_active` (desactivar = dar de baja el acceso). |
 | `categories` | Categorías/líneas con jerarquía opcional (`parent_id` → sí misma). |
 | `products` | Catálogo. `sku` (único), `name`, `category_id`, `color` (texto libre), `unit`, `price`, `cost` (**costo estándar de la marca**), `barcode`, `min_quantity`, `max_quantity`, `is_active`. |
 | `inventory` | Saldo materializado por **producto × sucursal**. Único `(product_id, store_id)` + `CHECK quantity >= 0`. |

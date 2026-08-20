@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  POST /api/categories — alta de categoría (admin)
+//  POST /api/categories — alta de categoría (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // parentId opcional; si viene debe existir.
 import { eq } from 'drizzle-orm'
@@ -18,7 +18,7 @@ function cleanText(v: unknown): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
   const body = await readBody<NewCategoryBody>(event)
 
   const name = cleanText(body?.name)

@@ -5,7 +5,30 @@
 
 /** Roles de usuario (enum user_role). */
 /** `observador`: solo consulta. Ve todas las sucursales, no puede escribir. */
-export type UserRole = 'admin' | 'empleado' | 'observador'
+/**
+ * `admin_tienda`: administrador de UNA sucursal (encargado de tienda), distinto
+ * del `admin` de la empresa. Acotado a su sucursal como el empleado, pero
+ * gestiona el catálogo compartido (productos, kits y categorías).
+ */
+export type UserRole = 'admin' | 'empleado' | 'observador' | 'admin_tienda'
+
+/**
+ * Roles acotados a su sucursal: no ven ni operan las demás. Espejo en la UI de
+ * STORE_SCOPED_ROLE_LIST (`server/utils/auth.ts`) — se duplica a propósito
+ * porque `server/` y `app/` no comparten módulos; si cambia uno, cambia el otro.
+ */
+export const STORE_SCOPED_ROLES: UserRole[] = ['empleado', 'admin_tienda']
+
+/** Roles que dan de alta y editan el catálogo (productos, kits, categorías). */
+export const CATALOG_MANAGER_ROLES: UserRole[] = ['admin', 'admin_tienda']
+
+/** Etiquetas en español de cada rol (menú, badges y formularios). */
+export const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'Administrador',
+  admin_tienda: 'Administrador de tienda',
+  empleado: 'Empleado',
+  observador: 'Observador (solo consulta)'
+}
 
 /** Unidades de medida del catálogo (enum `product_unit`). */
 export const PRODUCT_UNITS = ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'] as const

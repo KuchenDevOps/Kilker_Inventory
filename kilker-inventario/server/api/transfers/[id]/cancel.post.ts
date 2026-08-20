@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
     }
 
     // Solo admin, o el empleado de la sucursal ORIGEN (quien la despachó).
-    if (profile.role === 'empleado' && profile.storeId !== transfer.fromStoreId) {
+    if (isStoreScopedRole(profile.role) && profile.storeId !== transfer.fromStoreId) {
       throw createError({ statusCode: 403, statusMessage: 'Solo la sucursal origen puede cancelar esta transferencia' })
     }
 

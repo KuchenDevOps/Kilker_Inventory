@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
   }
 
   let storeIds: number[] | undefined
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) return []
     storeIds = [profile.storeId]
   } else if (query.storeId) {

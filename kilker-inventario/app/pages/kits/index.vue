@@ -4,7 +4,9 @@ import { UNIT_LABELS } from '~/types/inventario'
 useHead({ title: 'Kits · Inventario Kilker' })
 
 const { kits, pending, error, refresh } = useKits()
-const { me } = useMe()
+const { me, canManageCatalog } = useMe()
+// Alta y edición de kits: admin y admin_tienda. El borrado sigue siendo solo
+// del admin de empresa (el endpoint DELETE lo exige igual).
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 
@@ -223,7 +225,7 @@ async function submitEdit() {
         </p>
       </div>
       <UButton
-        v-if="isAdmin"
+        v-if="canManageCatalog"
         to="/productos/nuevo"
         icon="i-lucide-plus"
         color="primary"
@@ -309,22 +311,22 @@ async function submitEdit() {
                         />
                       </template>
                       <template v-else>
-                        <template v-if="isAdmin">
-                          <UButton
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-pencil"
-                            @click="openEdit(k)"
-                          />
-                          <UButton
-                            size="xs"
-                            color="error"
-                            variant="ghost"
-                            icon="i-lucide-trash-2"
-                            @click="confirmingDeleteId = k.id"
-                          />
-                        </template>
+                        <UButton
+                          v-if="canManageCatalog"
+                          size="xs"
+                          color="neutral"
+                          variant="ghost"
+                          icon="i-lucide-pencil"
+                          @click="openEdit(k)"
+                        />
+                        <UButton
+                          v-if="isAdmin"
+                          size="xs"
+                          color="error"
+                          variant="ghost"
+                          icon="i-lucide-trash-2"
+                          @click="confirmingDeleteId = k.id"
+                        />
                         <UButton
                           size="xs"
                           :color="expandedId === k.id ? 'primary' : 'neutral'"

@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // Empleado solo puede ver ventas de su propia tienda.
-  if (profile.role === 'empleado' && invoice.storeId !== profile.storeId) {
+  if (isStoreScopedRole(profile.role) && invoice.storeId !== profile.storeId) {
     throw createError({ statusCode: 403, statusMessage: 'No puedes ver ventas de otra sucursal' })
   }
 

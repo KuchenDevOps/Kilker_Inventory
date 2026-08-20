@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
   if (!transfer) throw createError({ statusCode: 404, statusMessage: 'Transferencia no existe' })
 
   if (
-    profile.role === 'empleado' &&
+    isStoreScopedRole(profile.role) &&
     profile.storeId !== transfer.fromStoreId &&
     profile.storeId !== transfer.toStoreId
   ) {

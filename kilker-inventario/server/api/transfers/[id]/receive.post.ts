@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
     }
 
     // Solo la sucursal destino (o admin) puede confirmar la recepción.
-    if (profile.role === 'empleado' && profile.storeId !== transfer.toStoreId) {
+    if (isStoreScopedRole(profile.role) && profile.storeId !== transfer.toStoreId) {
       throw createError({ statusCode: 403, statusMessage: 'Solo la sucursal destino puede recibir esta transferencia' })
     }
 

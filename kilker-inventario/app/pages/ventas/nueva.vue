@@ -10,25 +10,27 @@ interface SaleResult {
 useHead({ title: 'Nueva venta · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
+const { me, isStoreScoped } = useMe()
 const { products } = useAllProducts()   // ← antes: const { data: products } = useProducts()
 const { kits } = useKits()
 const { data: stores } = useStores()
 const { customers, pending, error, refresh } = useAllCustomers()
 const apiFetch = useApiFetch()
 
-const isEmployee = computed(() => me.value?.role === 'empleado')
 const isAdmin = computed(() => me.value?.role === 'admin')
-// Sucursal del empleado; debe existir y estar activa para poder vender.
+// Sucursal del usuario acotado (empleado o admin de tienda): debe existir y
+// estar activa para poder vender. El corte es por `isStoreScoped`, no por
+// `role === 'empleado'`: con el literal, un admin de tienda no entraba en
+// ninguna rama de `canOperate` y la pantalla quedaba muerta para él.
 const myStore = computed(() => stores.value.find((s) => s.id === me.value?.storeId))
-const employeeNoStore = computed(() => isEmployee.value && !myStore.value)
+const employeeNoStore = computed(() => isStoreScoped.value && !myStore.value)
 const employeeStoreInactive = computed(
-  () => isEmployee.value && !!myStore.value && !myStore.value.isActive
+  () => isStoreScoped.value && !!myStore.value && !myStore.value.isActive
 )
 const canOperate = computed(
   () =>
     isAdmin.value ||
-    (isEmployee.value && !employeeNoStore.value && !employeeStoreInactive.value)
+    (isStoreScoped.value && !employeeNoStore.value && !employeeStoreInactive.value)
 )
 
 type Line = {
@@ -60,7 +62,7 @@ const discounts = [5, 10, 15, 20, 25]
 
 // El empleado vende solo en su tienda; se fija y bloquea. El admin elige.
 watchEffect(() => {
-  if (isEmployee.value && me.value?.storeId != null) {
+  if (isStoreScoped.value && me.value?.storeId != null) {
     storeId.value = me.value.storeId
   }
 })
@@ -329,12 +331,12 @@ async function quickCreateCustomer() {
             label="Sucursal"
             name="storeId"
             required
-            :help="isEmployee ? 'Vendes en tu sucursal asignada.' : undefined"
+            :help="isStoreScoped ? 'Vendes en tu sucursal asignada.' : undefined"
           >
             <USelect
               v-model="storeId"
               :items="storeItems"
-              :disabled="!canOperate || isEmployee"
+              :disabled="!canOperate || isStoreScoped"
               placeholder="Selecciona una sucursal"
               class="w-full"
             />
