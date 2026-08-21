@@ -84,8 +84,16 @@ function separator(gapTop = 10, gapBottom = 10): PdfContent {
 /**
  * Arma el documento pdfmake del ticket de una venta. Es sólo la definición:
  * quien la llame se encarga de cargar pdfmake y descargar el archivo.
+ *
+ * `logoDataUrl` es el logotipo de marca (utils/brandLogo.ts) ya en data URL —
+ * lo único que acepta pdfmake en el navegador. Se recibe por parámetro en vez
+ * de importarlo aquí porque este módulo sí entra en el bundle de la página:
+ * así el base64 viaja con pdfmake en su chunk perezoso.
  */
-export function buildSaleTicketDoc(sale: ApiSaleDetail): PdfDocDefinition {
+export function buildSaleTicketDoc(
+  sale: ApiSaleDetail,
+  logoDataUrl: string
+): PdfDocDefinition {
   const groups = groupSaleItemsByKit(sale.items)
   /** Factor del descuento de la venta (1 = sin descuento). Se aplica igual a
    *  todas las líneas, así que un kit se descuenta completo. */
@@ -189,7 +197,8 @@ export function buildSaleTicketDoc(sale: ApiSaleDetail): PdfDocDefinition {
           {
             width: '*',
             stack: [
-              { text: 'KILKER', bold: true, fontSize: 18, characterSpacing: 1 },
+              // Ancho fijo: la altura la deduce pdfmake por la proporción del PNG.
+              { image: logoDataUrl, width: 130, margin: [0, 0, 0, 6] },
               { text: 'Ticket de venta', fontSize: 9, color: MUTED }
             ]
           },
