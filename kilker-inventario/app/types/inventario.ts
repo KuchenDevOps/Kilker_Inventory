@@ -5,7 +5,30 @@
 
 /** Roles de usuario (enum user_role). */
 /** `observador`: solo consulta. Ve todas las sucursales, no puede escribir. */
-export type UserRole = 'admin' | 'empleado' | 'observador'
+/**
+ * `admin_tienda`: administrador de UNA sucursal (encargado de tienda), distinto
+ * del `admin` de la empresa. Acotado a su sucursal como el empleado, pero
+ * gestiona el catálogo compartido (productos, kits y categorías).
+ */
+export type UserRole = 'admin' | 'empleado' | 'observador' | 'admin_tienda'
+
+/**
+ * Roles acotados a su sucursal: no ven ni operan las demás. Espejo en la UI de
+ * STORE_SCOPED_ROLE_LIST (`server/utils/auth.ts`) — se duplica a propósito
+ * porque `server/` y `app/` no comparten módulos; si cambia uno, cambia el otro.
+ */
+export const STORE_SCOPED_ROLES: UserRole[] = ['empleado', 'admin_tienda']
+
+/** Roles que dan de alta y editan el catálogo (productos, kits, categorías). */
+export const CATALOG_MANAGER_ROLES: UserRole[] = ['admin', 'admin_tienda']
+
+/** Etiquetas en español de cada rol (menú, badges y formularios). */
+export const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'Administrador',
+  admin_tienda: 'Administrador de tienda',
+  empleado: 'Empleado',
+  observador: 'Observador (solo consulta)'
+}
 
 /** Unidades de medida del catálogo (enum `product_unit`). */
 export const PRODUCT_UNITS = ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'] as const
@@ -37,6 +60,20 @@ export interface ApiProduct {
   minQuantity: string | null
   maxQuantity: string | null
   isActive: boolean
+  /**
+   * Producto base del que esta fila es MUESTRA; null en un producto normal.
+   * Una muestra se entrega a precio 0 y **descuenta el inventario del base**
+   * (no tiene existencias propias), así que `totalStock`/`byStore` de abajo ya
+   * vienen resueltos con los del producto base.
+   *
+   * ⚠️ `GET /api/products` **no** devuelve muestras salvo que se pidan
+   * (`?samples=include|only`): usa `useSellableProducts()` para vender.
+   */
+  sampleOfProductId: number | null
+  /** SKU y nombre del producto base (solo en muestras). */
+  baseSku: string | null
+  baseName: string | null
+  baseIsActive: boolean | null
   /** Existencia total sumando todas las tiendas (number, ya calculado). */
   totalStock: number
   /** Existencia por tienda */
@@ -196,6 +233,19 @@ export interface NewProductInput {
 /** Cuerpo para editar un producto (`PATCH /api/products/:id`, admin). SKU no editable. */
 export type ProductUpdateInput = Partial<Omit<NewProductInput, 'sku'>>
 
+/**
+ * Cuerpo para dar de alta una MUESTRA (`POST /api/products`, admin o
+ * admin_tienda). No lleva precio, costo ni unidad: el precio de una muestra es
+ * siempre 0 y lo demás lo hereda del producto base. Si se omiten `sku`/`name`,
+ * el servidor los deriva del base (`<SKU>-M` y `<nombre> (MUESTRA)`).
+ */
+export interface NewSampleInput {
+  sampleOfProductId: number
+  sku?: string
+  name?: string
+  isActive?: boolean
+}
+
 /** Cuerpo para registrar una entrada de stock (`POST /api/movements/entrada`). */
 export interface EntradaInput {
   productId: number
@@ -317,6 +367,14 @@ export interface ApiSaleItem {
   kitName: string | null
   /** Cuántos kits se vendieron (igual en todas las líneas del mismo kit). */
   kitQuantity: string | null
+  /**
+   * Muestra entregada en esta línea; null si fue una venta normal. Snapshot al
+   * vender. `productId`/`productSku` son SIEMPRE el producto base (el que
+   * movió inventario): esto solo marca que salió como muestra, a precio 0.
+   */
+  sampleProductId: number | null
+  sampleSku: string | null
+  sampleName: string | null
 }
 
 /** Detalle completo de una venta (`GET /api/sales/:id`). */

@@ -27,7 +27,7 @@
 
 | Enum | Valores |
 |------|---------|
-| `user_role` | `admin`, `empleado`, `observador` (solo consulta: ve todo, no escribe) |
+| `user_role` | `admin`, `empleado`, `observador` (solo consulta: ve todo, no escribe), `admin_tienda` (encargado de UNA sucursal: opera acotado a ella como el empleado y además da de alta/edita el catálogo) |
 | `movement_type` | `venta`, `entrada`, `ajuste`, `transferencia_salida`, `transferencia_entrada`, `anulacion` |
 | `invoice_status` | `emitida`, `anulada` |
 | `transfer_status` | `pendiente`, `en_transito`, `recibida`, `cancelada` |
@@ -48,9 +48,9 @@
 | Tabla | Contenido |
 |-------|-----------|
 | `stores` | Sucursales. `name`, `code` (**único**, se usa en folios y **no se edita**), `address`, `is_active`. |
-| `profiles` | Perfil de app 1:1 con `auth.users`. `full_name`, `role`, `store_id` (null = rol global: admin u observador), `is_active` (desactivar = dar de baja el acceso). |
+| `profiles` | Perfil de app 1:1 con `auth.users`. `full_name`, `role`, `store_id` (null = rol global: admin u observador; obligatorio para los roles acotados a sucursal: empleado y admin_tienda), `is_active` (desactivar = dar de baja el acceso). |
 | `categories` | Categorías/líneas con jerarquía opcional (`parent_id` → sí misma). |
-| `products` | Catálogo. `sku` (único), `name`, `category_id`, `color` (texto libre), `unit`, `price`, `cost` (**costo estándar de la marca**), `barcode`, `min_quantity`, `max_quantity`, `is_active`. |
+| `products` | Catálogo. `sku` (único), `name`, `category_id`, `color` (texto libre), `unit`, `price`, `cost` (**costo estándar de la marca**), `barcode`, `min_quantity`, `max_quantity`, `is_active`. **Muestras:** `sample_of_product_id` (auto-FK, nullable) = esta fila es la MUESTRA de ese producto. Una muestra **no tiene inventario ni kardex propios**: descuenta el del base 1:1 al entregarse. Constraints: `products_sample_of_uniq` (una muestra por producto), `products_sample_price_zero` (`price = 0`) y `products_sample_not_self`. |
 | `inventory` | Saldo materializado por **producto × sucursal**. Único `(product_id, store_id)` + `CHECK quantity >= 0`. |
 
 ### Movimientos (kardex)
@@ -65,7 +65,7 @@
 | Tabla | Contenido |
 |-------|-----------|
 | `invoices` | Comprobante interno (sin CFDI/SAT). `folio` (único por tienda, `<CODE>-0001`), `store_id`, `customer_id`, `created_by`, `status`, `payment_method`, `channel`, `discount_pct`/`discount_amount`, `total_amount`, `issued_at` (admite fecha retroactiva) y `voided_at/by/reason`. |
-| `invoice_items` | Líneas. `quantity`, `unit_price` (**snapshot** al vender), `line_total`. `discount_type`/`discount_value`/`tax_rate` existen pero hoy no se llenan (el IVA se calcula en la app, 16% informativo). **Venta por kit:** `kit_id` + `kit_sku`/`kit_name` (**snapshot**) + `kit_quantity` marcan de qué kit salió la línea; null = producto suelto. |
+| `invoice_items` | Líneas. `quantity`, `unit_price` (**snapshot** al vender), `line_total`. `discount_type`/`discount_value`/`tax_rate` existen pero hoy no se llenan (el IVA se calcula en la app, 16% informativo). **Venta por kit:** `kit_id` + `kit_sku`/`kit_name` (**snapshot**) + `kit_quantity` marcan de qué kit salió la línea; null = producto suelto. **Entrega como muestra:** `sample_product_id` + `sample_sku`/`sample_name` (**snapshot**); `product_id` sigue siendo SIEMPRE el producto **base** (el que movió inventario), así que ningún reporte cambia. |
 | `customers` | Clientes. `name`, `rfc` (**único**), `address`, `email`, `phone`, `is_active`. |
 
 ### Kits de venta
@@ -106,6 +106,8 @@ stores 1───* inventory · stock_movements · invoices · transfers(from/to
 categories 1───* categories (jerarquía)  ·  categories 1───* products
 
 products 1───* inventory · stock_movements · invoice_items · transfer_items · sales_kit_items
+         1───1 products (sample_of_product_id: su muestra; comparte el inventario del base)
+         1───* invoice_items (sample_product_id: líneas entregadas como esa muestra)
 
 sales_kits 1───* sales_kit_items (cascade)
            1───* invoice_items (kit_id: líneas que salieron de ese kit)

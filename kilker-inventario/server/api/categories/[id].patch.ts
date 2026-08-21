@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/categories/:id — editar (admin)
+//  PATCH /api/categories/:id — editar (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Edita nombre/padre; valida ciclos de jerarquía.
 import { eq } from 'drizzle-orm'
@@ -18,7 +18,7 @@ function cleanText(v: unknown): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
 
   const id = Number(getRouterParam(event, 'id'))
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id inválido' })

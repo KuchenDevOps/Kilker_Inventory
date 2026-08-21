@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
 
   // Empleado corta su tienda; admin elige cualquiera.
   let storeId: number
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) {
       throw createError({ statusCode: 403, statusMessage: 'Tu perfil no tiene tienda asignada' })
     }

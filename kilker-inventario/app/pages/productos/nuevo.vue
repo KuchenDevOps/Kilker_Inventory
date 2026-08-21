@@ -8,24 +8,48 @@ import {
   type ProductUnit
 } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
+// Catálogo compartido: lo da de alta el admin de empresa y el de tienda.
+definePageMeta({ requiresRole: ['admin', 'admin_tienda'] })
 useHead({ title: 'Nuevo producto · Inventario Kilker' })
 const apiFetch = useApiFetch()
 
 const toast = useToast()
-const { me } = useMe()
+const { me, canManageCatalog } = useMe()
 const { data: categories } = useCategories()
 const { products } = useProducts()
 // Para el picker de productos dentro de un kit necesitamos el catálogo
 // completo (no paginado) — useProducts() puede venir paginado y truncar la
 // lista, ver nota en memoria del proyecto sobre useAllProducts().
 const { products: allProducts } = useAllProducts()
-const isAdmin = computed(() => me.value?.role === 'admin')
 
 // ───────────────────────────────────────────────
-//  TOGGLE: ¿estamos dando de alta un producto o un kit?
+//  TOGGLE: ¿producto, kit o muestra?
 // ───────────────────────────────────────────────
-const mode = ref<'product' | 'kit'>('product')
+type CreateMode = 'product' | 'kit' | 'sample'
+
+// `?tipo=muestra|kit` abre directo en esa pestaña: es lo que usa el botón
+// "Nueva muestra" de /productos/muestras, que si no caería en Producto.
+const QUERY_MODES: Record<string, CreateMode> = { muestra: 'sample', kit: 'kit' }
+const mode = ref<CreateMode>(
+  QUERY_MODES[String(useRoute().query.tipo ?? '')] ?? 'product'
+)
+
+const MODE_META: Record<CreateMode, { title: string; description: string }> = {
+  product: {
+    title: 'Nuevo producto',
+    description: 'Alta de un producto del catálogo.'
+  },
+  kit: {
+    title: 'Nuevo kit',
+    description: 'Alta de un kit de productos.'
+  },
+  sample: {
+    title: 'Nueva muestra',
+    description:
+      'Una muestra es una segunda versión del mismo producto: comparte su inventario y siempre se entrega a precio $0.'
+  }
+}
+const modeMeta = computed(() => MODE_META[mode.value])
 
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -288,6 +312,121 @@ async function onSubmitKit(event: FormSubmitEvent<KitFormState>) {
 function onResetKit() {
   Object.assign(kitState, emptyKitState())
 }
+
+// ───────────────────────────────────────────────
+//  FORMULARIO: MUESTRA
+// ───────────────────────────────────────────────
+// Una muestra es una "segunda versión" del producto: MISMO inventario (lo
+// descuenta 1:1 al entregarse) y precio fijo en $0. Por eso aquí no se captura
+// unidad, categoría, color, precio ni costo: todo eso lo hereda del producto
+// base y lo copia el servidor. Lo único propio es el SKU con el que se busca al
+// vender y el nombre con el que aparece en el ticket.
+//
+// Las muestras NO se listan en /productos (no tienen existencias propias y
+// ensuciarían el valor de inventario): se consultan en /productos/muestras.
+// Aquí solo se dan de alta; el listado se lee de la misma fuente para saber qué
+// productos ya tienen muestra y no ofrecerlos dos veces.
+const { products: sellableProducts, refresh: refreshSellable } = useSellableProducts()
+
+/** Muestras ya dadas de alta. */
+const existingSamples = computed(() =>
+  sellableProducts.value.filter((p) => p.sampleOfProductId != null)
+)
+
+/** Productos que ya tienen muestra: solo se permite una por producto. */
+const basesWithSample = computed(
+  () => new Set(existingSamples.value.map((s) => s.sampleOfProductId as number))
+)
+
+type SampleFormState = {
+  baseProductId: number | undefined
+  sku: string
+  name: string
+  isActive: boolean
+}
+
+function emptySampleState(): SampleFormState {
+  return { baseProductId: undefined, sku: '', name: '', isActive: true }
+}
+
+const sampleState = reactive<SampleFormState>(emptySampleState())
+const sampleSubmitting = ref(false)
+
+const sampleBaseItems = computed(() =>
+  allProducts.value
+    .filter((p) => p.isActive && !basesWithSample.value.has(p.id))
+    .map((p) => ({ label: `${p.sku} — ${p.name}`, value: p.id }))
+)
+
+const sampleBase = computed(() =>
+  sampleState.baseProductId == null
+    ? undefined
+    : allProducts.value.find((p) => p.id === sampleState.baseProductId)
+)
+
+// Al elegir el producto base se proponen SKU y nombre derivados de él; ambos
+// siguen siendo editables (el servidor deriva exactamente lo mismo si llegan
+// vacíos).
+watch(sampleBase, (base) => {
+  if (!base) return
+  sampleState.sku = `${base.sku}-M`
+  sampleState.name = `${base.name} (MUESTRA)`
+})
+
+function validateSample(s: SampleFormState): FormError[] {
+  const errors: FormError[] = []
+  if (s.baseProductId == null) {
+    errors.push({ name: 'baseProductId', message: 'Elige el producto del que será muestra.' })
+  }
+  const sku = s.sku.trim()
+  if (!sku) {
+    errors.push({ name: 'sku', message: 'El SKU es obligatorio.' })
+  } else if (sellableProducts.value.some((p) => p.sku.toLowerCase() === sku.toLowerCase())) {
+    errors.push({ name: 'sku', message: 'Ya existe un producto con este SKU.' })
+  }
+  if (!s.name.trim()) {
+    errors.push({ name: 'name', message: 'El nombre es obligatorio.' })
+  }
+  return errors
+}
+
+async function onSubmitSample(event: FormSubmitEvent<SampleFormState>) {
+  sampleSubmitting.value = true
+  const d = event.data
+
+  try {
+    const created = await apiFetch<ApiProduct>('/api/products', {
+      method: 'POST',
+      body: {
+        sampleOfProductId: d.baseProductId,
+        sku: d.sku.trim(),
+        name: d.name.trim(),
+        isActive: d.isActive
+      }
+    })
+    await refreshSellable()
+    toast.add({
+      title: 'Muestra creada',
+      description: `${created.sku} — ${created.name}`,
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    // Se queda en la pantalla a propósito: las muestras no aparecen en
+    // /productos, así que mandarlo al catálogo daría la impresión de que no se
+    // guardó nada. La tabla de abajo ya refleja el alta.
+    Object.assign(sampleState, emptySampleState())
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo crear la muestra',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    sampleSubmitting.value = false
+  }
+}
+
 </script>
 
 <template>
@@ -302,26 +441,20 @@ function onResetKit() {
       >
         Volver al catálogo
       </UButton>
-      <h1 class="text-2xl font-semibold">
-        {{ mode === 'product' ? 'Nuevo producto' : 'Nuevo kit' }}
-      </h1>
+      <h1 class="text-2xl font-semibold">{{ modeMeta.title }}</h1>
       <p class="text-sm text-muted">
-        {{
-          mode === 'product'
-            ? 'Alta de un producto del catálogo.'
-            : 'Alta de un kit de productos'
-        }}
+        {{ modeMeta.description }}
         Los campos con <span class="text-error">*</span> son obligatorios.
       </p>
     </header>
 
     <UAlert
-      v-if="me && !isAdmin"
+      v-if="me && !canManageCatalog"
       color="warning"
       variant="soft"
       icon="i-lucide-lock"
       title="Acceso restringido"
-      description="Solo un administrador puede dar de alta productos o kits."
+      description="Solo un administrador (de empresa o de tienda) puede dar de alta productos, kits o muestras."
       class="mb-6"
     />
     <UAlert
@@ -330,7 +463,7 @@ function onResetKit() {
       variant="soft"
       icon="i-lucide-log-in"
       title="Inicia sesión"
-      description="Necesitas iniciar sesión como administrador para crear productos o kits."
+      description="Necesitas iniciar sesión como administrador para crear productos, kits o muestras."
       class="mb-6"
     />
 
@@ -349,6 +482,13 @@ function onResetKit() {
         :variant="mode === 'kit' ? 'solid' : 'outline'"
         @click="mode = 'kit'"
       />
+      <UButton
+        label="Muestras"
+        icon="i-lucide-palette"
+        :color="mode === 'sample' ? 'primary' : 'neutral'"
+        :variant="mode === 'sample' ? 'solid' : 'outline'"
+        @click="mode = 'sample'"
+      />
     </UButtonGroup>
 
     <!-- ─────────────────────────  PRODUCTO  ───────────────────────── -->
@@ -356,7 +496,7 @@ function onResetKit() {
       v-if="mode === 'product'"
       :state="state"
       :validate="validate"
-      :disabled="!isAdmin"
+      :disabled="!canManageCatalog"
       class="space-y-6"
       @submit="onSubmit"
     >
@@ -480,7 +620,7 @@ function onResetKit() {
           icon="i-lucide-save"
           color="primary"
           :loading="submitting"
-          :disabled="!isAdmin"
+          :disabled="!canManageCatalog"
         >
           Guardar producto
         </UButton>
@@ -489,10 +629,10 @@ function onResetKit() {
 
     <!-- ───────────────────────────  KIT  ─────────────────────────── -->
     <UForm
-      v-else
+      v-else-if="mode === 'kit'"
       :state="kitState"
       :validate="validateKit"
-      :disabled="!isAdmin"
+      :disabled="!canManageCatalog"
       class="space-y-6"
       @submit="onSubmitKit"
     >
@@ -617,11 +757,126 @@ function onResetKit() {
           icon="i-lucide-save"
           color="primary"
           :loading="kitSubmitting"
-          :disabled="!isAdmin"
+          :disabled="!canManageCatalog"
         >
           Guardar kit
         </UButton>
       </div>
     </UForm>
+
+    <!-- ─────────────────────────  MUESTRAS  ─────────────────────────-->
+    <template v-else>
+      <UForm
+        :state="sampleState"
+        :validate="validateSample"
+        :disabled="!canManageCatalog"
+        class="space-y-6"
+        @submit="onSubmitSample"
+      >
+        <UCard>
+          <template #header>
+            <h2 class="font-semibold">Producto base</h2>
+          </template>
+
+          <UFormField
+            label="Producto del que será muestra"
+            name="baseProductId"
+            required
+            help="Solo aparecen los productos activos que todavía no tienen muestra (se permite una por producto)."
+          >
+            <USelectMenu
+              v-model="sampleState.baseProductId"
+              :items="sampleBaseItems"
+              value-key="value"
+              searchable
+              placeholder="Buscar producto por SKU o nombre…"
+              class="w-full"
+            />
+          </UFormField>
+
+          <!-- Todo esto se hereda: se muestra para que quede claro que la
+               muestra no es un producto aparte con datos propios. -->
+          <div
+            v-if="sampleBase"
+            class="mt-4 grid gap-3 rounded-lg bg-elevated/40 p-3 text-sm sm:grid-cols-4"
+          >
+            <div>
+              <p class="text-xs text-muted">Unidad</p>
+              <p class="font-medium">{{ UNIT_LABELS[sampleBase.unit] }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">Categoría</p>
+              <p class="font-medium">{{ sampleBase.category ?? '—' }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">Existencia (compartida)</p>
+              <p class="font-medium tabular-nums">{{ sampleBase.totalStock }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">Precio de la muestra</p>
+              <p class="font-medium">{{ currency.format(0) }}</p>
+            </div>
+          </div>
+        </UCard>
+
+        <UCard>
+          <template #header>
+            <h2 class="font-semibold">Identificación de la muestra</h2>
+          </template>
+
+          <div class="grid gap-4 sm:grid-cols-2">
+            <UFormField
+              label="SKU"
+              name="sku"
+              required
+              help="Con este SKU se busca la muestra al vender."
+            >
+              <UInput
+                v-model="sampleState.sku"
+                :disabled="!sampleBase"
+                placeholder="Elige primero el producto base"
+                class="w-full"
+              />
+            </UFormField>
+
+            <UFormField label="Nombre" name="name" required>
+              <UInput
+                v-model="sampleState.name"
+                :disabled="!sampleBase"
+                placeholder="Elige primero el producto base"
+                class="w-full"
+              />
+            </UFormField>
+          </div>
+
+          <USeparator class="my-4" />
+
+          <UFormField name="isActive">
+            <USwitch
+              v-model="sampleState.isActive"
+              label="Muestra activa"
+              description="Las muestras inactivas no se pueden entregar. Desactivarla no afecta al producto base."
+            />
+          </UFormField>
+        </UCard>
+
+        <div class="flex flex-wrap justify-end gap-3">
+          <UButton
+            type="submit"
+            icon="i-lucide-save"
+            color="primary"
+            :loading="sampleSubmitting"
+            :disabled="!canManageCatalog"
+          >
+            Guardar muestra
+          </UButton>
+        </div>
+      </UForm>
+
+      <p class="mt-6 text-center text-sm text-muted">
+        Las muestras registradas ({{ existingSamples.length }}) se consultan en
+        <ULink to="/productos/muestras" class="underline">Muestras</ULink>.
+      </p>
+    </template>
   </UContainer>
 </template>

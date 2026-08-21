@@ -172,7 +172,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 ## 7. Auth y roles
 
 - **Supabase Auth** vía `@nuxtjs/supabase` (email/contraseña; roles
-  `admin | empleado | observador`).
+  `admin | empleado | observador | admin_tienda`).
 - Tabla **`profiles`** (1:1 con `auth.users`) guarda datos de aplicación + **rol** + `store_id`.
 - Roles/permisos se verifican en `server/utils/auth.ts` → `requireProfile(event,{role})`
   (en endpoints de escritura) y `getOptionalProfile(event)` (para `GET /api/me`); reforzado
@@ -191,6 +191,15 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     tickets, anulación de entradas de stock (`POST /api/movements/:id/void`).
   - **Admin + empleado:** vender, registrar entradas, crear/recibir/cancelar
     transferencias, gastos y sus pagos, clientes, cortes de caja y abrir tickets.
+  - **`admin_tienda` (administrador de sucursal):** es el encargado de UNA tienda,
+    distinto del `admin` de la empresa. **Opera acotado a su sucursal igual que un
+    empleado** (vende, captura entradas, transfiere, gastos, cortes, tickets) y
+    además **gestiona el catálogo compartido**: alta y edición de productos, kits,
+    **muestras** y categorías (rutas `/productos/nuevo`, `/productos/:id/editar`,
+    `/categorias`).
+    **No puede:** borrar del catálogo, anular ventas o entradas (abre ticket de
+    corrección como el empleado), resolver tickets, ni administrar sucursales y
+    usuarios. Lleva `store_id` obligatorio, igual que el empleado.
   - **Solo lectura (`observador`):** ve **todo** (todas las sucursales, todos los
     listados, tickets, cortes, gastos, sucursales y empleados) pero **no puede
     escribir nada**. El candado es central: `requireProfile` rechaza con 403
@@ -200,11 +209,24 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     y así un endpoint nuevo nace protegido sin que nadie lo recuerde. En la UI el
     espejo es `canWrite` de `useMe()`, que **solo esconde botones**; la
     autorización real es la del servidor. Va sin sucursal (`store_id` null).
-  - **Aislamiento por sucursal:** el empleado solo opera y solo ve la suya (el backend
-    ignora el `storeId` del body y usa `profile.storeId`); admin y observador ven todas
-    y pueden filtrar por `?storeId`. Todo el scoping está escrito como
-    `if (role === 'empleado') → su tienda; si no → todas`, por eso un rol global
-    nuevo no requiere tocar ningún `GET`.
+  - ⚠️ **Aislamiento por sucursal: el corte es `isStoreScopedRole(role)`, NO
+    `role === 'empleado'`** (`server/utils/auth.ts`, espejo en la UI:
+    `STORE_SCOPED_ROLES` de `app/types/inventario.ts` y `isStoreScoped`/
+    `seesAllStores` de `useMe()`). Los roles acotados —hoy `empleado` y
+    `admin_tienda`— solo operan y solo ven su tienda (el backend ignora el
+    `storeId` del body y usa `profile.storeId`); `admin` y `observador` ven todas y
+    pueden filtrar por `?storeId`. El literal `role === 'empleado'` estaba repetido
+    en ~30 endpoints: cada copia era un sitio donde olvidar un rol acotado nuevo lo
+    dejaba leyendo las ventas de las demás sucursales. **Un rol acotado nuevo se
+    agrega en `STORE_SCOPED_ROLE_LIST` y nada más**; uno global no requiere tocar
+    ningún `GET`. Los roles acotados exigen `store_id` (lo validan
+    `POST /api/users` y `PATCH /api/users/:id`) y la baja de una sucursal los
+    desactiva en cascada.
+  - **Catálogo compartido:** `CATALOG_MANAGER_ROLES` (`admin`, `admin_tienda`) es lo
+    que exigen los `POST`/`PATCH` de products (productos **y muestras**: es el mismo
+    endpoint, con `sampleOfProductId`), kits y categories. Los `DELETE` siguen
+    pidiendo `role: 'admin'` a secas. En la UI el espejo es `canManageCatalog` de
+    `useMe()` (esconde botones; la autorización real es la del servidor).
 - ⚠️ **`requireProfile` cachea el perfil** en dos niveles (`server/utils/auth.ts`):
   por request (`event.context`) y por token con **TTL de 60 s** a nivel de módulo.
   Sin esto, cada petición autenticada costaba un round-trip HTTP a
@@ -252,7 +274,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
 clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
-datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022` en
+datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0029` en
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
 
 > Este apartado es un **resumen**, no un changelog. La verdad está en el código:
@@ -262,7 +284,7 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
 
 | Módulo | Pantallas | Endpoints |
 |--------|-----------|-----------|
-| **Catálogo** | `productos/index`, `productos/nuevo`, `productos/[id]/editar` | `GET/POST /api/products`, `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
+| **Catálogo** | `productos/index`, `productos/nuevo` (pestañas Producto / Kit / **Muestras**; `?tipo=muestra\|kit` la preselecciona), **`productos/muestras`** (listado de muestras: SKU, nombre, base y precio $0 — sin existencias, porque son las del base), `productos/[id]/editar` | `GET/POST /api/products` (`?samples=exclude\|include\|only`), `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
 | **Categorías** | `categorias/index` | `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id` |
 | **Entradas de stock** | `movimientos/entrada`, `movimientos/index` | `POST /api/movements/entrada`, `GET /api/movements`, `POST /api/movements/:id/void` |
 | **Ventas** | `ventas/nueva`, `ventas/index` | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void` |
@@ -353,6 +375,34 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0022`
   Admiten **fecha retroactiva**: si la fecha es pasada, además del stock actual se valida
   que **a esa fecha** el kardex ya tuviera existencia suficiente. La anulación revierte
   kardex e inventario y marca la factura `anulada`.
+- ⚠️ **Muestras: producto propio, inventario del base.** Una muestra es una fila de
+  `products` con `sample_of_product_id` → producto base: tiene SKU y nombre propios y
+  se elige al vender como cualquier otro producto, pero **no tiene inventario ni
+  kardex propios**. `POST /api/sales` la **resuelve al producto base antes de validar
+  existencias** (`stockProductId()` de `server/utils/samples.ts`), y a partir de ahí
+  todo —`inventory`, `stock_movements` e `invoice_items.product_id`— habla del base:
+  es el mismo truco con el que un kit se "explota" en sus productos. De la muestra
+  solo queda el marcador `invoice_items.sample_product_id` (+ snapshot sku/name) y el
+  precio, que **siempre es 0** (constraint `products_sample_price_zero`; el servidor
+  ignora el `unitPrice` que mande el cliente). Consecuencias no obvias:
+  - **Resolver ANTES de validar el stock no es cosmético:** es lo que hace que
+    `requiredByProduct` sume en el mismo cubo el producto vendido normal y el
+    entregado como muestra en la misma venta. Al revés, cada uno validaría contra el
+    saldo completo por separado y en conjunto podrían pasar de las existencias.
+  - **Si la muestra moviera stock con su propio id**, tendría capas FIFO propias sin
+    una sola entrada que las cubriera: cada muestra nacería como venta descubierta
+    (deuda negativa) y el inventario del producto real nunca bajaría.
+  - **No se compra, no se transfiere y no entra en kits** — `assertNotSample()` lo
+    rechaza en entradas, transferencias y kits; eso va contra el producto base.
+  - **`GET /api/products` NO devuelve muestras por omisión** (`?samples=exclude`). Es
+    el fail-safe: ese endpoint alimenta el catálogo, el dashboard, las exportaciones
+    de valor de inventario y los pickers de entradas/kits/transferencias, y una
+    pantalla nueva no debe heredar muestras sin pedirlas. Las piden `?samples=include`
+    (venta, vía `useSellableProducts()`) y `?samples=only`. En una muestra,
+    `totalStock`/`byStore` vienen ya resueltos con los del producto base.
+  - **Una muestra sale como venta de $0 con folio** y entra al corte de caja; su costo
+    cae en *costo de lo vendido* con ingreso 0. Separarlo en un reporte propio no
+    requiere migración: la marca ya está en la línea.
 - ⚠️ **El descuento es de la FACTURA, no de la línea.** `invoice_items.line_total` es
   **bruto**: no lleva descuento aplicado. Todo reporte que sume ingresos por línea tiene
   que prorratearlo (`line_total * (1 - discount_pct/100)`) o dará una cifra de ventas

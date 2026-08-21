@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
 
   const filters = []
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) return []
     filters.push(eq(tickets.storeId, profile.storeId))
   }

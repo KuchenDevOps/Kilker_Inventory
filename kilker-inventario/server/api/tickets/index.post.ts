@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    if (profile.role === 'empleado' && profile.storeId !== movement.storeId) {
+    if (isStoreScopedRole(profile.role) && profile.storeId !== movement.storeId) {
       throw createError({
         statusCode: 403,
         statusMessage: 'Solo puedes solicitar correcciones de tu sucursal'
@@ -107,7 +107,7 @@ export default defineEventHandler(async (event) => {
   if (!invoice) throw createError({ statusCode: 404, statusMessage: 'Venta no existe' })
 
   // Empleado solo abre tickets de su tienda.
-  if (profile.role === 'empleado' && profile.storeId !== invoice.storeId) {
+  if (isStoreScopedRole(profile.role) && profile.storeId !== invoice.storeId) {
     throw createError({
       statusCode: 403,
       statusMessage: 'Solo puedes solicitar correcciones de tu sucursal'

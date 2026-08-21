@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
 
   let storeId: number | undefined
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) return []
     storeId = profile.storeId
   } else if (query.storeId) {

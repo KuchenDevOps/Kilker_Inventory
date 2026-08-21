@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import type { ApiCategory } from '~/types/inventario'
 
-definePageMeta({ requiresRole: 'admin' })
+// El administrador de tienda también gestiona el catálogo compartido: da de
+// alta y edita categorías. El borrado duro sigue siendo solo del admin.
+definePageMeta({ requiresRole: ['admin', 'admin_tienda'] })
 useHead({ title: 'Categorías · Inventario Kilker' })
 
 const toast = useToast()
 const { data: categories, pending, error, refresh } = useCategories()
 const apiFetch = useApiFetch()
+const { me } = useMe()
+const isAdmin = computed(() => me.value?.role === 'admin')
 
 // Estado del formulario: null = cerrado; 0 = nueva; >0 = editando esa categoría.
 const editingId = ref<number | null>(null)
@@ -195,6 +199,7 @@ async function confirmDelete(c: ApiCategory) {
                     @click="openEdit(c)"
                   />
                   <UButton
+                    v-if="isAdmin"
                     size="xs"
                     color="error"
                     variant="ghost"

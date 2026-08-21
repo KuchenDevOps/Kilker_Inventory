@@ -5,6 +5,7 @@
 import { eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { entryFolioCounters ,inventory, products, stockMovements, stores } from '../../db/schema'
+import { assertNotSample } from '../../utils/samples'
 
 interface EntradaBody {
   productId: number
@@ -45,6 +46,10 @@ export default defineEventHandler(async (event) => {
     if (!product) {
       throw createError({ statusCode: 404, statusMessage: 'Producto no existe' })
     }
+    // Una muestra no se compra: comparte el inventario de su producto base, así
+    // que la entrada va contra el base (si no, crearía capas FIFO propias que
+    // ninguna venta descontaría).
+    assertNotSample(product, 'registrar una entrada')
 
     const store = await tx.query.stores.findFirst({ where: eq(stores.id, storeId) })
     if (!store) {

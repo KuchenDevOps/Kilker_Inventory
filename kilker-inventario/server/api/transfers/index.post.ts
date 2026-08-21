@@ -7,6 +7,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { inventory, products, stockMovements, stores, transferItems, transfers } from '../../db/schema'
+import { assertNotSample } from '../../utils/samples'
 
 interface TransferItem {
   productId: number
@@ -44,7 +45,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // El empleado solo puede transferir DESDE su propia sucursal.
-  if (profile.role === 'empleado' && profile.storeId !== fromStoreId) {
+  if (isStoreScopedRole(profile.role) && profile.storeId !== fromStoreId) {
     throw createError({ statusCode: 403, statusMessage: 'Solo puedes transferir desde tu sucursal' })
   }
 
@@ -81,6 +82,9 @@ export default defineEventHandler(async (event) => {
       const quantity = Number(it.quantity)
       const product = await tx.query.products.findFirst({ where: eq(products.id, productId) })
       if (!product) throw createError({ statusCode: 404, statusMessage: `Producto ${productId} no existe` })
+      // Una muestra no se transfiere: no tiene existencias propias que mover.
+      // Lo que viaja entre sucursales es el producto base.
+      assertNotSample(product, 'transferirla entre sucursales')
 
       const inv = await tx.query.inventory.findFirst({
         where: and(eq(inventory.productId, productId), eq(inventory.storeId, fromStoreId))

@@ -61,7 +61,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Gasto no existe' })
   }
 
-  if (profile.role === 'empleado' && existing.storeId !== profile.storeId) {
+  if (isStoreScopedRole(profile.role) && existing.storeId !== profile.storeId) {
     throw createError({ statusCode: 403, statusMessage: 'No puedes editar gastos de otra sucursal' })
   }
 

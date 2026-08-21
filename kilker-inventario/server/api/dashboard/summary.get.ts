@@ -36,7 +36,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
 
   // ─── Alcance por sucursal: el empleado nunca elige, siempre la suya ───
-  const isEmployee = profile.role === 'empleado'
+  const isEmployee = isStoreScopedRole(profile.role)
   const requestedStoreId = query.storeId ? Number(query.storeId) || undefined : undefined
   const storeId = isEmployee ? (profile.storeId ?? undefined) : requestedStoreId
 

@@ -8,7 +8,9 @@ const { products, pending, error, refresh } = useAllProducts()
 const { data: stores } = useStores()
 const storeMap = computed(() => new Map(stores.value.map((s) => [s.id, s])))
 const expandedId = ref<number | null>(null)
-const { me } = useMe()
+const { me, canManageCatalog } = useMe()
+// El borrado duro de producto sigue siendo exclusivo del admin de empresa; el
+// alta y la edición las comparte con el admin de tienda (canManageCatalog).
 const isAdmin = computed(() => me.value?.role === 'admin')
 
 const toast = useToast()
@@ -352,7 +354,7 @@ async function exportInventoryValue() {
           {{ asOfMode ? `existencias al ${asOfDate}` : 'existencias actuales' }}
         </p>
       </div>
-       <div v-if="isAdmin" class="flex items-center gap-2">
+       <div v-if="canManageCatalog" class="flex items-center gap-2">
     <UButton
       to="/productos/nuevo"
       icon="i-lucide-plus"
@@ -362,6 +364,7 @@ async function exportInventoryValue() {
     </UButton>
 
     <UButton
+      v-if="isAdmin"
       icon="i-lucide-file-spreadsheet"
       color="neutral"
       variant="subtle"
@@ -494,22 +497,22 @@ async function exportInventoryValue() {
                         />
                       </template>
                       <template v-else>
-                        <template v-if="isAdmin">
-                          <UButton
-                            :to="`/productos/${p.id}/editar`"
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-pencil"
-                          />
-                          <UButton
-                            size="xs"
-                            color="error"
-                            variant="ghost"
-                            icon="i-lucide-trash-2"
-                            @click="confirmingDeleteId = p.id"
-                          />
-                        </template>
+                        <UButton
+                          v-if="canManageCatalog"
+                          :to="`/productos/${p.id}/editar`"
+                          size="xs"
+                          color="neutral"
+                          variant="ghost"
+                          icon="i-lucide-pencil"
+                        />
+                        <UButton
+                          v-if="isAdmin"
+                          size="xs"
+                          color="error"
+                          variant="ghost"
+                          icon="i-lucide-trash-2"
+                          @click="confirmingDeleteId = p.id"
+                        />
                         <UButton
                           size="xs"
                           :color="expandedId === p.id ? 'primary' : 'neutral'"

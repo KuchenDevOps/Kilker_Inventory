@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
   })
   if (!corte) throw createError({ statusCode: 404, statusMessage: 'Corte no existe' })
 
-  if (profile.role === 'empleado' && profile.storeId !== corte.storeId) {
+  if (isStoreScopedRole(profile.role) && profile.storeId !== corte.storeId) {
     throw createError({ statusCode: 403, statusMessage: 'Corte de otra tienda' })
   }
 

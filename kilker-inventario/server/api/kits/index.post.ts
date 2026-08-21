@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  POST /api/kits — alta de kit de venta (admin)
+//  POST /api/kits — alta de kit de venta (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Cabecera en sales_kits + líneas en sales_kit_items, en una transacción.
 // unitPrice null = la línea usa el precio normal de products.price.
@@ -38,7 +38,7 @@ function optionalAmount(v: unknown, field: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
   const body = await readBody<NewKitBody>(event)
 
   const sku = cleanText(body?.sku)
@@ -100,7 +100,11 @@ export default defineEventHandler(async (event) => {
 
   // Todos los productos referenciados deben existir.
   const found = await db
-    .select({ id: products.id })
+    .select({
+      id: products.id,
+      sku: products.sku,
+      sampleOfProductId: products.sampleOfProductId
+    })
     .from(products)
     .where(inArray(products.id, productIds))
 
@@ -110,6 +114,10 @@ export default defineEventHandler(async (event) => {
       statusMessage: 'Uno o más productos del kit no existen'
     })
   }
+
+  // Un kit se arma con productos, no con muestras: la muestra no tiene
+  // existencias propias y su precio 0 vaciaría el importe del kit.
+  for (const product of found) assertNotSample(product, 'incluirla en un kit')
 
   const created = await db.transaction(async (tx) => {
     const [kit] = await tx

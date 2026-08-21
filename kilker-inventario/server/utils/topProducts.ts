@@ -23,7 +23,7 @@ import {
   stockMovements,
   transfers
 } from '../db/schema'
-import type { SessionProfile } from './auth'
+import { isStoreScopedRole, type SessionProfile } from './auth'
 import { buildFifoEvents, runFifo } from './fifoEngine'
 
 type ProductUnit = (typeof products.$inferSelect)['unit']
@@ -85,7 +85,7 @@ export async function computeTopProducts(
   const filters = [eq(invoices.status, 'emitida')]
   let storeIds: number[] | undefined
 
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) return []
     filters.push(eq(invoices.storeId, profile.storeId))
     storeIds = [profile.storeId]
@@ -102,7 +102,7 @@ export async function computeTopProducts(
   // ─── Cache lookup ───
   const cacheKey = [
     'top-products',
-    profile.role === 'empleado' ? `emp:${profile.storeId}` : `store:${params.storeId ?? 'all'}`,
+    isStoreScopedRole(profile.role) ? `emp:${profile.storeId}` : `store:${params.storeId ?? 'all'}`,
     `from:${params.from ?? ''}`,
     `to:${params.to ?? ''}`,
     `limit:${limit}`,
@@ -297,7 +297,7 @@ export async function computeTopProducts(
 
   // ─── Productos activos SIN ventas: costo de inventario, no COGS ───
   let storeIdForStock: number | undefined
-  if (profile.role === 'empleado') storeIdForStock = profile.storeId ?? undefined
+  if (isStoreScopedRole(profile.role)) storeIdForStock = profile.storeId ?? undefined
   else storeIdForStock = params.storeId
 
   const soldProductIds = new Set(rankedRows.map((r) => r.productId))

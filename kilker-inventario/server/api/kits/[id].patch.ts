@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/kits/:id — edición de kit de venta (admin)
+//  PATCH /api/kits/:id — edición de kit de venta (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Permite actualizar sku, name, isActive y/o reemplazar por completo las
 // líneas del kit (items). Si `items` no viene en el body, las líneas
@@ -38,7 +38,7 @@ function optionalAmount(v: unknown, field: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
 
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isInteger(id) || id <= 0) {
@@ -127,7 +127,11 @@ export default defineEventHandler(async (event) => {
     }
 
     const found = await db
-      .select({ id: products.id })
+      .select({
+        id: products.id,
+        sku: products.sku,
+        sampleOfProductId: products.sampleOfProductId
+      })
       .from(products)
       .where(inArray(products.id, productIds))
 
@@ -137,6 +141,9 @@ export default defineEventHandler(async (event) => {
         statusMessage: 'Uno o más productos del kit no existen'
       })
     }
+
+    // Un kit se arma con productos, no con muestras (ver POST /api/kits).
+    for (const product of found) assertNotSample(product, 'incluirla en un kit')
   }
 
   if (Object.keys(patch).length === 0 && items === null) {
