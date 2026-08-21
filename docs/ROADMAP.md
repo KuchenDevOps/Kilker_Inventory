@@ -64,7 +64,7 @@ consistentes. Stack decidido (ADR en `CONTEXTO.md`).
   cancelación), valuadas por FIFO.
 - **Anulación de ventas y de entradas** (admin) + **tickets de corrección** (el empleado
   solicita, el admin aprueba/rechaza).
-- **Cortes de caja** por turno con snapshot inmutable (efectivo/tarjeta/transferencia).
+- **Cortes de caja** por turno con snapshot inmutable (efectivo/débito/crédito/transferencia).
 - **Gastos** con conceptos, retenciones IVA/ISR y pagos en parcialidades.
 - **Reportes:** valuación mensual de inventario, valor de inventario a una fecha, costo
   promedio y productos más vendidos con **costo y utilidad FIFO**. Dashboard con filtros de

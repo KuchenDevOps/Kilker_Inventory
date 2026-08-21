@@ -34,7 +34,7 @@
 | `ticket_status` | `abierto`, `aprobado`, `rechazado` |
 | `ticket_target` | `factura`, `movimiento` (v1 solo usa `factura`) |
 | `product_unit` | `litro`, `galon`, `cubeta`, `pieza`, `cuarto`, `tambo` |
-| `payment_method` | `efectivo`, `tarjeta`, `transferencia` |
+| `payment_method` | `efectivo`, `debito`, `credito`, `transferencia` |
 | `sale_channel` | `mostrador`, `en_linea` |
 | `expense_type` | `Fijo`, `Operativo` |
 | `discount_type` | `porcentaje`, `combo` (declarado; el descuento vigente es por factura) |
@@ -87,7 +87,7 @@
 | Tabla | Contenido |
 |-------|-----------|
 | `tickets` | Solicitudes de corrección: `raised_by`, `store_id`, `target`, `invoice_id`/`movement_id`, `reason`, `status`, `resolved_by`/`resolution_note`. |
-| `cash_closeouts` | Corte por turno: ventana (`period_from` → `period_to`) y **snapshot inmutable** de ventas emitidas: `sales_count`, `total_emitido`, `total_efectivo`, `total_tarjeta`, `total_transferencia`, `voided_count`, `total_voided`. |
+| `cash_closeouts` | Corte por turno: ventana (`period_from` → `period_to`) y **snapshot inmutable** de ventas emitidas: `sales_count`, `total_emitido`, `total_efectivo`, `total_debito`, `total_credito`, `total_transferencia`, `voided_count`, `total_voided`. ⚠️ Una columna por valor de `payment_method`: al agregar un método hay que agregar su columna, o el importe no cae en ninguna (el `POST /api/cortes` lanza 500 si eso pasa). |
 | `expenses` | Cabecera de gasto: `store_id`, `supplier`, `supplier_invoice_number`, `type`, `retention_iva`/`retention_isr`, `amount` (total snapshot), `paid_at`, `created_by`. |
 | `expense_items` | Conceptos del gasto: `reason`, `amount`. |
 | `expense_payments` | Abonos/parcialidades: `amount`, `paid_at`, `paid_by`, `method`, `note`. |

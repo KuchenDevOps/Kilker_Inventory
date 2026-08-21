@@ -4,8 +4,30 @@
 // Empleado: su tienda. Admin: todas (filtros ?storeId/?status/?productId).
 import { and, count, desc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { customers, invoiceItems, invoices, profiles, stores, tickets } from '../../db/schema'
+import {
+  customers,
+  invoices,
+  paymentMethod as paymentMethodEnum,
+  profiles,
+  stores,
+  tickets
+} from '../../db/schema'
 
+/**
+ * Texto contra el que se busca cada método de pago en `?q`. Sin acentos, para
+ * que "débito" y "debito" den lo mismo. Va aquí y no en `PAYMENT_LABELS` porque
+ * ese archivo es del cliente (`app/types`) y esto solo lo usa la búsqueda.
+ */
+const PAYMENT_SEARCH_LABELS: Record<(typeof paymentMethodEnum.enumValues)[number], string> = {
+  efectivo: 'efectivo',
+  debito: 'tarjeta de debito',
+  credito: 'tarjeta de credito',
+  transferencia: 'transferencia'
+}
+
+/** Minúsculas y sin diacríticos, para comparar la búsqueda con las etiquetas. */
+const normalize = (s: string) =>
+  s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -50,9 +72,13 @@ export default defineEventHandler(async (event) => {
     ])
 
     const orParts = [ilike(invoices.folio, like)]
-    const pm = q.toLowerCase()
-    for (const m of ['efectivo', 'tarjeta', 'transferencia'] as const) {
-      if (m.includes(pm)) orParts.push(eq(invoices.paymentMethod, m))
+    const pm = normalize(q)
+    // Buscar "tarjeta" ya no matchea ningún valor del enum ('debito'/'credito'),
+    // así que se busca también contra la etiqueta visible de cada método.
+    for (const m of paymentMethodEnum.enumValues) {
+      if (m.includes(pm) || PAYMENT_SEARCH_LABELS[m].includes(pm)) {
+        orParts.push(eq(invoices.paymentMethod, m))
+      }
     }
     if (storeIds.length) orParts.push(inArray(invoices.storeId, storeIds.map((r) => r.id)))
     if (profIds.length) orParts.push(inArray(invoices.createdBy, profIds.map((r) => r.id)))

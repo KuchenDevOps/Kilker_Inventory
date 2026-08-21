@@ -37,12 +37,23 @@ async function onSubmit() {
   <div class="min-h-screen flex items-center justify-center bg-default text-default p-4">
     <UCard class="w-full max-w-sm">
       <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-paint-roller" class="size-6 text-primary" />
-          <div class="leading-tight">
-            <p class="font-semibold">Kilker Inventario</p>
-            <p class="text-xs text-muted">Inicia sesión para continuar</p>
-          </div>
+        <!-- Igual que en el sidebar: una variante por modo de color. -->
+        <div class="flex flex-col items-center gap-3 py-2 text-center">
+          <img
+            src="/kilker-logo.png"
+            alt="Kilker Industrial Coatings"
+            width="600"
+            height="273"
+            class="h-14 w-auto dark:hidden"
+          >
+          <img
+            src="/kilker-logo-dark.png"
+            alt="Kilker Industrial Coatings"
+            width="600"
+            height="273"
+            class="hidden h-14 w-auto dark:block"
+          >
+          <p class="text-xs text-muted">Inventario · inicia sesión para continuar</p>
         </div>
       </template>
 

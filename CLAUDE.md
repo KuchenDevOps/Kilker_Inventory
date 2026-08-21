@@ -274,7 +274,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
 clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
-datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0029` en
+datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0031` en
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
 
 > Este apartado es un **resumen**, no un changelog. La verdad está en el código:
@@ -370,7 +370,7 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0029`
 - **Folios.** Ventas: `<CODE_TIENDA>-0001`, correlativo por tienda (`count(*)+1` bajo
   `SELECT … FOR UPDATE` de la tienda). Entradas: `<CODE_TIENDA>-E-0001`, con contador
   dedicado `entry_folio_counters` (upsert atómico).
-- **Ventas.** Método de pago (efectivo/tarjeta/transferencia), canal (mostrador/en línea),
+- **Ventas.** Método de pago (efectivo/débito/crédito/transferencia), canal (mostrador/en línea),
   cliente opcional, **descuento en % a nivel factura** (`discount_pct`/`discount_amount`).
   Admiten **fecha retroactiva**: si la fecha es pasada, además del stock actual se valida
   que **a esa fecha** el kardex ya tuviera existencia suficiente. La anulación revierte

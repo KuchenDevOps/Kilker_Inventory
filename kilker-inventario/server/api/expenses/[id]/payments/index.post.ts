@@ -3,7 +3,7 @@
 // ───────────────────────────────────────────────
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../../../db'
-import { expensePayments, expenses } from '../../../../db/schema'
+import { expensePayments, expenses, paymentMethod } from '../../../../db/schema'
 
 interface NewPaymentBody {
   amount?: number | string
@@ -13,7 +13,9 @@ interface NewPaymentBody {
   note?: string
 }
 
-const ALLOWED_METHODS = ['efectivo', 'tarjeta', 'transferencia'] as const
+// Del enum de la BD (ver nota en movements/:id/payments): copiarlo a mano es lo
+// que dejó fuera a 'debito' y 'credito' al partir 'tarjeta'.
+const ALLOWED_METHODS = paymentMethod.enumValues
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
