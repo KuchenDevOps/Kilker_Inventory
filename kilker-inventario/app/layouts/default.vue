@@ -248,11 +248,26 @@ async function logout() {
       :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
     >
       <div class="flex h-16 shrink-0 items-center gap-2 border-b border-default px-4">
-        <UIcon name="i-lucide-paint-roller" class="size-6 text-primary" />
-        <div class="leading-tight">
-          <p class="font-semibold">Kilker</p>
-          <p class="text-xs text-muted">Inventario</p>
-        </div>
+        <!-- Logotipo de marca. Dos archivos porque es tinta plana sobre
+             transparente: el azul desaparece sobre el fondo oscuro de Nuxt UI,
+             así que el modo oscuro usa la misma silueta en blanco. -->
+        <NuxtLink to="/dashboard" class="flex items-center gap-2">
+          <img
+            src="/kilker-logo.png"
+            alt="Kilker Industrial Coatings"
+            width="600"
+            height="273"
+            class="h-9 w-auto dark:hidden"
+          >
+          <img
+            src="/kilker-logo-dark.png"
+            alt="Kilker Industrial Coatings"
+            width="600"
+            height="273"
+            class="hidden h-9 w-auto dark:block"
+          >
+          <span class="border-l border-default pl-2 text-xs text-muted">Inventario</span>
+        </NuxtLink>
         <!-- Botón cerrar sidebar (solo visible en móvil) -->
         <UButton
           class="ml-auto md:hidden"
