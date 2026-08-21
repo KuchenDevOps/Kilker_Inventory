@@ -4,7 +4,7 @@
 
 import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../db'
-import { entryPayments, stockMovements } from '../../../../db/schema'
+import { entryPayments, paymentMethod, stockMovements } from '../../../../db/schema'
 
 interface NewPaymentBody {
   amount?: number | string
@@ -13,7 +13,10 @@ interface NewPaymentBody {
   note?: string
 }
 
-const ALLOWED_METHODS = ['efectivo', 'tarjeta', 'transferencia'] as const
+// Del enum de la BD, no una copia a mano: al partir 'tarjeta' en débito/crédito
+// las listas hardcodeadas de este archivo y de sales/expenses se quedaron viejas
+// y rechazaban en silencio los métodos nuevos.
+const ALLOWED_METHODS = paymentMethod.enumValues
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)

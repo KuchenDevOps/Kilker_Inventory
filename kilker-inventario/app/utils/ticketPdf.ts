@@ -10,6 +10,7 @@
 // rediseñarlo a una columna, no sólo cambiar `pageSize`.
 import type { PdfContent, PdfDocDefinition } from 'pdfmake/build/pdfmake'
 import type { ApiSaleDetail } from '~/types/inventario'
+import { PAYMENT_LABELS } from '~/types/inventario'
 import { groupSaleItemsByKit } from './ticket'
 
 /** El IVA es informativo y se calcula en la app; no vive en la BD. */
@@ -225,7 +226,7 @@ export function buildSaleTicketDoc(sale: ApiSaleDetail): PdfDocDefinition {
               field('Canal', sale.channel === 'en_linea' ? 'En línea' : 'Mostrador')
             ],
             [
-              field('Método de pago', sale.paymentMethod),
+              field('Método de pago', PAYMENT_LABELS[sale.paymentMethod]),
               field('Vendió', sale.createdByName ?? '—')
             ]
           ]

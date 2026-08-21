@@ -195,7 +195,7 @@ Vercel.**
 - **Ticket de corrección (`tickets`):** solicitud del empleado para anular una venta; solo
   el admin la aprueba (y ahí se ejecuta la anulación) o la rechaza.
 - **Corte de caja (`cash_closeouts`):** resumen inmutable de las ventas de una sucursal
-  desde el corte anterior, separando efectivo / tarjeta / transferencia.
+  desde el corte anterior, separando efectivo / débito / crédito / transferencia.
 - **Folio:** consecutivo interno por sucursal. Ventas `<CODE>-0001`; entradas
   `<CODE>-E-0001`. No es un folio fiscal.
 - **FIFO:** método de costeo (primeras entradas, primeras salidas) con el que se valúa el

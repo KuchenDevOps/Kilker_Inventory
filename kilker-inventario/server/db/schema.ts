@@ -84,7 +84,11 @@ export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
 
 export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'])
 
-export const paymentMethod = pgEnum('payment_method', ['efectivo', 'tarjeta', 'transferencia'])
+// ⚠️ 'tarjeta' se eliminó en la migración 0030: se partió en 'debito' y 'credito'
+// (las 19 facturas históricas pasaron a 'debito'). Postgres no sabe quitar un
+// valor de un enum, así que esa migración RECREA el tipo — no basta con borrarlo
+// de esta lista. Nadie debe hardcodear estos valores: usar `paymentMethod.enumValues`.
+export const paymentMethod = pgEnum('payment_method', ['efectivo', 'debito', 'credito', 'transferencia'])
 
 /** Descuentos: enum listo para v2. */
 export const discountType = pgEnum('discount_type', ['porcentaje', 'combo'])
@@ -250,7 +254,7 @@ export const invoices = pgTable(
       .references(() => profiles.id),
     status: invoiceStatus('status').notNull().default('emitida'),
     
-    // Método de pago (corte de caja separa efectivo/tarjeta).
+    // Método de pago (el corte de caja lleva una columna por cada valor).
     paymentMethod: paymentMethod('payment_method').notNull().default('efectivo'),
     
     channel: saleChannel('channel').notNull().default('mostrador'),
@@ -487,7 +491,13 @@ export const cashCloseouts = pgTable(
     totalEfectivo: numeric('total_efectivo', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),
-    totalTarjeta: numeric('total_tarjeta', { precision: 14, scale: 2 })
+    // total_tarjeta se partió en débito/crédito (migración 0031). Los 3 cortes
+    // históricos que tenían importe ahí se volcaron íntegros a total_debito,
+    // igual que las facturas: antes no se distinguía el tipo de tarjeta.
+    totalDebito: numeric('total_debito', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    totalCredito: numeric('total_credito', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),
     totalTransferencia: numeric('total_transferencia', { precision: 14, scale: 2 })
