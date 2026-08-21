@@ -79,7 +79,13 @@ export default defineEventHandler(async (event) => {
       kitId: it.kitId,
       kitSku: it.kitSku,
       kitName: it.kitName,
-      kitQuantity: it.kitQuantity
+      kitQuantity: it.kitQuantity,
+      // Muestra entregada en la línea (null = venta normal). `productId` y
+      // `productSku` son SIEMPRE el producto base —el que movió inventario—;
+      // esto solo marca que salió como muestra, a precio 0.
+      sampleProductId: it.sampleProductId,
+      sampleSku: it.sampleSku,
+      sampleName: it.sampleName
     }))
   }
 })

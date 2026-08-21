@@ -93,7 +93,10 @@ export default defineEventHandler(async (event) => {
           kitId: true,
           kitSku: true,
           kitName: true,
-          kitQuantity: true
+          kitQuantity: true,
+          sampleProductId: true,
+          sampleSku: true,
+          sampleName: true
         },
         with: { product: { columns: { name: true, sku: true, unit: true } } }
       }
@@ -146,7 +149,13 @@ export default defineEventHandler(async (event) => {
       kitId: it.kitId,
       kitSku: it.kitSku,
       kitName: it.kitName,
-      kitQuantity: it.kitQuantity
+      kitQuantity: it.kitQuantity,
+      // Muestra entregada en la línea (null = venta normal). `productId` y
+      // `productSku` de arriba son SIEMPRE el producto base, que es el que
+      // movió inventario; esto solo dice que salió como muestra.
+      sampleProductId: it.sampleProductId,
+      sampleSku: it.sampleSku,
+      sampleName: it.sampleName
     }))
   }))
   if (!paginate) return mapped

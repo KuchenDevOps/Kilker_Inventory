@@ -127,7 +127,11 @@ export default defineEventHandler(async (event) => {
     }
 
     const found = await db
-      .select({ id: products.id })
+      .select({
+        id: products.id,
+        sku: products.sku,
+        sampleOfProductId: products.sampleOfProductId
+      })
       .from(products)
       .where(inArray(products.id, productIds))
 
@@ -137,6 +141,9 @@ export default defineEventHandler(async (event) => {
         statusMessage: 'Uno o más productos del kit no existen'
       })
     }
+
+    // Un kit se arma con productos, no con muestras (ver POST /api/kits).
+    for (const product of found) assertNotSample(product, 'incluirla en un kit')
   }
 
   if (Object.keys(patch).length === 0 && items === null) {

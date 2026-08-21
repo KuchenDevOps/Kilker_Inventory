@@ -23,6 +23,9 @@ const allNav: NavEntry[] = [
     children: [
       { label: 'Catálogo', to: '/productos', icon: 'i-lucide-package' },
       { label: 'Kits', to: '/kits', icon: 'i-lucide-boxes' },
+      // Sin `roles`: las muestras se venden, así que el empleado también las
+      // consulta. Solo el alta y el activar/desactivar piden canManageCatalog.
+      { label: 'Muestras', to: '/productos/muestras', icon: 'i-lucide-palette' },
       {
         label: 'Nuevo producto',
         to: '/productos/nuevo',

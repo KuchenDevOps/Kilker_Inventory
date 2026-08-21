@@ -86,6 +86,43 @@ export function useAllProducts() {
 
   return { products, pending, error, refresh }
 }
+
+/**
+ * Catálogo completo **incluyendo las muestras** (`?samples=include`).
+ *
+ * Va aparte de `useAllProducts()` a propósito, no por duplicado: aquel excluye
+ * muestras y lo consumen el catálogo, el dashboard, las entradas, los kits y
+ * las transferencias — sitios donde una muestra no pinta nada porque no tiene
+ * existencias propias (comparte las del producto base). Solo dos pantallas las
+ * necesitan: el picker de venta y la administración de muestras.
+ *
+ * La existencia que trae una muestra (`totalStock`/`byStore`) ya es la de su
+ * producto base: el endpoint la resuelve.
+ */
+export function useSellableProducts() {
+  const products = useState<ApiProduct[]>('sellable-products', () => [])
+  const pending = useState('sellable-products-pending', () => false)
+  const error = useState<string | null>('sellable-products-error', () => null)
+
+  async function refresh() {
+    pending.value = true
+    error.value = null
+    try {
+      products.value = await $fetch<ApiProduct[]>('/api/products?samples=include')
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      products.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  useSharedScope('sellable-products', () => {
+    void refresh()
+  })
+
+  return { products, pending, error, refresh }
+}
 /** Kits de venta con sus productos y precios. Requiere sesión (cualquier rol). */
 export function useKits() {
   const kits = useState<ApiKit[]>('kits', () => [])

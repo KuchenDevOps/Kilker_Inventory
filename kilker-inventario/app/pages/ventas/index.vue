@@ -298,7 +298,10 @@ function saleItemsToSheet(sales: ApiSale[]) {
         Fecha: fmtDate(s.issuedAt),
         Sucursal: s.storeCode ?? '',
         Cliente: s.customerName ?? 'Sin cliente',
-        Tipo: it.kitId != null ? 'Kit' : 'Suelto',
+        // Una muestra sale del mismo producto y a precio 0: sin esta columna,
+        // en la hoja parecería un producto regalado sin explicación.
+        Tipo: it.sampleProductId != null ? 'Muestra' : it.kitId != null ? 'Kit' : 'Suelto',
+        'SKU muestra': it.sampleSku ?? '',
         Kit: it.kitName ?? '',
         'SKU kit': it.kitSku ?? '',
         'Cant. kits': it.kitQuantity != null ? Number(it.kitQuantity) : '',
@@ -800,10 +803,26 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                     <!-- Líneas: productos del kit (indentados) o producto suelto -->
                     <tr v-for="it in g.items" :key="it.id">
                       <td :class="g.kitId !== null ? 'py-1 pl-6' : 'py-2'">
-                        <p :class="g.kitId !== null ? 'text-xs' : 'font-medium'">
+                        <p
+                          :class="g.kitId !== null ? 'text-xs' : 'font-medium'"
+                          class="flex items-center gap-2"
+                        >
                           {{ it.productName ?? '—' }}
+                          <!-- La muestra salió del mismo producto y a precio 0:
+                               sin la marca, la línea parece un regalo sin motivo. -->
+                          <UBadge
+                            v-if="it.sampleProductId !== null"
+                            color="warning"
+                            variant="subtle"
+                            size="sm"
+                          >
+                            Muestra
+                          </UBadge>
                         </p>
-                        <p class="text-xs text-muted font-mono">{{ it.productSku ?? '—' }}</p>
+                        <p class="text-xs text-muted font-mono">
+                          {{ it.productSku ?? '—' }}
+                          <template v-if="it.sampleSku"> · {{ it.sampleSku }}</template>
+                        </p>
                       </td>
                       <td
                         class="text-right tabular-nums"

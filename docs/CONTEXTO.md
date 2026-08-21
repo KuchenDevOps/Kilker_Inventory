@@ -122,13 +122,26 @@ Vercel.**
       ni administrar sucursales/usuarios (eso sigue siendo del admin de empresa).
 
 ### Muestras (pestaña nueva en `/productos/nuevo`)
-- [ ] **¿Qué es exactamente una "muestra"?** La pestaña **Muestras** ya existe junto a
-      Producto y Kit, pero **está vacía a propósito**: no hay tabla, ni endpoint, ni
-      formulario. Falta definir con el cliente qué se captura y cómo se comporta —
-      si consume inventario (¿descuenta stock al entregarla?), si tiene costo, si se
-      liga a un cliente o a una venta, y si se reporta aparte. **No inventar el
-      modelo**: hasta que haya respuesta, la pestaña solo muestra el aviso de "no
-      disponible".
+- [x] **¿Qué es exactamente una "muestra"? — RESUELTO (agosto 2026).** Una muestra es una
+      **segunda versión del mismo producto**: una fila propia en `products`
+      (`sample_of_product_id` → producto base) con su SKU y su nombre, que **comparte el
+      inventario del base** y se entrega **siempre a precio $0**. Existe solo para poder
+      **diferenciar en el historial cuándo se dio una muestra**.
+      - **Consume inventario: sí, 1:1** — entregar 1 muestra descuenta 1 unidad del
+        producto base (decisión del cliente; no hay factor ni fracción).
+      - **Costo:** el de la capa FIFO del producto base que consume. La muestra no tiene
+        `cost` propio.
+      - **Se liga a una venta:** sí. Sale por el flujo normal de venta, como una línea
+        de importe 0, y por eso **genera factura con folio y entra al corte de caja
+        como venta de $0**. ⚠️ En los reportes su costo cae en *costo de lo vendido*
+        con ingreso 0 (una muestra es un costo de promoción). Las líneas quedan
+        marcadas con `invoice_items.sample_product_id`, así que separarlas en un
+        reporte propio más adelante **no requiere migración**.
+      - **Quién las crea:** `admin` y `admin_tienda` (`CATALOG_MANAGER_ROLES`), desde la
+        pestaña **Muestras** de `/productos/nuevo` — que es además la única pantalla
+        donde se ven, porque **no se listan en `/productos`**.
+      - **Una muestra por producto** (constraint `products_sample_of_uniq`); no se
+        compra, no se transfiere y no entra en kits: todo eso va contra el base.
 
 ### Negocio / dominio
 - [x] **Atributos del catálogo:** se descartaron `base`/`acabado`/`volumen`/`marca`. El

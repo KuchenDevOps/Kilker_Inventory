@@ -194,8 +194,9 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
   - **`admin_tienda` (administrador de sucursal):** es el encargado de UNA tienda,
     distinto del `admin` de la empresa. **Opera acotado a su sucursal igual que un
     empleado** (vende, captura entradas, transfiere, gastos, cortes, tickets) y
-    además **gestiona el catálogo compartido**: alta y edición de productos, kits
-    y categorías (rutas `/productos/nuevo`, `/productos/:id/editar`, `/categorias`).
+    además **gestiona el catálogo compartido**: alta y edición de productos, kits,
+    **muestras** y categorías (rutas `/productos/nuevo`, `/productos/:id/editar`,
+    `/categorias`).
     **No puede:** borrar del catálogo, anular ventas o entradas (abre ticket de
     corrección como el empleado), resolver tickets, ni administrar sucursales y
     usuarios. Lleva `store_id` obligatorio, igual que el empleado.
@@ -222,7 +223,8 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     `POST /api/users` y `PATCH /api/users/:id`) y la baja de una sucursal los
     desactiva en cascada.
   - **Catálogo compartido:** `CATALOG_MANAGER_ROLES` (`admin`, `admin_tienda`) es lo
-    que exigen los `POST`/`PATCH` de products, kits y categories. Los `DELETE` siguen
+    que exigen los `POST`/`PATCH` de products (productos **y muestras**: es el mismo
+    endpoint, con `sampleOfProductId`), kits y categories. Los `DELETE` siguen
     pidiendo `role: 'admin'` a secas. En la UI el espejo es `canManageCatalog` de
     `useMe()` (esconde botones; la autorización real es la del servidor).
 - ⚠️ **`requireProfile` cachea el perfil** en dos niveles (`server/utils/auth.ts`):
@@ -272,7 +274,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
 clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
-datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0028` en
+datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0029` en
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
 
 > Este apartado es un **resumen**, no un changelog. La verdad está en el código:
@@ -282,7 +284,7 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0028`
 
 | Módulo | Pantallas | Endpoints |
 |--------|-----------|-----------|
-| **Catálogo** | `productos/index`, `productos/nuevo` (pestañas Producto / Kit / **Muestras**, esta última vacía a propósito — ver `docs/CONTEXTO.md`), `productos/[id]/editar` | `GET/POST /api/products`, `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
+| **Catálogo** | `productos/index`, `productos/nuevo` (pestañas Producto / Kit / **Muestras**; `?tipo=muestra\|kit` la preselecciona), **`productos/muestras`** (listado de muestras: SKU, nombre, base y precio $0 — sin existencias, porque son las del base), `productos/[id]/editar` | `GET/POST /api/products` (`?samples=exclude\|include\|only`), `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
 | **Categorías** | `categorias/index` | `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id` |
 | **Entradas de stock** | `movimientos/entrada`, `movimientos/index` | `POST /api/movements/entrada`, `GET /api/movements`, `POST /api/movements/:id/void` |
 | **Ventas** | `ventas/nueva`, `ventas/index` | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void` |
@@ -373,6 +375,34 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0028`
   Admiten **fecha retroactiva**: si la fecha es pasada, además del stock actual se valida
   que **a esa fecha** el kardex ya tuviera existencia suficiente. La anulación revierte
   kardex e inventario y marca la factura `anulada`.
+- ⚠️ **Muestras: producto propio, inventario del base.** Una muestra es una fila de
+  `products` con `sample_of_product_id` → producto base: tiene SKU y nombre propios y
+  se elige al vender como cualquier otro producto, pero **no tiene inventario ni
+  kardex propios**. `POST /api/sales` la **resuelve al producto base antes de validar
+  existencias** (`stockProductId()` de `server/utils/samples.ts`), y a partir de ahí
+  todo —`inventory`, `stock_movements` e `invoice_items.product_id`— habla del base:
+  es el mismo truco con el que un kit se "explota" en sus productos. De la muestra
+  solo queda el marcador `invoice_items.sample_product_id` (+ snapshot sku/name) y el
+  precio, que **siempre es 0** (constraint `products_sample_price_zero`; el servidor
+  ignora el `unitPrice` que mande el cliente). Consecuencias no obvias:
+  - **Resolver ANTES de validar el stock no es cosmético:** es lo que hace que
+    `requiredByProduct` sume en el mismo cubo el producto vendido normal y el
+    entregado como muestra en la misma venta. Al revés, cada uno validaría contra el
+    saldo completo por separado y en conjunto podrían pasar de las existencias.
+  - **Si la muestra moviera stock con su propio id**, tendría capas FIFO propias sin
+    una sola entrada que las cubriera: cada muestra nacería como venta descubierta
+    (deuda negativa) y el inventario del producto real nunca bajaría.
+  - **No se compra, no se transfiere y no entra en kits** — `assertNotSample()` lo
+    rechaza en entradas, transferencias y kits; eso va contra el producto base.
+  - **`GET /api/products` NO devuelve muestras por omisión** (`?samples=exclude`). Es
+    el fail-safe: ese endpoint alimenta el catálogo, el dashboard, las exportaciones
+    de valor de inventario y los pickers de entradas/kits/transferencias, y una
+    pantalla nueva no debe heredar muestras sin pedirlas. Las piden `?samples=include`
+    (venta, vía `useSellableProducts()`) y `?samples=only`. En una muestra,
+    `totalStock`/`byStore` vienen ya resueltos con los del producto base.
+  - **Una muestra sale como venta de $0 con folio** y entra al corte de caja; su costo
+    cae en *costo de lo vendido* con ingreso 0. Separarlo en un reporte propio no
+    requiere migración: la marca ya está en la línea.
 - ⚠️ **El descuento es de la FACTURA, no de la línea.** `invoice_items.line_total` es
   **bruto**: no lleva descuento aplicado. Todo reporte que sume ingresos por línea tiene
   que prorratearlo (`line_total * (1 - discount_pct/100)`) o dará una cifra de ventas
@@ -413,11 +443,6 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0028`
   (el corte es transaccional, con la tienda bloqueada); esto no. Las dos salidas —cortar
   por `created_at`, o prohibir capturar ventas anteriores al último corte— están en
   [`docs/CONTEXTO.md`](docs/CONTEXTO.md) → "Preguntas abiertas".
-- **Pestaña "Muestras" (`/productos/nuevo`) es un placeholder:** el tercer botón del
-  toggle existe y renderiza un aviso de "no disponible", pero **no hay tabla, endpoint
-  ni formulario**. Falta definir con el cliente qué es una muestra (si descuenta stock,
-  si tiene costo, si se liga a cliente/venta). Ver `docs/CONTEXTO.md` → "Preguntas
-  abiertas" → Muestras.
 - **Movimientos de `ajuste`:** el enum y el soporte en los cálculos FIFO existen, pero
   **no hay endpoint ni pantalla** para capturarlos. Ojo: hoy **ninguna** fila de la BD es
   un `ajuste` real, así que el tipo está libre para cuando se implemente.

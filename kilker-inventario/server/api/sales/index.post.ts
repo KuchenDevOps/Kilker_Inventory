@@ -5,8 +5,13 @@
 //
 // KITS: un kit no tiene inventario propio. Al vender se EXPLOTA en líneas de
 // producto normales (kardex y stock son siempre por producto), cada una marcada
+//
+// MUESTRAS: mismo principio. Una muestra tampoco tiene inventario propio: se
+// RESUELVE a su producto base (1:1) antes de validar existencias, y a partir de
+// ahí todo —kardex, saldo y `invoice_items.product_id`— habla del base. De la
+// muestra solo queda el marcador en la línea y el precio, que siempre es 0.
 
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import {
   customers,
@@ -19,6 +24,7 @@ import {
   stores
 } from '../../db/schema'
 import { effectiveMovementDate } from '../../utils/movementDates'
+import { isSampleProduct, stockProductId } from '../../utils/samples'
 
 interface SaleItem {
   productId: number
@@ -44,6 +50,10 @@ interface SaleBody {
 
 /** Línea ya resuelta (suelta o explotada de un kit), antes de fijar precio. */
 interface PendingLine {
+  /**
+   * Producto que mueve inventario. Empieza siendo el pedido por el cliente y,
+   * si resultó ser una muestra, se reemplaza por su producto base.
+   */
   productId: number
   quantity: number
   /** Precio explícito; si es undefined se usa el de catálogo. */
@@ -52,6 +62,10 @@ interface PendingLine {
   kitSku: string | null
   kitName: string | null
   kitQuantity: number | null
+  /** Muestra entregada en esta línea (null = venta normal). Snapshot. */
+  sampleProductId: number | null
+  sampleSku: string | null
+  sampleName: string | null
 }
 
 export default defineEventHandler(async (event) => {
@@ -151,7 +165,10 @@ export default defineEventHandler(async (event) => {
       kitId: null,
       kitSku: null,
       kitName: null,
-      kitQuantity: null
+      kitQuantity: null,
+      sampleProductId: null,
+      sampleSku: null,
+      sampleName: null
     }))
 
     for (const k of kits) {
@@ -187,9 +204,61 @@ export default defineEventHandler(async (event) => {
           kitId: kit.id,
           kitSku: kit.sku,
           kitName: kit.name,
-          kitQuantity
+          kitQuantity,
+          sampleProductId: null,
+          sampleSku: null,
+          sampleName: null
         })
       }
+    }
+
+    // ─── 1.b Resolver MUESTRAS a su producto base ───
+    // Una muestra no tiene inventario propio: descuenta el del producto base
+    // 1:1. Aquí —antes de validar existencias— se cambia el `productId` de la
+    // línea por el del base y se guarda el marcador de qué muestra se entregó.
+    // Hacerlo ANTES importa: es lo que permite que `requiredByProduct` sume en
+    // el mismo cubo el producto vendido normal y el entregado como muestra en
+    // la misma venta. Si se resolviera después, cada uno validaría contra el
+    // saldo completo por separado y en conjunto podrían pasar de las
+    // existencias reales.
+    const requestedIds = [...new Set(pendingLines.map((l) => l.productId))]
+    const requestedProducts = await tx.query.products.findMany({
+      where: inArray(products.id, requestedIds)
+    })
+    const requestedById = new Map(requestedProducts.map((p) => [p.id, p]))
+
+    for (const line of pendingLines) {
+      const product = requestedById.get(line.productId)
+      if (!product) {
+        throw createError({
+          statusCode: 404,
+          statusMessage: `Producto ${line.productId} no existe`
+        })
+      }
+      if (!isSampleProduct(product)) continue
+
+      // Un kit se arma con productos, no con muestras (`POST /api/kits` ya lo
+      // rechaza). Si alguno se colara, forzar su precio a 0 vaciaría el importe
+      // del kit en silencio: mejor fallar.
+      if (line.kitId != null) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: `El kit ${line.kitSku} contiene la muestra ${product.sku}: quita la muestra del kit y deja el producto base`
+        })
+      }
+      if (!product.isActive) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: `La muestra ${product.sku} está inactiva`
+        })
+      }
+
+      line.sampleProductId = product.id
+      line.sampleSku = product.sku
+      line.sampleName = product.name
+      // El precio de una muestra es siempre 0; lo que mande el cliente se ignora.
+      line.unitPrice = 0
+      line.productId = stockProductId(product)
     }
 
     // Candado de fila ANTES de leer existencias. En READ COMMITTED, dos ventas
@@ -284,7 +353,10 @@ export default defineEventHandler(async (event) => {
         kitId: l.kitId,
         kitSku: l.kitSku,
         kitName: l.kitName,
-        kitQuantity: l.kitQuantity
+        kitQuantity: l.kitQuantity,
+        sampleProductId: l.sampleProductId,
+        sampleSku: l.sampleSku,
+        sampleName: l.sampleName
       }
     })
 
@@ -330,9 +402,13 @@ export default defineEventHandler(async (event) => {
         kitId: l.kitId,
         kitSku: l.kitSku,
         kitName: l.kitName,
-        kitQuantity: l.kitQuantity == null ? null : String(l.kitQuantity)
+        kitQuantity: l.kitQuantity == null ? null : String(l.kitQuantity),
+        sampleProductId: l.sampleProductId,
+        sampleSku: l.sampleSku,
+        sampleName: l.sampleName
       })
       await tx.insert(stockMovements).values({
+        // Siempre el producto base: una muestra no existe para el kardex.
         productId: l.productId,
         storeId,
         type: 'venta',
@@ -340,6 +416,9 @@ export default defineEventHandler(async (event) => {
         unitValue: String(l.unitPrice),
         totalValue: String(-l.lineTotal),
         invoiceId: invoice.id,
+        // Única huella de la muestra en el kardex (el importe es 0 y sin esto
+        // la salida parecería una venta regalada sin explicación).
+        reason: l.sampleSku ? `Muestra ${l.sampleSku}` : null,
         createdBy: profile.id
       })
       await tx

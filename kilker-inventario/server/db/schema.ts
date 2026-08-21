@@ -149,8 +149,24 @@ export const products = pgTable('products', {
   barcode: text('barcode'),
   minQuantity: numeric('min_quantity', { precision: 14, scale: 3 }),
   isActive: boolean('is_active').notNull().default(true),
+  // ─── MUESTRAS ───
+  // Producto base del que esta fila es MUESTRA (null = producto normal). Una
+  // muestra es una "segunda versión" del producto: se entrega a precio 0 y NO
+  // tiene inventario ni kardex propios — descuenta el stock del base 1:1, igual
+  // que un kit se explota en sus productos al venderse. La regla vive en
+  // server/utils/samples.ts; nadie debe volver a leer esta columna a mano.
+  sampleOfProductId: bigint('sample_of_product_id', { mode: 'number' }).references(
+    (): AnyPgColumn => products.id
+  ),
   ...timestamps()
-}).enableRLS()
+}, (t) => [
+  // Una sola muestra por producto base (los NULL no chocan entre sí en Postgres).
+  unique('products_sample_of_uniq').on(t.sampleOfProductId),
+  // El precio 0 de la muestra es invariante, no una convención de la app.
+  check('products_sample_price_zero', sql`${t.sampleOfProductId} IS NULL OR ${t.price} = 0`),
+  // Una muestra no puede ser muestra de sí misma (las cadenas se cortan en la API).
+  check('products_sample_not_self', sql`${t.sampleOfProductId} IS NULL OR ${t.sampleOfProductId} <> ${t.id}`)
+]).enableRLS()
 
 export const salesKits = pgTable('sales_kits', {
   id: bigint('id', { mode: 'number' })
@@ -286,12 +302,24 @@ export const invoiceItems = pgTable('invoice_items', {
   kitSku: text('kit_sku'),
   kitName: text('kit_name'),
   /** Cuántos kits se vendieron (se repite en todas las líneas del mismo kit). */
-  kitQuantity: numeric('kit_quantity', { precision: 14, scale: 3 })
+  kitQuantity: numeric('kit_quantity', { precision: 14, scale: 3 }),
+  // ─── Entrega como MUESTRA ───
+  // La muestra tampoco tiene inventario propio: `product_id` guarda SIEMPRE el
+  // producto BASE (el kardex, el FIFO y todos los reportes se apoyan en él) y
+  // estas columnas solo marcan que la línea se entregó como muestra. sku/name
+  // son snapshot al momento de la venta, igual que en los kits: renombrar la
+  // muestra después no debe cambiar tickets ya emitidos.
+  sampleProductId: bigint('sample_product_id', { mode: 'number' }).references(
+    () => products.id
+  ),
+  sampleSku: text('sample_sku'),
+  sampleName: text('sample_name')
 }, (table) => [
   index('idx_invoice_items_product_id').on(table.productId),
   // este también te conviene: tu exists correlaciona por invoiceId
   index('idx_invoice_items_invoice_id').on(table.invoiceId),
   index('idx_invoice_items_kit_id').on(table.kitId),
+  index('idx_invoice_items_sample_product_id').on(table.sampleProductId),
 ]).enableRLS()
 
 /** Libro APPEND-ONLY (kardex). Fuente de verdad; cantidad e importe con signo. */
@@ -620,6 +648,15 @@ export const productsRelations = relations(products, ({ one, many }) => ({
     fields: [products.categoryId],
     references: [categories.id]
   }),
+  // Producto base de esta muestra (null en un producto normal). Se usa para
+  // resolver el inventario que la muestra descuenta.
+  sampleOf: one(products, {
+    fields: [products.sampleOfProductId],
+    references: [products.id],
+    relationName: 'productSample'
+  }),
+  /** La muestra de este producto (arreglo por la API de Drizzle; a lo más una). */
+  samples: many(products, { relationName: 'productSample' }),
   inventory: many(inventory),
   stockMovements: many(stockMovements),
   invoiceItems: many(invoiceItems),
