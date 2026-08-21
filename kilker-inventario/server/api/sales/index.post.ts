@@ -18,6 +18,7 @@ import {
   inventory,
   invoiceItems,
   invoices,
+  paymentMethod as paymentMethodEnum,
   products,
   salesKits,
   stockMovements,
@@ -99,7 +100,10 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  const allowedPayments = ['efectivo', 'tarjeta', 'transferencia'] as const
+  // ⚠️ Del enum de la BD, NO una copia a mano: un método válido que faltara en
+  // esta lista se guardaría como 'efectivo' sin avisar, y el corte de caja
+  // cuadraría en total pero con el dinero en la columna equivocada.
+  const allowedPayments = paymentMethodEnum.enumValues
   const paymentMethod = allowedPayments.includes(body?.paymentMethod as never)
     ? (body?.paymentMethod as (typeof allowedPayments)[number])
     : 'efectivo'

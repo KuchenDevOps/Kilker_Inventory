@@ -1,15 +1,14 @@
 <!-- pages/ventas/index.vue -->
 <script setup lang="ts">
 import type { ApiSale, ApiSaleDetail, ApiSaleItem } from '~/types/inventario'
+import { PAYMENT_LABELS } from '~/types/inventario'
 import type { TicketGroup } from '~/utils/ticket'
 import { groupSaleItemsByKit } from '~/utils/ticket'
 import { buildSaleTicketDoc } from '~/utils/ticketPdf'
 import * as XLSX from 'xlsx'
-const { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
-
-
-// Asegúrate de que la importación sea correcta
 import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
+
+const { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
 
 useHead({ title: 'Historial de ventas · Inventario Kilker' })
 
@@ -757,7 +756,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
               </div>
               <div>
                 <p class="text-muted">Método de pago</p>
-                <p class="font-medium capitalize">{{ detail.paymentMethod }}</p>
+                <p class="font-medium">{{ PAYMENT_LABELS[detail.paymentMethod] }}</p>
               </div>
               <div>
                 <p class="text-muted">Vendió</p>

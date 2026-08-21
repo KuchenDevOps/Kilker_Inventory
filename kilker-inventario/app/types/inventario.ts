@@ -258,12 +258,17 @@ export interface EntradaInput {
 }
 
 /** Método de pago de una venta (enum `payment_method`). */
-export type PaymentMethod = 'efectivo' | 'tarjeta' | 'transferencia'
+export type PaymentMethod = 'efectivo' | 'debito' | 'credito' | 'transferencia'
 
-/** Etiquetas en español para cada método de pago. */
+/**
+ * Etiquetas en español para cada método de pago.
+ * ⚠️ El orden de estas claves es el orden de los `<USelect>` de venta, gastos y
+ * entradas: todos construyen sus opciones con `Object.keys(PAYMENT_LABELS)`.
+ */
 export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   efectivo: 'Efectivo',
-  tarjeta: 'Tarjeta',
+  debito: 'Tarjeta de débito',
+  credito: 'Tarjeta de crédito',
   transferencia: 'Transferencia'
 }
 
@@ -452,7 +457,8 @@ export interface ApiCorte {
   salesCount: number
   totalEmitido: string
   totalEfectivo: string
-  totalTarjeta: string
+  totalDebito: string
+  totalCredito: string
   totalTransferencia: string
   voidedCount: number
   totalVoided: string

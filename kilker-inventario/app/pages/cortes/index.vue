@@ -162,7 +162,7 @@ async function toggleDetail(c: ApiCorte) {
         </div>
         <p class="text-xs text-muted">
           El corte resume las ventas de la sucursal desde el corte anterior hasta ahora,
-          separando efectivo y tarjeta.
+          separando efectivo, tarjeta de débito, tarjeta de crédito y transferencia.
         </p>
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="ghost" @click="cancelMakeCorte">Cancelar</UButton>
@@ -198,7 +198,8 @@ async function toggleDetail(c: ApiCorte) {
               <th class="px-4 py-3 font-medium">Suc.</th>
               <th class="px-4 py-3 font-medium text-right">Ventas</th>
               <th class="px-4 py-3 font-medium text-right">Efectivo</th>
-              <th class="px-4 py-3 font-medium text-right">Tarjeta</th>
+              <th class="px-4 py-3 font-medium text-right">Débito</th>
+              <th class="px-4 py-3 font-medium text-right">Crédito</th>
               <th class="px-4 py-3 font-medium text-right">Transferencia</th>
               <th class="px-4 py-3 font-medium text-right">Total</th>
               <th class="px-4 py-3 font-medium">Hizo</th>
@@ -207,10 +208,10 @@ async function toggleDetail(c: ApiCorte) {
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="9" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td colspan="10" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!cortes.length">
-              <td colspan="9" class="px-4 py-8 text-center text-muted">
+              <td colspan="10" class="px-4 py-8 text-center text-muted">
                 Aún no hay cortes. Haz el primero con “Hacer corte”.
               </td>
             </tr>
@@ -223,7 +224,10 @@ async function toggleDetail(c: ApiCorte) {
                   {{ currency.format(Number(c.totalEfectivo)) }}
                 </td>
                 <td class="px-4 py-3 text-right tabular-nums">
-                  {{ currency.format(Number(c.totalTarjeta)) }}
+                  {{ currency.format(Number(c.totalDebito)) }}
+                </td>
+                <td class="px-4 py-3 text-right tabular-nums">
+                  {{ currency.format(Number(c.totalCredito)) }}
                 </td>
                 <td class="px-4 py-3 text-right tabular-nums">
                   {{ currency.format(Number(c.totalTransferencia)) }}
@@ -244,7 +248,7 @@ async function toggleDetail(c: ApiCorte) {
               </tr>
               <!-- Detalle: estado de cuenta del periodo -->
               <tr v-if="openDetailId === c.id" class="bg-elevated/40">
-                <td colspan="9" class="px-4 py-3">
+                <td colspan="10" class="px-4 py-3">
                   <p class="text-xs text-muted mb-2">
                     Periodo: {{ fmtDate(c.periodFrom) }} → {{ fmtDate(c.periodTo) }}
                     <span v-if="c.voidedCount">

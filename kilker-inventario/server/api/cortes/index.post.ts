@@ -1,7 +1,8 @@
 // ───────────────────────────────────────────────
 //  POST /api/cortes — hacer un corte de caja
 // ───────────────────────────────────────────────
-// Ventana desde el corte anterior; suma ventas emitidas (efectivo/tarjeta) y anuladas.
+// Ventana desde el corte anterior; suma ventas emitidas (una columna por método
+// de pago del enum) y anuladas.
 //
 // ⚠️ PENDIENTE (decisión de negocio abierta): la ventana se calcula sobre
 // `issued_at`, y las ventas admiten fecha retroactiva. Una venta capturada hoy
@@ -73,7 +74,8 @@ export default defineEventHandler(async (event) => {
     let salesCount = 0
     let totalEmitido = 0
     let totalEfectivo = 0
-    let totalTarjeta = 0
+    let totalDebito = 0
+    let totalCredito = 0
     let totalTransferencia = 0
     let voidedCount = 0
     let totalVoided = 0
@@ -85,18 +87,31 @@ export default defineEventHandler(async (event) => {
       } else {
         salesCount += 1
         totalEmitido += amount
+        // ⚠️ Sin `default` que avise, un método nuevo del enum sumaría en
+        // totalEmitido pero no en ninguna columna: el corte cuadraría de menos
+        // y nadie se enteraría. Por eso el caso no contemplado revienta.
         switch (r.paymentMethod) {
           case 'efectivo':
             totalEfectivo += amount
             break
 
-          case 'tarjeta':
-            totalTarjeta += amount
+          case 'debito':
+            totalDebito += amount
+            break
+
+          case 'credito':
+            totalCredito += amount
             break
 
           case 'transferencia':
             totalTransferencia += amount
             break
+
+          default:
+            throw createError({
+              statusCode: 500,
+              statusMessage: `Método de pago sin columna en el corte: ${r.paymentMethod}`
+            })
         }
       }
     }
@@ -111,7 +126,8 @@ export default defineEventHandler(async (event) => {
         salesCount,
         totalEmitido: String(totalEmitido),
         totalEfectivo: String(totalEfectivo),
-        totalTarjeta: String(totalTarjeta),
+        totalDebito: String(totalDebito),
+        totalCredito: String(totalCredito),
         totalTransferencia: String(totalTransferencia),
         voidedCount,
         totalVoided: String(totalVoided),
