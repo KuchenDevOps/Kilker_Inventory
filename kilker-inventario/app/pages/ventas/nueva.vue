@@ -10,25 +10,30 @@ interface SaleResult {
 useHead({ title: 'Nueva venta · Inventario Kilker' })
 
 const toast = useToast()
-const { me } = useMe()
-const { products } = useAllProducts()   // ← antes: const { data: products } = useProducts()
+const { me, isStoreScoped } = useMe()
+// Incluye MUESTRAS (useAllProducts las excluye). Una muestra se entrega a
+// precio 0 y descuenta el inventario de su producto base: la existencia que
+// trae ya es la del base.
+const { products, refresh: refreshProducts } = useSellableProducts()
 const { kits } = useKits()
 const { data: stores } = useStores()
 const { customers, pending, error, refresh } = useAllCustomers()
 const apiFetch = useApiFetch()
 
-const isEmployee = computed(() => me.value?.role === 'empleado')
 const isAdmin = computed(() => me.value?.role === 'admin')
-// Sucursal del empleado; debe existir y estar activa para poder vender.
+// Sucursal del usuario acotado (empleado o admin de tienda): debe existir y
+// estar activa para poder vender. El corte es por `isStoreScoped`, no por
+// `role === 'empleado'`: con el literal, un admin de tienda no entraba en
+// ninguna rama de `canOperate` y la pantalla quedaba muerta para él.
 const myStore = computed(() => stores.value.find((s) => s.id === me.value?.storeId))
-const employeeNoStore = computed(() => isEmployee.value && !myStore.value)
+const employeeNoStore = computed(() => isStoreScoped.value && !myStore.value)
 const employeeStoreInactive = computed(
-  () => isEmployee.value && !!myStore.value && !myStore.value.isActive
+  () => isStoreScoped.value && !!myStore.value && !myStore.value.isActive
 )
 const canOperate = computed(
   () =>
     isAdmin.value ||
-    (isEmployee.value && !employeeNoStore.value && !employeeStoreInactive.value)
+    (isStoreScoped.value && !employeeNoStore.value && !employeeStoreInactive.value)
 )
 
 type Line = {
@@ -60,7 +65,7 @@ const discounts = [5, 10, 15, 20, 25]
 
 // El empleado vende solo en su tienda; se fija y bloquea. El admin elige.
 watchEffect(() => {
-  if (isEmployee.value && me.value?.storeId != null) {
+  if (isStoreScoped.value && me.value?.storeId != null) {
     storeId.value = me.value.storeId
   }
 })
@@ -71,7 +76,15 @@ const storeItems = computed(() =>
     .map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 )
 const productItems = computed(() =>
-  products.value.map((p) => ({ label: `${p.sku} — ${p.name}`, value: p.id }))
+  products.value.map((p) => ({
+    // La muestra se marca en el propio picker: es la única forma de
+    // distinguirla del producto normal, que es justo para lo que existe.
+    label:
+      p.sampleOfProductId != null
+        ? `${p.sku} — ${p.name} · muestra $0`
+        : `${p.sku} — ${p.name}`,
+    value: p.id
+  }))
 )
 
 const currency = new Intl.NumberFormat('es-MX', {
@@ -89,11 +102,28 @@ function stockInStore(productId: number | undefined) {
   return productOf(productId)?.totalStock ?? 0
 }
 
+/** true si la línea entrega una muestra (precio fijo en 0). */
+function isSampleLine(productId: number | undefined) {
+  return productOf(productId)?.sampleOfProductId != null
+}
+
 function effectivePrice(line: Line): number {
+  // El precio de una muestra es siempre 0 y el servidor lo fuerza; aquí se
+  // refleja para que el total en pantalla coincida con el de la factura.
+  if (isSampleLine(line.productId)) return 0
   if (line.unitPrice != null) return line.unitPrice
   const p = productOf(line.productId)
   return p ? Number(p.price) : 0
 }
+
+// Al cambiar una línea a muestra se limpia el precio capturado: dejarlo escrito
+// (aunque no cuente) haría creer al vendedor que la muestra se está cobrando.
+watch(
+  () => lines.map((l) => l.productId),
+  () => {
+    for (const l of lines) if (isSampleLine(l.productId)) l.unitPrice = 0
+  }
+)
 
 function lineTotal(line: Line): number {
   return effectivePrice(line) * (line.quantity ?? 0)
@@ -210,6 +240,9 @@ async function onSubmit() {
       },
     })
     await refreshNuxtData('products')
+    // `useSellableProducts` vive en useState, no en useAsyncData: refreshNuxtData
+    // no lo toca y sin esto la existencia mostrada en el picker se queda vieja.
+    await refreshProducts()
     toast.add({
       title: 'Venta registrada',
       description: `Folio ${result.invoice.folio} · ${currency.format(
@@ -329,12 +362,12 @@ async function quickCreateCustomer() {
             label="Sucursal"
             name="storeId"
             required
-            :help="isEmployee ? 'Vendes en tu sucursal asignada.' : undefined"
+            :help="isStoreScoped ? 'Vendes en tu sucursal asignada.' : undefined"
           >
             <USelect
               v-model="storeId"
               :items="storeItems"
-              :disabled="!canOperate || isEmployee"
+              :disabled="!canOperate || isStoreScoped"
               placeholder="Selecciona una sucursal"
               class="w-full"
             />
@@ -465,8 +498,12 @@ async function quickCreateCustomer() {
                 :min="0"
                 :step="0.01"
                 :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-                :disabled="!canOperate"
-                :placeholder="productOf(line.productId)?.price ?? 'precio lista'"
+                :disabled="!canOperate || isSampleLine(line.productId)"
+                :placeholder="
+                  isSampleLine(line.productId)
+                    ? '0 (muestra)'
+                    : productOf(line.productId)?.price ?? 'precio lista'
+                "
                 class="w-full"
               />
             </UFormField>
@@ -490,6 +527,13 @@ async function quickCreateCustomer() {
             >
               {{ UNIT_LABELS[productOf(line.productId)!.unit] }} · existencia total:
               {{ stockInStore(line.productId) }}
+              <template v-if="isSampleLine(line.productId)">
+                ·
+                <span class="text-warning font-medium">
+                  Muestra de {{ productOf(line.productId)!.baseSku }} — descuenta su
+                  inventario y no se cobra
+                </span>
+              </template>
             </p>
           </div>
         </div>

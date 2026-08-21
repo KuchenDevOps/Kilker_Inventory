@@ -111,7 +111,37 @@ Vercel.**
 - [x] **Proveedor de login:** email + contraseña de Supabase Auth. **No hay invitación por
       correo**: el admin crea la cuenta y **define la contraseña** (`POST /api/users`, con
       `email_confirm`). Dar de baja = `is_active = false` (no se borra el usuario de Auth).
-- [x] **Roles y permisos:** `admin` y `empleado` (detalle en §2 y en `CLAUDE.md` §7).
+- [x] **Roles y permisos:** `admin`, `empleado`, `observador` y `admin_tienda`
+      (detalle en §2 y en `CLAUDE.md` §7).
+- [ ] **Alcance real del `admin_tienda` (administrador de sucursal).** Confirmado con
+      el cliente que es el encargado de UNA tienda —opera acotado a su sucursal como
+      el empleado— y que además da de alta y edita el catálogo compartido (productos,
+      kits y categorías). **Sin confirmar:** si debería poder **anular** ventas y
+      entradas de su propia sucursal, en vez de tener que abrir un ticket de
+      corrección al admin de empresa como hace hoy. Tampoco puede borrar del catálogo
+      ni administrar sucursales/usuarios (eso sigue siendo del admin de empresa).
+
+### Muestras (pestaña nueva en `/productos/nuevo`)
+- [x] **¿Qué es exactamente una "muestra"? — RESUELTO (agosto 2026).** Una muestra es una
+      **segunda versión del mismo producto**: una fila propia en `products`
+      (`sample_of_product_id` → producto base) con su SKU y su nombre, que **comparte el
+      inventario del base** y se entrega **siempre a precio $0**. Existe solo para poder
+      **diferenciar en el historial cuándo se dio una muestra**.
+      - **Consume inventario: sí, 1:1** — entregar 1 muestra descuenta 1 unidad del
+        producto base (decisión del cliente; no hay factor ni fracción).
+      - **Costo:** el de la capa FIFO del producto base que consume. La muestra no tiene
+        `cost` propio.
+      - **Se liga a una venta:** sí. Sale por el flujo normal de venta, como una línea
+        de importe 0, y por eso **genera factura con folio y entra al corte de caja
+        como venta de $0**. ⚠️ En los reportes su costo cae en *costo de lo vendido*
+        con ingreso 0 (una muestra es un costo de promoción). Las líneas quedan
+        marcadas con `invoice_items.sample_product_id`, así que separarlas en un
+        reporte propio más adelante **no requiere migración**.
+      - **Quién las crea:** `admin` y `admin_tienda` (`CATALOG_MANAGER_ROLES`), desde la
+        pestaña **Muestras** de `/productos/nuevo` — que es además la única pantalla
+        donde se ven, porque **no se listan en `/productos`**.
+      - **Una muestra por producto** (constraint `products_sample_of_uniq`); no se
+        compra, no se transfiere y no entra en kits: todo eso va contra el base.
 
 ### Negocio / dominio
 - [x] **Atributos del catálogo:** se descartaron `base`/`acabado`/`volumen`/`marca`. El

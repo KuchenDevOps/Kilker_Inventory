@@ -51,12 +51,16 @@ export default defineEventHandler(async (event) => {
 
   const db = useDb()
 
-  // Admin y observador = globales (sin tienda); empleado = requiere sucursal.
+  // Admin y observador = globales (sin tienda); empleado y admin_tienda
+  // operan acotados a una sucursal, así que la exigen.
   let storeId: number | null = null
-  if (role === 'empleado') {
+  if (isStoreScopedRole(role)) {
     storeId = Number(body?.storeId)
     if (!storeId) {
-      throw createError({ statusCode: 400, statusMessage: 'El empleado requiere una sucursal' })
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Este rol requiere una sucursal'
+      })
     }
     const store = await db.query.stores.findFirst({ where: eq(stores.id, storeId) })
     if (!store) {

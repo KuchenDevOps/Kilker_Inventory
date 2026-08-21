@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Entrada no existe' })
   }
 
-  if (profile.role === 'empleado' && movement.storeId !== profile.storeId) {
+  if (isStoreScopedRole(profile.role) && movement.storeId !== profile.storeId) {
     throw createError({
       statusCode: 403,
       statusMessage: 'No puedes pagar entradas de otra sucursal'

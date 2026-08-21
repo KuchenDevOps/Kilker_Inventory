@@ -7,7 +7,7 @@
 import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../db'
 import { invoices, stockMovements } from '../db/schema'
-import type { SessionProfile } from './auth'
+import { isStoreScopedRole, type SessionProfile } from './auth'
 import { buildFifoEvents, runFifo } from './fifoEngine'
 import { effectiveMovementDate } from './movementDates'
 
@@ -84,7 +84,7 @@ export async function computeMonthlyInventory(
 
   // Sucursales a incluir: una específica, o todas las relevantes para el rol.
   let storeIds: number[] | undefined // undefined = sin restricción (se resuelve más abajo)
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) return { month, ...windowMeta, ...EMPTY_RESULT }
     storeIds = [profile.storeId]
   } else if (params.storeId) {

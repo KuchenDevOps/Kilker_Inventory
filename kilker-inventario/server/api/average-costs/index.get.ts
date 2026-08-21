@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   const storeFilters: SQL[] = []
 
   // Empleado solo ve su tienda
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) {
       return []
     }

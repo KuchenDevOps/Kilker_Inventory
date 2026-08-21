@@ -8,8 +8,8 @@ useHead({ title: 'Dashboard · Inventario Kilker' })
 const { products, pending: loadingProducts, error: productsError } = useAllProducts()
 const { data: stores } = useStores()
 
-const { me, canWrite } = useMe()
-const isEmployee = computed(() => me.value?.role === 'empleado')
+
+const { me, canWrite, isStoreScoped } = useMe()
 
 // Todas las métricas agregadas en UNA petición (ver useDashboardSummary).
 const {
@@ -81,7 +81,7 @@ const periodTo = ref<string | undefined>(undefined)
 
 // Selector de sucursal: 0 = todas.
 const storeFilterItems = computed(() => {
-  if (isEmployee.value && me.value?.storeId != null) {
+  if (isStoreScoped.value && me.value?.storeId != null) {
     // El empleado solo ve su propia sucursal en el selector.
     const own = stores.value.find((s) => s.id === me.value?.storeId)
     return own ? [{ label: `${own.code} · ${own.name}`, value: own.id }] : []
@@ -96,7 +96,7 @@ const selectedStoreId = ref(0)
 watch(
   () => me.value?.storeId,
   (storeId) => {
-    if (isEmployee.value && storeId != null) {
+    if (isStoreScoped.value && storeId != null) {
       selectedStoreId.value = storeId
     }
   },
@@ -530,10 +530,10 @@ const filteredTopProducts = computed(() => {
 <USelect
   v-model="selectedStoreId"
   :items="storeFilterItems"
-  :disabled="isEmployee"
+  :disabled="isStoreScoped"
   class="w-64"
 />
-<h2 v-if="!selectedStoreId && !isEmployee" class="flex items-center gap-2 font-semibold">
+<h2 v-if="!selectedStoreId && !isStoreScoped" class="flex items-center gap-2 font-semibold">
   <UIcon name="i-lucide-store" class="size-5 text-warning" />
   Sucursales
   <UBadge :label="number.format(activeStores)" color="warning" variant="subtle" class="ml-1" />

@@ -1,10 +1,11 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/products/:id — editar producto (admin)
+//  PATCH /api/products/:id — editar producto (admin / admin_tienda)
 // ───────────────────────────────────────────────
 // Actualiza datos comerciales (precio/costo estándar, etc.). El SKU no se edita.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { categories, products, productUnit } from '../../db/schema'
+import { isSampleProduct } from '../../utils/samples'
 
 const UNITS = productUnit.enumValues
 
@@ -39,7 +40,7 @@ function optionalAmount(v: unknown, field: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  await requireProfile(event, { role: CATALOG_MANAGER_ROLES })
 
   const id = Number(getRouterParam(event, 'id'))
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id inválido' })
@@ -49,6 +50,24 @@ export default defineEventHandler(async (event) => {
 
   const current = await db.query.products.findFirst({ where: eq(products.id, id) })
   if (!current) throw createError({ statusCode: 404, statusMessage: 'Producto no existe' })
+
+  // Una muestra hereda del producto base todo lo que la define (unidad,
+  // categoría, color) y su precio 0 es invariante: solo se le puede cambiar el
+  // nombre y el estado. Si se permitiera lo demás, la muestra podría divergir
+  // del producto cuyo inventario descuenta. `sampleOfProductId` tampoco se
+  // edita nunca: no está en el cuerpo aceptado, así que el patch lo ignora.
+  if (isSampleProduct(current)) {
+    const inherited = [
+      'categoryId', 'color', 'unit', 'price', 'cost', 'barcode', 'minQuantity', 'maxQuantity'
+    ] as const
+    const touched = inherited.filter((f) => body?.[f] !== undefined)
+    if (touched.length > 0) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: `${current.sku} es una muestra: solo puede cambiar su nombre y su estado (se intentó cambiar ${touched.join(', ')}). Lo demás se hereda del producto base.`
+      })
+    }
+  }
 
   const patch: Record<string, unknown> = {}
 

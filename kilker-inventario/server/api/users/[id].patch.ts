@@ -66,16 +66,20 @@ export default defineEventHandler(async (event) => {
     patch.role = body.role
   }
 
-  // Sucursal coherente con el rol resultante: solo 'empleado' opera en una
-  // sucursal; admin y observador son globales (storeId null).
+  // Sucursal coherente con el rol resultante: los roles acotados ('empleado' y
+  // 'admin_tienda') operan en una sucursal; admin y observador son globales
+  // (storeId null).
   const nextRole = body?.role ?? current.role
-  if (nextRole !== 'empleado') {
+  if (!isStoreScopedRole(nextRole)) {
     patch.storeId = null
   } else {
     const targetStoreId =
       body?.storeId !== undefined ? Number(body.storeId) : current.storeId
     if (!targetStoreId) {
-      throw createError({ statusCode: 400, statusMessage: 'El empleado requiere una sucursal' })
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Este rol requiere una sucursal'
+      })
     }
     if (body?.storeId !== undefined) {
       const store = await db.query.stores.findFirst({ where: eq(stores.id, targetStoreId) })

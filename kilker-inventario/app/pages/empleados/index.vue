@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ApiUser, UserRole } from '~/types/inventario'
+import { ROLE_LABELS, STORE_SCOPED_ROLES } from '~/types/inventario'
 
 // El observador entra en modo consulta: ve la lista, no las acciones.
 definePageMeta({ requiresRole: ['admin', 'observador'] })
@@ -18,13 +19,16 @@ const canEdit = computed(() => me.value?.role === 'admin')
 // vacías (cargando / sin resultados) tiene que seguirla.
 const colCount = computed(() => (canEdit.value ? 6 : 5))
 
-// 'observador' no lleva sucursal: el formulario ya pide storeId solo cuando el
-// rol es 'empleado', así que se crea global (storeId null) como el admin.
+// 'admin' y 'observador' no llevan sucursal (son globales); 'empleado' y
+// 'admin_tienda' sí — el formulario pide storeId exactamente para esos dos
+// (STORE_SCOPED_ROLES), que es la misma regla que valida el backend.
 const roleItems = [
   { label: 'Empleado', value: 'empleado' as UserRole },
+  { label: 'Administrador de tienda', value: 'admin_tienda' as UserRole },
   { label: 'Administrador', value: 'admin' as UserRole },
   { label: 'Observador (solo consulta)', value: 'observador' as UserRole }
 ]
+
 const storeItems = computed(() =>
   stores.value
     .filter((s) => s.isActive)
@@ -64,6 +68,8 @@ const formEmail = ref('')
 const formPassword = ref('')
 const formName = ref('')
 const formRole = ref<UserRole>('empleado')
+/** true si el rol elegido opera acotado a una sucursal (y por tanto la exige). */
+const roleNeedsStore = computed(() => STORE_SCOPED_ROLES.includes(formRole.value))
 const formStoreId = ref<number>(0)
 const formIsActive = ref(true)
 const saving = ref(false)
@@ -102,8 +108,8 @@ async function save() {
     toast.add({ title: 'El nombre es obligatorio', color: 'error', icon: 'i-lucide-triangle-alert' })
     return
   }
-  if (formRole.value === 'empleado' && !formStoreId.value) {
-    toast.add({ title: 'El empleado requiere una sucursal', color: 'error', icon: 'i-lucide-triangle-alert' })
+  if (roleNeedsStore.value && !formStoreId.value) {
+    toast.add({ title: 'Este rol requiere una sucursal', color: 'error', icon: 'i-lucide-triangle-alert' })
     return
   }
   if (isNew.value) {
@@ -120,7 +126,7 @@ async function save() {
     return
   }
 
-  const storeId = formRole.value === 'empleado' ? formStoreId.value : null
+  const storeId = roleNeedsStore.value ? formStoreId.value : null
 
   saving.value = true
   try {
@@ -188,11 +194,6 @@ async function toggleActive(u: ApiUser) {
   }
 }
 
-const ROLE_LABELS: Record<UserRole, string> = {
-  admin: 'Administrador',
-  empleado: 'Empleado',
-  observador: 'Observador'
-}
 const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
 </script>
 
@@ -277,7 +278,7 @@ const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
             <USelect v-model="formRole" :items="roleItems" class="w-full" />
           </UFormField>
           <UFormField
-            v-if="formRole === 'empleado'"
+            v-if="roleNeedsStore"
             label="Sucursal"
             name="storeId"
             required
@@ -334,7 +335,15 @@ const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
               <td class="px-4 py-3">
                 <UBadge
                   :label="roleLabel(u.role)"
-                  :color="u.role === 'admin' ? 'primary' : u.role === 'observador' ? 'info' : 'neutral'"
+                  :color="
+                    u.role === 'admin'
+                      ? 'primary'
+                      : u.role === 'admin_tienda'
+                        ? 'success'
+                        : u.role === 'observador'
+                          ? 'info'
+                          : 'neutral'
+                  "
                   variant="subtle"
                 />
               </td>

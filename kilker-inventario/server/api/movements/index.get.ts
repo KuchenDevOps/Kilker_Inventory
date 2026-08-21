@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
 
   const filters = [eq(stockMovements.type, 'entrada')]
 
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) {
       return query.page ? { data: [], total: 0, page: 1, pageSize: 100 } : []
     }

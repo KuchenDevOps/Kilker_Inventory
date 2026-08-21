@@ -18,10 +18,27 @@ export default defineEventHandler(async (event) => {
   const current = await db.query.products.findFirst({ where: eq(products.id, id) })
   if (!current) throw createError({ statusCode: 404, statusMessage: 'Producto no existe' })
 
+  // Un producto con muestra no se puede borrar: la muestra quedaría apuntando
+  // a un producto inexistente (y la FK lo rechazaría con un error opaco).
+  const sample = await db.query.products.findFirst({
+    where: eq(products.sampleOfProductId, id)
+  })
+  if (sample) {
+    throw createError({
+      statusCode: 409,
+      statusMessage: `No se puede borrar: el producto tiene una muestra (${sample.sku}). Bórrala primero o desactiva el producto.`
+    })
+  }
+
   const movements = await db.$count(stockMovements, eq(stockMovements.productId, id))
   const saleLines = await db.$count(invoiceItems, eq(invoiceItems.productId, id))
   const transferLines = await db.$count(transferItems, eq(transferItems.productId, id))
-  if (movements > 0 || saleLines > 0 || transferLines > 0) {
+  // Las líneas entregadas como muestra guardan el producto BASE en product_id,
+  // así que el conteo de arriba no las ve: la muestra solo aparece en
+  // sample_product_id. Sin este conteo, borrar una muestra ya entregada
+  // rompería el histórico de sus ventas.
+  const sampleLines = await db.$count(invoiceItems, eq(invoiceItems.sampleProductId, id))
+  if (movements > 0 || saleLines > 0 || transferLines > 0 || sampleLines > 0) {
     throw createError({
       statusCode: 409,
       statusMessage:

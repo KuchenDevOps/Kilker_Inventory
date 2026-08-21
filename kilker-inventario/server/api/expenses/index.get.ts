@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
   const emptyResult = () => (paginate ? { data: [], total: 0, page, pageSize } : [])
 
   const filters = []
-  if (profile.role === 'empleado') {
+  if (isStoreScopedRole(profile.role)) {
     if (profile.storeId == null) return emptyResult()
     filters.push(eq(expenses.storeId, profile.storeId))
   } else if (query.storeId) {
