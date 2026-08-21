@@ -187,19 +187,23 @@ const downloadingTicket = ref(false)
  * embebidas pesa ~2 MB: cargarlo de entrada penalizaría a todas las páginas
  * para algo que sólo se usa al pedir un ticket. El import dinámico además lo
  * mantiene fuera del bundle de servidor (pdfmake sólo corre en el navegador).
+ * El logotipo va en el mismo lote por lo mismo: es base64 y sólo hace falta aquí.
  */
 async function downloadTicket() {
   if (!detail.value) return
   downloadingTicket.value = true
   try {
-    const [{ default: pdfMake }, { default: vfs }] = await Promise.all([
+    const [{ default: pdfMake }, { default: vfs }, { KILKER_LOGO_PNG }] = await Promise.all([
       import('pdfmake/build/pdfmake'),
-      import('pdfmake/build/vfs_fonts')
+      import('pdfmake/build/vfs_fonts'),
+      import('~/utils/brandLogo')
     ])
     // Las fuentes van en base64 dentro del propio bundle: nada de archivos ni
     // de rutas, que es lo que rompería esto en Vercel si fuera del lado servidor.
     pdfMake.addVirtualFileSystem(vfs)
-    pdfMake.createPdf(buildSaleTicketDoc(detail.value)).download(`ticket-${detail.value.folio}.pdf`)
+    pdfMake
+      .createPdf(buildSaleTicketDoc(detail.value, KILKER_LOGO_PNG))
+      .download(`ticket-${detail.value.folio}.pdf`)
   } catch (e) {
     toast.add({
       title: 'No se pudo generar el PDF',
