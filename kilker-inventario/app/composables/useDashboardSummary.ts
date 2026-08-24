@@ -18,6 +18,8 @@ export interface DashboardSummary {
   to: string | null
   /** Compras del periodo (entradas, excluyendo facturas 'II' y anuladas). */
   entriesValue: number
+  /** Inventario inicial del periodo (entradas 'II', excluyendo anuladas). */
+  startInventoryValue: number
   /** Abonado y saldo de esas mismas compras: suman `entriesValue`. */
   entriesPaid: number
   entriesBalance: number

@@ -59,6 +59,7 @@ export default defineEventHandler(async (event) => {
       from: from ?? null,
       to: to ?? null,
       entriesValue: 0,
+      startInventoryValue: 0,
       entriesPaid: 0,
       entriesBalance: 0,
       salesValue: 0,
@@ -73,6 +74,16 @@ export default defineEventHandler(async (event) => {
     eq(stockMovements.type, 'entrada'),
     // El dashboard excluía las entradas con factura 'II'. NULL sí cuenta.
     sql`coalesce(upper(trim(${stockMovements.supplierInvoiceNumber})), '') <> 'II'`,
+   
+    sql`not exists (
+      select 1 from "stock_movements" rev
+      where rev."type" = 'anulacion'
+        and rev."reverses_movement_id" = ${stockMovements.id}
+    )`
+  ]
+  const startInventory = [
+     eq(stockMovements.type, 'entrada'),
+    sql`coalesce(upper(trim(${stockMovements.supplierInvoiceNumber})), '') = 'II'`,
    
     sql`not exists (
       select 1 from "stock_movements" rev
@@ -123,11 +134,17 @@ export default defineEventHandler(async (event) => {
     .groupBy(entryPayments.movementId)
     .as('entry_payments_agg')
 
-  const [entryRows, entryPaymentRows, saleRows, expenseRows, soldTotals, monthly] = await Promise.all([
+  const [entryRows, startInventoryRows, entryPaymentRows, saleRows, expenseRows, soldTotals, monthly] = await Promise.all([
     db
       .select({ value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)` })
       .from(stockMovements)
       .where(and(...entryFilters)),
+
+    // Inventario inicial
+    db
+      .select({ value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)` })
+      .from(stockMovements)
+      .where(and(...startInventory)),
 
     // Pagado y saldo de esas mismas entradas. `least`/`greatest` topan por
     // entrada para que pagado + pendiente nunca exceda su costo.
@@ -184,6 +201,7 @@ export default defineEventHandler(async (event) => {
     from: from ?? null,
     to: to ?? null,
     entriesValue: round2(Number(entryRows[0]?.value ?? 0)),
+    startInventoryValue: round2(Number(startInventoryRows[0]?.value ?? 0)),
     entriesPaid: round2(Number(entryPaymentRows[0]?.totalPaid ?? 0)),
     entriesBalance: round2(Number(entryPaymentRows[0]?.balance ?? 0)),
     salesValue: round2(Number(saleRows[0]?.value ?? 0)),

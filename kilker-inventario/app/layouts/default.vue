@@ -17,6 +17,7 @@ const isSection = (e: NavEntry): e is NavSection => 'section' in e
 // Estructura en secciones: Dashboard suelto; el resto agrupado (plegable).
 const allNav: NavEntry[] = [
   { label: 'Dashboard', to: '/dashboard', icon: 'i-lucide-layout-dashboard' },
+  { label: 'Dashboard Resultados', to: '/dashboard1', icon: 'i-lucide-layout-dashboard' },
   {
     section: 'Productos',
     icon: 'i-lucide-package',
