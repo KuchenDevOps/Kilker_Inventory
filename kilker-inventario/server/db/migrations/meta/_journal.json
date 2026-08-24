@@ -225,6 +225,13 @@
       "when": 1787338119375,
       "tag": "0031_powerful_hydra",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787513739513,
+      "tag": "0032_numerous_blue_blade",
+      "breakpoints": true
     }
   ]
 }

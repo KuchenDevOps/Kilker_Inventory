@@ -109,6 +109,7 @@ export default defineEventHandler(async (event) => {
       store: { columns: { code: true, name: true } },
       customer: { columns: { name: true } },
       createdBy: { columns: { fullName: true } },
+      payments: { columns: { amount: true } },
       items: {
         columns: {
           id: true,
@@ -140,50 +141,73 @@ export default defineEventHandler(async (event) => {
     for (const t of open) if (t.invoiceId != null) pending.add(t.invoiceId)
   }
 
-  const mapped = rows.map((inv) => ({
-    id: inv.id,
-    folio: inv.folio,
-    storeId: inv.storeId,
-    storeCode: inv.store?.code ?? null,
-    storeName: inv.store?.name ?? null,
-    customerId: inv.customerId,
-    customerName: inv.customer?.name ?? null,
-    channel: inv.channel,
-    status: inv.status,
-    paymentMethod: inv.paymentMethod,
-    discountPct: inv.discountPct,
-    discountAmount: inv.discountAmount,
-    // No hay columna de subtotal: se deriva (el descuento es un % del subtotal).
-    subtotalAmount: String(Number(inv.totalAmount) + Number(inv.discountAmount)),
-    totalAmount: inv.totalAmount,
-    note: inv.note,
-    itemCount: inv.items.length,
-    createdByName: inv.createdBy?.fullName ?? null,
-    issuedAt: inv.issuedAt,
-    voidedAt: inv.voidedAt,
-    voidReason: inv.voidReason,
-    pendingCorrection: pending.has(inv.id),
-    items: inv.items.map((it) => ({
-      id: it.id,
-      productId: it.productId,
-      productName: it.product?.name ?? null,
-      productSku: it.product?.sku ?? null,
-      unit: it.product?.unit ?? null,
-      quantity: it.quantity,
-      unitPrice: it.unitPrice,
-      lineTotal: it.lineTotal,
-      kitId: it.kitId,
-      kitSku: it.kitSku,
-      kitName: it.kitName,
-      kitQuantity: it.kitQuantity,
-      // Muestra entregada en la línea (null = venta normal). `productId` y
-      // `productSku` de arriba son SIEMPRE el producto base, que es el que
-      // movió inventario; esto solo dice que salió como muestra.
-      sampleProductId: it.sampleProductId,
-      sampleSku: it.sampleSku,
-      sampleName: it.sampleName
-    }))
-  }))
+  const mapped = rows.map((inv) => {
+    // ─── Estado de cobro (derivado, no vive en la BD) ───
+    // El pagable es el total de la factura: ya trae el descuento aplicado y va
+    // sin IVA (el 16% de la app es informativo). Mismo criterio que entradas.
+    const totalToPay = Math.round(Number(inv.totalAmount) * 100) / 100
+    const totalPaid =
+      Math.round(inv.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
+    const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
+
+    let paymentStatus: 'pendiente' | 'parcial' | 'pagado' | 'anulada' = 'pendiente'
+    if (inv.status === 'anulada') paymentStatus = 'anulada'
+    // Una venta de $0 nace pagada: no hay nada que cobrar. Es el caso de las
+    // entregas de muestras (su precio es 0 por constraint) y el de un 100% de
+    // descuento. Sin esta rama se quedarían "pendientes" para siempre.
+    else if (totalToPay <= 0) paymentStatus = 'pagado'
+    else if (totalPaid >= totalToPay) paymentStatus = 'pagado'
+    else if (totalPaid > 0) paymentStatus = 'parcial'
+
+    return {
+      id: inv.id,
+      folio: inv.folio,
+      storeId: inv.storeId,
+      storeCode: inv.store?.code ?? null,
+      storeName: inv.store?.name ?? null,
+      customerId: inv.customerId,
+      customerName: inv.customer?.name ?? null,
+      channel: inv.channel,
+      status: inv.status,
+      paymentMethod: inv.paymentMethod,
+      discountPct: inv.discountPct,
+      discountAmount: inv.discountAmount,
+      // No hay columna de subtotal: se deriva (el descuento es un % del subtotal).
+      subtotalAmount: String(Number(inv.totalAmount) + Number(inv.discountAmount)),
+      totalAmount: inv.totalAmount,
+      note: inv.note,
+      itemCount: inv.items.length,
+      createdByName: inv.createdBy?.fullName ?? null,
+      issuedAt: inv.issuedAt,
+      voidedAt: inv.voidedAt,
+      voidReason: inv.voidReason,
+      pendingCorrection: pending.has(inv.id),
+      totalToPay,
+      totalPaid,
+      balance,
+      paymentStatus,
+      items: inv.items.map((it) => ({
+        id: it.id,
+        productId: it.productId,
+        productName: it.product?.name ?? null,
+        productSku: it.product?.sku ?? null,
+        unit: it.product?.unit ?? null,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        lineTotal: it.lineTotal,
+        kitId: it.kitId,
+        kitSku: it.kitSku,
+        kitName: it.kitName,
+        kitQuantity: it.kitQuantity,
+        // Muestra entregada en la línea (null = venta normal). `productId` y
+        // `productSku` de arriba son SIEMPRE el producto base, que es el que
+        // movió inventario; esto solo dice que salió como muestra.
+        sampleProductId: it.sampleProductId,
+        sampleSku: it.sampleSku,
+        sampleName: it.sampleName
+      }))
+    }
+  })
   if (!paginate) return mapped
 
   const total =

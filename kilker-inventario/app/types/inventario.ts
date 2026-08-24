@@ -260,11 +260,7 @@ export interface EntradaInput {
 /** Método de pago de una venta (enum `payment_method`). */
 export type PaymentMethod = 'efectivo' | 'debito' | 'credito' | 'transferencia'
 
-/**
- * Etiquetas en español para cada método de pago.
- * ⚠️ El orden de estas claves es el orden de los `<USelect>` de venta, gastos y
- * entradas: todos construyen sus opciones con `Object.keys(PAYMENT_LABELS)`.
- */
+
 export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   efectivo: 'Efectivo',
   debito: 'Tarjeta de débito',
@@ -353,8 +349,47 @@ export interface ApiSale {
   voidReason: string | null
   /** true si hay un ticket de corrección ABIERTO para esta venta. */
   pendingCorrection?: boolean
+  /** Importe cobrable (= totalAmount, ya con descuento y sin IVA). */
+  totalToPay: number
+  totalPaid: number
+  balance: number
+  /**
+   * Derivado en el servidor, no vive en la BD. `anulada` gana sobre el resto, y
+   * una venta de $0 (muestras, o 100% de descuento) sale directo como `pagado`.
+   */
+  paymentStatus: SalePaymentStatus
     items: ApiSaleItem[]
 
+}
+
+/** Mismo juego de estados que las entradas (`EntryPaymentStatus`). */
+export type SalePaymentStatus = 'pendiente' | 'parcial' | 'pagado' | 'anulada'
+
+export const SALE_PAYMENT_STATUS_LABELS: Record<SalePaymentStatus, string> = {
+  pendiente: 'Pendiente',
+  parcial: 'Parcial',
+  pagado: 'Pagado',
+  anulada: 'Anulada'
+}
+
+/** Abono de una venta (`GET /api/sales/:id/payments`). */
+export interface ApiSalePayment {
+  id: number
+  invoiceId: number
+  amount: string
+  paidAt: string
+  method: PaymentMethod
+  note: string | null
+  createdByName: string | null
+  createdAt: string
+}
+
+/** Cuerpo para registrar un abono (`POST /api/sales/:id/payments`). */
+export interface NewSalePaymentInput {
+  amount: number
+  paidAt: string
+  method?: PaymentMethod
+  note?: string
 }
 
 export interface ApiSaleItem {
@@ -382,8 +417,8 @@ export interface ApiSaleItem {
   sampleName: string | null
 }
 
-/** Detalle completo de una venta (`GET /api/sales/:id`). */
-export interface ApiSaleDetail extends ApiSale {
+export interface ApiSaleDetail
+  extends Omit<ApiSale, 'totalToPay' | 'totalPaid' | 'balance' | 'paymentStatus'> {
   items: ApiSaleItem[]
 }
 

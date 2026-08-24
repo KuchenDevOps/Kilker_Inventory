@@ -10,12 +10,19 @@
 // `reverses_movement_id`, y mover `inventory` en la misma transacción.
 import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db'
-import { entryPayments, inventory, invoices, stockMovements } from '../db/schema'
+import { entryPayments, inventory, invoices, salePayments, stockMovements } from '../db/schema'
 
 /** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
-/** Anula una factura en transacción: revierte movimientos, repone stock, marca anulada. */
+/**
+ * Anula una factura en transacción: revierte movimientos, repone stock, marca anulada.
+ *
+ * ⚠️ Los abonos cobrados contra la venta (`sale_payments`) se borran, igual que
+ * en `voidMovementTx`: el cobro era de una venta que deja de existir (la
+ * mercancía volvió al inventario), así que ese dinero ya no corresponde a esta
+ * factura. Se devuelve cuántos se borraron para poder avisarlo en la UI.
+ */
 export async function voidInvoiceTx(
   tx: Tx,
   opts: { invoiceId: number; profileId: string; reason: string | null }
@@ -88,7 +95,12 @@ export async function voidInvoiceTx(
     .where(eq(invoices.id, opts.invoiceId))
     .returning()
 
-  return updated
+  const deletedPayments = await tx
+    .delete(salePayments)
+    .where(eq(salePayments.invoiceId, opts.invoiceId))
+    .returning({ id: salePayments.id })
+
+  return { ...updated!, deletedPayments: deletedPayments.length }
 }
 
 /**
