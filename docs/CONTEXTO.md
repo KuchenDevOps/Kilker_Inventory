@@ -180,6 +180,15 @@ Vercel.**
       por anulación en vez de por fecha retroactiva.
       Mientras se decide, el corte ya es **transaccional** (candado sobre la tienda), así
       que el doble conteo por cortes simultáneos está resuelto; lo retroactivo no.
+- [ ] **Cobro en parcialidades vs. corte de caja — supuesto del agente.** Las ventas ya
+      admiten abonos (`sale_payments`, mismo patrón que entradas y gastos), pero el corte
+      **sigue sumando el total de cada factura emitida** por su `payment_method`, no lo
+      efectivamente cobrado: una venta a crédito del cliente entra completa al corte del
+      día aunque todavía no se cobre un peso. Se dejó así a propósito —cambiarlo alteraría
+      el significado del corte, que hoy es "lo que se vendió"— pero hay que confirmar con
+      el cliente si el corte debe reportar **lo vendido** o **lo cobrado**. Igual queda
+      pendiente decidir si las ventas con saldo deben aparecer en algún reporte de
+      **cuentas por cobrar** (hoy solo se ven en el listado de ventas).
 
 ---
 
