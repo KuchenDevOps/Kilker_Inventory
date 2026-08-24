@@ -65,6 +65,7 @@
 | Tabla | Contenido |
 |-------|-----------|
 | `invoices` | Comprobante interno (sin CFDI/SAT). `folio` (único por tienda, `<CODE>-0001`), `store_id`, `customer_id`, `created_by`, `status`, `payment_method`, `channel`, `discount_pct`/`discount_amount`, `total_amount`, `issued_at` (admite fecha retroactiva) y `voided_at/by/reason`. |
+| `sale_payments` | Abonos/parcialidades del cobro de la venta: `amount`, `paid_at`, `method`, `note`, `created_by`. Cascade con la factura; la anulación de la venta los **borra**. El estado de cobro (pendiente/parcial/pagado/anulada) NO se guarda: lo deriva `GET /api/sales`, y una venta de $0 (muestras o 100% de descuento) sale ya como **pagada**. |
 | `invoice_items` | Líneas. `quantity`, `unit_price` (**snapshot** al vender), `line_total`. `discount_type`/`discount_value`/`tax_rate` existen pero hoy no se llenan (el IVA se calcula en la app, 16% informativo). **Venta por kit:** `kit_id` + `kit_sku`/`kit_name` (**snapshot**) + `kit_quantity` marcan de qué kit salió la línea; null = producto suelto. **Entrega como muestra:** `sample_product_id` + `sample_sku`/`sample_name` (**snapshot**); `product_id` sigue siendo SIEMPRE el producto **base** (el que movió inventario), así que ningún reporte cambia. |
 | `customers` | Clientes. `name`, `rfc` (**único**), `address`, `email`, `phone`, `is_active`. |
 
@@ -114,6 +115,7 @@ sales_kits 1───* sales_kit_items (cascade)
 
 customers 1───* invoices 1───* invoice_items
 invoices  1───* stock_movements (type='venta' / 'anulacion')
+          1───* sale_payments (cascade; se borran al anular la venta)
 
 transfers 1───* transfer_items
           1───* stock_movements (transferencia_salida / transferencia_entrada)

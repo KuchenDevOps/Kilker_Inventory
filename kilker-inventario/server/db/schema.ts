@@ -278,6 +278,35 @@ export const invoices = pgTable(
   (t) => [unique('invoices_store_folio_uniq').on(t.storeId, t.folio)]
 ).enableRLS()
 
+/**
+ * Abonos/pagos de una venta. Una venta puede cobrarse en parcialidades.
+ *
+ * Mismo patrón que `entry_payments` (entradas) y `expense_payments` (gastos):
+ * el pagable es el documento y su total es limpio, sin IVA (el 16% de la app
+ * es informativo y no se guarda). No lleva `paid_by`: quien paga es el cliente
+ * de la factura, que ya está en `invoices.customer_id`.
+ *
+ * ⚠️ `invoices.payment_method` (el método elegido al capturar la venta) y el
+ * `method` de cada abono son cosas distintas: el primero es el snapshot que
+ * usa el corte de caja, el segundo dice cómo entró cada parcialidad.
+ */
+export const salePayments = pgTable(
+  'sale_payments',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    invoiceId: bigint('invoice_id', { mode: 'number' })
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    paidAt: date('paid_at').notNull(),
+    method: paymentMethod('method').notNull().default('efectivo'),
+    note: text('note'),
+    createdBy: uuid('created_by').notNull().references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [index('sale_payments_invoice_idx').on(t.invoiceId, t.paidAt)]
+).enableRLS()
+
 /** Líneas de venta. `unit_price` es snapshot al momento de la venta. */
 
 export const invoiceItems = pgTable('invoice_items', {
@@ -733,7 +762,19 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
     references: [profiles.id]
   }),
   items: many(invoiceItems),
-  stockMovements: many(stockMovements)
+  stockMovements: many(stockMovements),
+  payments: many(salePayments)
+}))
+
+export const salePaymentsRelations = relations(salePayments, ({ one }) => ({
+  invoice: one(invoices, {
+    fields: [salePayments.invoiceId],
+    references: [invoices.id]
+  }),
+  createdBy: one(profiles, {
+    fields: [salePayments.createdBy],
+    references: [profiles.id]
+  })
 }))
 
 export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
@@ -893,6 +934,8 @@ export type Invoice = typeof invoices.$inferSelect
 export type NewInvoice = typeof invoices.$inferInsert
 export type InvoiceItem = typeof invoiceItems.$inferSelect
 export type NewInvoiceItem = typeof invoiceItems.$inferInsert
+export type SalePayment = typeof salePayments.$inferSelect
+export type NewSalePayment = typeof salePayments.$inferInsert
 export type StockMovement = typeof stockMovements.$inferSelect
 export type NewStockMovement = typeof stockMovements.$inferInsert
 export type Transfer = typeof transfers.$inferSelect

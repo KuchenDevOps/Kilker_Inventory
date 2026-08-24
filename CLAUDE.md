@@ -274,8 +274,10 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
 clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
-datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0031` en
+datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031` en
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
+⚠️ `sale_payments` ya está en `schema.ts` pero **su migración está pendiente de generar**
+(`npm run db:generate` + `npm run db:migrate`): sin ella, `GET /api/sales` truena.
 
 > Este apartado es un **resumen**, no un changelog. La verdad está en el código:
 > `server/db/schema.ts`, `server/api/**` y `app/**`.
@@ -286,8 +288,8 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0031`
 |--------|-----------|-----------|
 | **Catálogo** | `productos/index`, `productos/nuevo` (pestañas Producto / Kit / **Muestras**; `?tipo=muestra\|kit` la preselecciona), **`productos/muestras`** (listado de muestras: SKU, nombre, base y precio $0 — sin existencias, porque son las del base), `productos/[id]/editar` | `GET/POST /api/products` (`?samples=exclude\|include\|only`), `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
 | **Categorías** | `categorias/index` | `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id` |
-| **Entradas de stock** | `movimientos/entrada`, `movimientos/index` | `POST /api/movements/entrada`, `GET /api/movements`, `POST /api/movements/:id/void` |
-| **Ventas** | `ventas/nueva`, `ventas/index` | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void` |
+| **Entradas de stock** | `movimientos/entrada`, `movimientos/index` (modal de pagos) | `POST /api/movements/entrada`, `GET /api/movements`, `POST /api/movements/:id/void`, `GET/POST /api/movements/:id/payments` |
+| **Ventas** | `ventas/nueva`, `ventas/index` (modal de pagos) | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void`, `GET/POST /api/sales/:id/payments` |
 | **Transferencias** | `transferencias/nueva`, `transferencias/index` | `POST/GET /api/transfers`, `GET /api/transfers/:id`, `POST /api/transfers/:id/receive`, `POST /api/transfers/:id/cancel` |
 | **Clientes** | `clientes/index` | `GET/POST /api/customers`, `PATCH/DELETE /api/customers/:id` |
 | **Gastos** | `gastos/index` | `GET/POST /api/expenses` (filtros `?q`, `?paidBy`, `?type`, `?storeId`, fechas), `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments` |
@@ -375,6 +377,23 @@ datos mock. **Base de datos:** 17 tablas + 11 enums, migraciones `0000`–`0031`
   Admiten **fecha retroactiva**: si la fecha es pasada, además del stock actual se valida
   que **a esa fecha** el kardex ya tuviera existencia suficiente. La anulación revierte
   kardex e inventario y marca la factura `anulada`.
+- **Cobro de la venta en parcialidades** (`sale_payments`), mismo patrón que las entradas
+  (`entry_payments`) y los gastos (`expense_payments`): cada abono lleva monto, método,
+  fecha y nota. **El estado no se guarda**: `GET /api/sales` deriva
+  `totalToPay`/`totalPaid`/`balance`/`paymentStatus` por factura. Tres reglas no obvias:
+  - **El cobrable es `invoices.total_amount`**: ya trae el descuento aplicado y va **sin
+    IVA** (el 16% de la app es informativo y no vive en la BD). Cobrar el total × 1.16 es
+    exactamente el bug que dejó pagos inflados en gastos; el servidor topa cada abono al
+    saldo, no solo la UI.
+  - ⚠️ **Una venta de $0 sale como `pagado`, no como `pendiente`.** Es el caso de las
+    entregas de **muestras** (su precio es 0 por constraint) y el del 100% de descuento:
+    no hay nada que cobrar, y sin esa rama se quedarían pendientes para siempre. El
+    `POST /api/sales/:id/payments` las rechaza por lo mismo.
+  - **Anular la venta borra sus abonos** (`voidInvoiceTx`, igual que `voidMovementTx` con
+    las entradas): la mercancía volvió al inventario, así que ese dinero deja de
+    corresponder a esa factura. El endpoint devuelve `deletedPayments` para avisarlo.
+  - **El ticket/PDF de la venta no muestra nada de esto**: los abonos son cobranza
+    interna, no parte del comprobante.
 - ⚠️ **Muestras: producto propio, inventario del base.** Una muestra es una fila de
   `products` con `sample_of_product_id` → producto base: tiene SKU y nombre propios y
   se elige al vender como cualquier otro producto, pero **no tiene inventario ni
