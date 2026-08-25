@@ -198,7 +198,7 @@ await refreshNuxtData('all-products')
               :min="0"
               :step="0.01"
               :format-options="{minimumFractionDigits:0, maximumFractionDigits:2}"
-              :disabled="!isAdmin"
+              :disabled="!canEdit"
               :placeholder="selectedProduct?.cost ?? 'costo del producto'"
               class="w-full"
             />
