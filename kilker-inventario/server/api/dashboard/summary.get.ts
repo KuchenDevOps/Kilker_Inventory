@@ -28,7 +28,17 @@ function toExpenseDate(v: unknown): string | null {
   return match ? match[0] : null
 }
 
-const EMPTY_EXPENSE_BUCKET = { subtotal: 0, totalPaid: 0, balance: 0 }
+// `retentionIva`/`retentionIsr` son informativas, igual que el IVA: NO afectan
+// lo que se paga (el cobrable es `expenses.amount`, el subtotal puro). Van en el
+// resumen para que el dashboard pueda mostrar el total fiscal del gasto
+// —subtotal + IVA − retenciones—, que es la misma cuenta de /gastos.
+const EMPTY_EXPENSE_BUCKET = {
+  subtotal: 0,
+  totalPaid: 0,
+  balance: 0,
+  retentionIva: 0,
+  retentionIsr: 0
+}
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -59,6 +69,7 @@ export default defineEventHandler(async (event) => {
       from: from ?? null,
       to: to ?? null,
       entriesValue: 0,
+      startInventoryValue: 0,
       entriesPaid: 0,
       entriesBalance: 0,
       salesValue: 0,
@@ -73,6 +84,16 @@ export default defineEventHandler(async (event) => {
     eq(stockMovements.type, 'entrada'),
     // El dashboard excluía las entradas con factura 'II'. NULL sí cuenta.
     sql`coalesce(upper(trim(${stockMovements.supplierInvoiceNumber})), '') <> 'II'`,
+   
+    sql`not exists (
+      select 1 from "stock_movements" rev
+      where rev."type" = 'anulacion'
+        and rev."reverses_movement_id" = ${stockMovements.id}
+    )`
+  ]
+  const startInventory = [
+     eq(stockMovements.type, 'entrada'),
+    sql`coalesce(upper(trim(${stockMovements.supplierInvoiceNumber})), '') = 'II'`,
    
     sql`not exists (
       select 1 from "stock_movements" rev
@@ -123,11 +144,17 @@ export default defineEventHandler(async (event) => {
     .groupBy(entryPayments.movementId)
     .as('entry_payments_agg')
 
-  const [entryRows, entryPaymentRows, saleRows, expenseRows, soldTotals, monthly] = await Promise.all([
+  const [entryRows, startInventoryRows, entryPaymentRows, saleRows, expenseRows, soldTotals, monthly] = await Promise.all([
     db
       .select({ value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)` })
       .from(stockMovements)
       .where(and(...entryFilters)),
+
+    // Inventario inicial
+    db
+      .select({ value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)` })
+      .from(stockMovements)
+      .where(and(...startInventory)),
 
     // Pagado y saldo de esas mismas entradas. `least`/`greatest` topan por
     // entrada para que pagado + pendiente nunca exceda su costo.
@@ -151,7 +178,11 @@ export default defineEventHandler(async (event) => {
         type: expenses.type,
         subtotal: sql<string>`coalesce(sum(round(${expenses.amount}, 2)), 0)`,
         totalPaid: sql<string>`coalesce(sum(least(round(${expenses.amount}, 2), round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
-        balance: sql<string>`coalesce(sum(greatest(0, round(${expenses.amount}, 2) - round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`
+        balance: sql<string>`coalesce(sum(greatest(0, round(${expenses.amount}, 2) - round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
+        // Nullables: sin el coalesce interno, un solo gasto sin retención
+        // capturada anula la suma del tipo entero.
+        retentionIva: sql<string>`coalesce(sum(round(coalesce(${expenses.retentionIva}, 0), 2)), 0)`,
+        retentionIsr: sql<string>`coalesce(sum(round(coalesce(${expenses.retentionIsr}, 0), 2)), 0)`
       })
       .from(expenses)
       .leftJoin(paymentsAgg, eq(paymentsAgg.expenseId, expenses.id))
@@ -175,7 +206,9 @@ export default defineEventHandler(async (event) => {
     expensesByType[row.type] = {
       subtotal: round2(Number(row.subtotal)),
       totalPaid: round2(Number(row.totalPaid)),
-      balance: round2(Number(row.balance))
+      balance: round2(Number(row.balance)),
+      retentionIva: round2(Number(row.retentionIva)),
+      retentionIsr: round2(Number(row.retentionIsr))
     }
   }
 
@@ -184,6 +217,7 @@ export default defineEventHandler(async (event) => {
     from: from ?? null,
     to: to ?? null,
     entriesValue: round2(Number(entryRows[0]?.value ?? 0)),
+    startInventoryValue: round2(Number(startInventoryRows[0]?.value ?? 0)),
     entriesPaid: round2(Number(entryPaymentRows[0]?.totalPaid ?? 0)),
     entriesBalance: round2(Number(entryPaymentRows[0]?.balance ?? 0)),
     salesValue: round2(Number(saleRows[0]?.value ?? 0)),
