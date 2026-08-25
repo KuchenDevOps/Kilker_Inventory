@@ -7,9 +7,17 @@
 import type { ApiMonthlyInventory } from '~/types/inventario'
 
 export interface ExpenseBucket {
+  /** Lo cobrable: la suma de `expenses.amount`, sin IVA ni retenciones. */
   subtotal: number
   totalPaid: number
   balance: number
+  /**
+   * Retenciones capturadas en los gastos del periodo. Informativas, como el
+   * IVA: no afectan lo que se paga. El total fiscal es
+   * `subtotal * 1.16 - retentionIva - retentionIsr` (misma cuenta que /gastos).
+   */
+  retentionIva: number
+  retentionIsr: number
 }
 
 export interface DashboardSummary {

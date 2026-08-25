@@ -28,7 +28,17 @@ function toExpenseDate(v: unknown): string | null {
   return match ? match[0] : null
 }
 
-const EMPTY_EXPENSE_BUCKET = { subtotal: 0, totalPaid: 0, balance: 0 }
+// `retentionIva`/`retentionIsr` son informativas, igual que el IVA: NO afectan
+// lo que se paga (el cobrable es `expenses.amount`, el subtotal puro). Van en el
+// resumen para que el dashboard pueda mostrar el total fiscal del gasto
+// —subtotal + IVA − retenciones—, que es la misma cuenta de /gastos.
+const EMPTY_EXPENSE_BUCKET = {
+  subtotal: 0,
+  totalPaid: 0,
+  balance: 0,
+  retentionIva: 0,
+  retentionIsr: 0
+}
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -168,7 +178,11 @@ export default defineEventHandler(async (event) => {
         type: expenses.type,
         subtotal: sql<string>`coalesce(sum(round(${expenses.amount}, 2)), 0)`,
         totalPaid: sql<string>`coalesce(sum(least(round(${expenses.amount}, 2), round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
-        balance: sql<string>`coalesce(sum(greatest(0, round(${expenses.amount}, 2) - round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`
+        balance: sql<string>`coalesce(sum(greatest(0, round(${expenses.amount}, 2) - round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
+        // Nullables: sin el coalesce interno, un solo gasto sin retención
+        // capturada anula la suma del tipo entero.
+        retentionIva: sql<string>`coalesce(sum(round(coalesce(${expenses.retentionIva}, 0), 2)), 0)`,
+        retentionIsr: sql<string>`coalesce(sum(round(coalesce(${expenses.retentionIsr}, 0), 2)), 0)`
       })
       .from(expenses)
       .leftJoin(paymentsAgg, eq(paymentsAgg.expenseId, expenses.id))
@@ -192,7 +206,9 @@ export default defineEventHandler(async (event) => {
     expensesByType[row.type] = {
       subtotal: round2(Number(row.subtotal)),
       totalPaid: round2(Number(row.totalPaid)),
-      balance: round2(Number(row.balance))
+      balance: round2(Number(row.balance)),
+      retentionIva: round2(Number(row.retentionIva)),
+      retentionIsr: round2(Number(row.retentionIsr))
     }
   }
 
