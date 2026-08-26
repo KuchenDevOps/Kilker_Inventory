@@ -5,7 +5,6 @@ import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { expenses, expenseItems, stores } from '../../db/schema'
 
-const IVA_RATE = 0.16
 
 const EXPENSE_TYPES = ['Fijo', 'Operativo'] as const
 type ExpenseTypeValue = (typeof EXPENSE_TYPES)[number]
@@ -92,11 +91,11 @@ export default defineEventHandler(async (event) => {
   const store = await db.query.stores.findFirst({ where: eq(stores.id, storeId) })
   if (!store) throw createError({ statusCode: 404, statusMessage: 'Sucursal no existe' })
 
-  // ─── Lo que se debe pagar es el subtotal puro (suma de conceptos).
-  // IVA y retenciones son SOLO informativos: se calculan y se guardan,
-  // pero no afectan `amount`, que es el monto real a cobrar. ───
+  // `amount` es el SUBTOTAL (suma de conceptos). El IVA y el total a pagar
+  // (subtotal + IVA − retenciones) los calcula Postgres en columnas generadas:
+  // se leen de la fila insertada, no se derivan aquí. Ver el comentario de
+  // `expenses` en schema.ts.
   const subtotal = Math.round(items.reduce((sum, it) => sum + it.amount, 0) * 100) / 100
-  const iva = Math.round(subtotal * IVA_RATE * 100) / 100
 
   const created = await db.transaction(async (tx) => {
     const [expense] = await tx
@@ -123,7 +122,7 @@ export default defineEventHandler(async (event) => {
       .values(items.map((it) => ({ expenseId: expense.id, reason: it.reason, amount: String(it.amount) })))
       .returning()
 
-    return { ...expense, items: insertedItems, subtotal, iva }
+    return { ...expense, items: insertedItems, subtotal, iva: expense.iva }
   })
 
   return created

@@ -20,16 +20,25 @@ const {
 } = useDashboardSummary()
 
 // ───────────────────────────────────────────────
-//  GASTOS: subtotal (a pagar), pagado y pendiente — agrupado por tipo
+//  GASTOS: total a pagar, pagado y pendiente — agrupado por tipo
 // ───────────────────────────────────────────────
-const EMPTY_BUCKET = { subtotal: 0, totalPaid: 0, balance: 0 }
+// ⚠️ El total es `totalToPay` (subtotal + IVA − retenciones), NO el subtotal.
+// Este dashboard es operativo: sus tres cifras tienen que cuadrar entre sí
+// —total = pagado + pendiente— y tanto `totalPaid` como `balance` se miden
+// contra el pagable. Con el subtotal aquí, un gasto liquidado mostraba un
+// "pagado" mayor que su propio total y la resta no daba.
+//
+// El desglose fiscal (subtotal vs. IVA) va en /dashboardresultados, que es el
+// de resultados del negocio: ahí sí importa separar el IVA, porque se entera al
+// SAT y no es gasto propio.
+const EMPTY_BUCKET = { subtotal: 0, iva: 0, totalToPay: 0, totalPaid: 0, balance: 0 }
 
 const expensesByType = computed(
   () => summary.value?.expenses ?? { Fijo: EMPTY_BUCKET, Operativo: EMPTY_BUCKET }
 )
 
-const totalExpensesFijo = computed(() => expensesByType.value.Fijo.subtotal)
-const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.subtotal)
+const totalExpensesFijo = computed(() => expensesByType.value.Fijo.totalToPay)
+const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.totalToPay)
 
 const totalExpensesPaid = computed(
   () => expensesByType.value.Fijo.totalPaid + expensesByType.value.Operativo.totalPaid

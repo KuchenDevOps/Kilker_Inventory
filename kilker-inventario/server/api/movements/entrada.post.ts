@@ -105,6 +105,9 @@ export default defineEventHandler(async (event) => {
         }
       })
 
+    // ⚠️ Capturar la entrada NO mueve dinero: el flujo (`banks_movements`) se
+    // asienta al PAGARLA, en POST /api/movements/:id/payments. Mercancía
+    // recibida a crédito no saca un peso hasta que se le paga al proveedor.
     const inv = await tx.query.inventory.findFirst({
       where: (i, { and, eq: eqi }) => and(eqi(i.productId, productId), eqi(i.storeId, storeId))
     })

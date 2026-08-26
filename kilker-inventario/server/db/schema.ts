@@ -84,13 +84,9 @@ export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
 
 export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'])
 
-// ⚠️ 'tarjeta' se eliminó en la migración 0030: se partió en 'debito' y 'credito'
-// (las 19 facturas históricas pasaron a 'debito'). Postgres no sabe quitar un
-// valor de un enum, así que esa migración RECREA el tipo — no basta con borrarlo
-// de esta lista. Nadie debe hardcodear estos valores: usar `paymentMethod.enumValues`.
+
 export const paymentMethod = pgEnum('payment_method', ['efectivo', 'debito', 'credito', 'transferencia'])
 
-/** Descuentos: enum listo para v2. */
 export const discountType = pgEnum('discount_type', ['porcentaje', 'combo'])
 
 // ───────────────────────────────────────────────
@@ -153,12 +149,6 @@ export const products = pgTable('products', {
   barcode: text('barcode'),
   minQuantity: numeric('min_quantity', { precision: 14, scale: 3 }),
   isActive: boolean('is_active').notNull().default(true),
-  // ─── MUESTRAS ───
-  // Producto base del que esta fila es MUESTRA (null = producto normal). Una
-  // muestra es una "segunda versión" del producto: se entrega a precio 0 y NO
-  // tiene inventario ni kardex propios — descuenta el stock del base 1:1, igual
-  // que un kit se explota en sus productos al venderse. La regla vive en
-  // server/utils/samples.ts; nadie debe volver a leer esta columna a mano.
   sampleOfProductId: bigint('sample_of_product_id', { mode: 'number' }).references(
     (): AnyPgColumn => products.id
   ),
@@ -201,6 +191,49 @@ export const salesKitItems = pgTable('sales_kit_items', {
   index('sales_kit_items_product_id_idx').on(table.productId)
 ]).enableRLS()
 
+
+/**
+ * Cuentas bancarias de la empresa. Cada pago (de venta, de entrada o de gasto)
+ * dice de qué cuenta salió o entró el dinero, y de ahí sale el saldo POR CUENTA
+ * en `banks_movements`.
+ *
+ * ⚠️ El efectivo NO está aquí: un pago en efectivo lleva `account_id` en NULL y
+ * se reporta como bolsa aparte (decisión del cliente). Consecuencia a tener
+ * presente: "sin cuenta" y "efectivo" son el mismo estado en la base, así que
+ * un pago bancario capturado sin elegir cuenta caería en la bolsa de efectivo
+ * sin avisar. Por eso los endpoints de pago exigen cuenta cuando el método no
+ * es efectivo (y la rechazan cuando sí lo es).
+ *
+ * ⚠️ De la tarjeta se guardan SOLO los últimos 4 dígitos. Alcanzan para que el
+ * empleado identifique la cuenta al capturar un pago, y evitan que esta tabla
+ * —que no está cifrada ni tokenizada— se vuelva un objetivo. No agregar aquí
+ * el número completo, CVV, NIP ni credenciales de banca en línea.
+ */
+export const bankAccounts = pgTable(
+  'bank_accounts',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    /** Institución: BBVA, Santander, Banorte… */
+    bank: text('bank').notNull(),
+    /** A nombre de quién está la cuenta. */
+    owner: text('owner').notNull(),
+    /** Últimos 4 dígitos de la tarjeta. NULL si la cuenta no tiene plástico. */
+    cardLast4: text('card_last4'),
+    isActive: boolean('is_active').notNull().default(true),
+    ...timestamps()
+  },
+  (t) => [
+    // Blindaje contra que alguien capture el número completo "de pasada": si no
+    // son exactamente 4 dígitos, la base lo rechaza.
+    check(
+      'bank_accounts_card_last4_format',
+      sql`${t.cardLast4} IS NULL OR ${t.cardLast4} ~ '^[0-9]{4}$'`
+    ),
+    unique('bank_accounts_identity_uniq').on(t.bank, t.owner, t.cardLast4)
+  ]
+).enableRLS()
 
 /** Saldo materializado de existencias por (producto × tienda). */
 export const inventory = pgTable(
@@ -278,18 +311,7 @@ export const invoices = pgTable(
   (t) => [unique('invoices_store_folio_uniq').on(t.storeId, t.folio)]
 ).enableRLS()
 
-/**
- * Abonos/pagos de una venta. Una venta puede cobrarse en parcialidades.
- *
- * Mismo patrón que `entry_payments` (entradas) y `expense_payments` (gastos):
- * el pagable es el documento y su total es limpio, sin IVA (el 16% de la app
- * es informativo y no se guarda). No lleva `paid_by`: quien paga es el cliente
- * de la factura, que ya está en `invoices.customer_id`.
- *
- * ⚠️ `invoices.payment_method` (el método elegido al capturar la venta) y el
- * `method` de cada abono son cosas distintas: el primero es el snapshot que
- * usa el corte de caja, el segundo dice cómo entró cada parcialidad.
- */
+
 export const salePayments = pgTable(
   'sale_payments',
   {
@@ -300,6 +322,8 @@ export const salePayments = pgTable(
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
     paidAt: date('paid_at').notNull(),
     method: paymentMethod('method').notNull().default('efectivo'),
+    /** Cuenta a la que entró el dinero. NULL = efectivo (ver `bank_accounts`). */
+    accountId: bigint('account_id', { mode: 'number' }).references(() => bankAccounts.id),
     note: text('note'),
     createdBy: uuid('created_by').notNull().references(() => profiles.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
@@ -401,7 +425,6 @@ export const stockMovements = pgTable(
   ]
 ).enableRLS()
 
-
 export const entryPayments = pgTable(
   'entry_payments',
   {
@@ -412,6 +435,8 @@ export const entryPayments = pgTable(
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
     paidAt: date('paid_at').notNull(),
     method: paymentMethod('method').notNull().default('efectivo'),
+    /** Cuenta de la que salió el dinero. NULL = efectivo (ver `bank_accounts`). */
+    accountId: bigint('account_id', { mode: 'number' }).references(() => bankAccounts.id),
     note: text('note'),
     createdBy: uuid('created_by').notNull().references(() => profiles.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
@@ -566,7 +591,18 @@ export const customers = pgTable(
 export const expenseType = pgEnum('expense_type', ['Fijo', 'Operativo'])
 
 
-/** Cabecera de gasto. `amount` queda como snapshot/total (igual que invoices.totalAmount). */
+/** IVA vigente. Vive aquí porque la BD lo usa en las columnas generadas de `expenses`. */
+export const IVA_RATE = 0.16
+
+/**
+ * Cabecera de gasto. `amount` es el SUBTOTAL (suma de `expense_items`).
+ *
+ * ⚠️ El IVA y las retenciones YA NO SON INFORMATIVOS: lo que se paga es
+ * `subtotal + IVA − retenciones`, y eso vive en `total_to_pay`. Antes el
+ * pagable era el subtotal pelón y el 16% se calculaba en la app sólo para
+ * mostrarlo (a diferencia de las ventas, donde el IVA sigue siendo informativo
+ * y `invoices.total_amount` sigue siendo el cobrable).
+ */
 export const expenses = pgTable(
   'expenses',
   {
@@ -579,10 +615,32 @@ export const expenses = pgTable(
     supplier: text('supplier').notNull(),
     supplierInvoiceNumber: text('supplier_invoice_number').notNull(),
     type: expenseType('type').notNull().default('Operativo'),
+    /** Importe retenido, no tasa. Se resta de lo que se paga. */
     retentionIva: numeric('retention_iva', { precision: 14, scale: 2 }),
     retentionIsr: numeric('retention_isr', { precision: 14, scale: 2 }),
     // Suma de expense_items.amount al momento de crear/editar (snapshot, igual que invoices.totalAmount).
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    // ─── IVA y pagable: columnas GENERADAS, calculadas por Postgres ───
+    // No son snapshots que la app tenga que recordar actualizar: se recalculan
+    // solas cada vez que cambia `amount` o una retención. Es a propósito, y es
+    // lo que impide el bug que ya pasó una vez aquí — el pagable y lo que la
+    // pantalla mostraba se calculaban en dos lugares distintos, divergieron, y
+    // entraron pagos inflados (monto × 1.16) que nadie topó. Con esto hay UNA
+    // sola definición de "cuánto se debe" y es la de la base; el endpoint de
+    // abonos y los reportes la LEEN, no la vuelven a calcular.
+    //
+    // ⚠️ La tasa está escrita en el DDL: cambiarla es una migración, no un
+    // deploy. Es lo correcto para una tasa legal —que no cambie por accidente—
+    // pero hay que saberlo antes de prometer "el IVA es configurable".
+    iva: numeric('iva', { precision: 14, scale: 2 })
+      .notNull()
+      .generatedAlwaysAs(sql`round("amount" * 0.16, 2)`),
+    /** Lo que realmente se debe pagar: subtotal + IVA − retenciones. */
+    totalToPay: numeric('total_to_pay', { precision: 14, scale: 2 })
+      .notNull()
+      .generatedAlwaysAs(
+        sql`"amount" + round("amount" * 0.16, 2) - coalesce("retention_iva", 0) - coalesce("retention_isr", 0)`
+      ),
     paidAt: date('paid_at').notNull(),
     note: text('note'),
     createdBy: uuid('created_by')
@@ -592,7 +650,17 @@ export const expenses = pgTable(
       .notNull()
       .defaultNow()
   },
-  (t) => [index('expenses_store_paid_idx').on(t.storeId, t.paidAt)]
+  (t) => [
+    index('expenses_store_paid_idx').on(t.storeId, t.paidAt),
+    // Una retención mayor que subtotal+IVA dejaría `total_to_pay` en negativo:
+    // un gasto que "te deben". Mientras las retenciones eran informativas eso
+    // no hacía daño; ahora es el importe que se paga.
+    check(
+      'expenses_retentions_within_total',
+      sql`coalesce(${t.retentionIva}, 0) + coalesce(${t.retentionIsr}, 0)
+          <= ${t.amount} + round(${t.amount} * 0.16, 2)`
+    )
+  ]
 ).enableRLS()
 
 /** Líneas de gasto: concepto + monto. Análogo a invoice_items pero sin producto/cantidad. */
@@ -628,6 +696,8 @@ export const expensePayments = pgTable(
     paidBy: text('paid_by').notNull().default('Sin especificar'),
     paidAt: date('paid_at').notNull(),
     method: paymentMethod('method').notNull().default('efectivo'),
+    /** Cuenta de la que salió el dinero. NULL = efectivo (ver `bank_accounts`). */
+    accountId: bigint('account_id', { mode: 'number' }).references(() => bankAccounts.id),
     note: text('note'),
     createdBy: uuid('created_by')
       .notNull()
@@ -637,6 +707,150 @@ export const expensePayments = pgTable(
       .defaultNow()
   },
   (t) => [index('expense_payments_expense_idx').on(t.expenseId, t.paidAt)]
+).enableRLS()
+
+/**
+ * Concepto de cada movimiento de dinero. Define también el signo permitido
+ * (ver el check `banks_movements_amount_sign`).
+ *
+ * ⚠️ Postgres NO sabe quitar un valor de un enum (por eso la migración 0030
+ * tuvo que RECREAR `payment_method` para partir 'tarjeta'). Agregar valores sí
+ * es barato: un `ALTER TYPE … ADD VALUE` y ya. Pensarlo antes de meter un
+ * concepto "por si acaso".
+ */
+export const cashFlowType = pgEnum('cash_flow_type', [
+  /** Abono cobrado de una venta (+). */
+  'cobro_venta',
+  /** Abono pagado de una entrada de mercancía (−). */
+  'pago_entrada',
+  /** Abono pagado de un gasto, ya con IVA y retenciones (−). */
+  'pago_gasto',
+  /** Saldo con el que arranca la cuenta. Puede ser negativo. */
+  'saldo_inicial',
+  /** Dinero que entra sin documento detrás (+). */
+  'prestamo',
+  /** Dinero que se saca (−). */
+  'retiro',
+  /** Corrección manual de cuadre; cualquier signo. */
+  'ajuste',
+  /** Reversa de otro movimiento de dinero. */
+  'anulacion'
+])
+
+/**
+ * FLUJO DE DINERO — libro append-only, con saldo POR CUENTA.
+ *
+ * El saldo de una cuenta es `sum(amount) WHERE account_id = X`. El efectivo va
+ * aparte: `account_id IS NULL` (decisión del cliente — el efectivo no está en
+ * `bank_accounts`), así que su saldo es `sum(amount) WHERE account_id IS NULL`
+ * y el global es la suma de todo.
+ *
+ * ⚠️ Lo que asienta dinero son los PAGOS, no los documentos. Una venta emitida
+ * a crédito no mueve un peso hasta que se cobra; una entrada facturada no lo
+ * mueve hasta que se paga. Por eso las tres ligas son a `sale_payments`,
+ * `entry_payments` y `expense_payments`, y NO a `invoices` ni a
+ * `stock_movements`. Consecuencia que hay que tener presente al leer reportes:
+ * **este saldo no cuadra contra "ventas del periodo"** y no debe cuadrar — la
+ * diferencia es justamente la cartera por cobrar y por pagar.
+ *
+ * Convención de signo, igual que el kardex (`stock_movements.quantity`):
+ * **+ entra, − sale**. El saldo se saca sumando `amount`; nunca hay que mirar
+ * el `type` para saber el sentido.
+ *
+ * `store_id` es procedencia informativa (de qué sucursal salió el documento) y
+ * es NULLABLE: un saldo inicial o un retiro no son de ninguna tienda. El saldo
+ * es por CUENTA, no por sucursal.
+ *
+ * ⚠️ Append-only, como el kardex: una fila asentada no se edita ni se borra.
+ * Revertir es agregar una `anulacion` con el importe invertido y `reverses_id`
+ * apuntando al original.
+ */
+export const banksMovements = pgTable(
+  'banks_movements',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    type: cashFlowType('type').notNull(),
+    /** Signo: + entra, − sale. Snapshot: no se recalcula desde el pago. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    /** El `paid_at` del pago que lo originó. */
+    occurredAt: date('occurred_at').notNull(),
+    /** Cuenta afectada. NULL = efectivo, que es su propia bolsa. */
+    accountId: bigint('account_id', { mode: 'number' }).references(
+      () => bankAccounts.id
+    ),
+    /** Procedencia informativa. NULL en los manuales. No da saldos por tienda. */
+    storeId: bigint('store_id', { mode: 'number' }).references(() => stores.id),
+    // ─── Origen: a lo más UNO de los tres; ninguno = movimiento manual ───
+    // ⚠️ `set null` y no `cascade`: anular una venta o una entrada BORRA sus
+    // abonos (`voidInvoiceTx`/`voidMovementTx`), y con `cascade` se llevaría
+    // por delante el movimiento de dinero — el saldo cambiaría solo, sin dejar
+    // rastro de por qué. Con `set null` la fila sobrevive, su reversa
+    // (`anulacion`) la deja en cero, y el par queda para auditar. Lo que se
+    // pierde es el puntero al abono; por eso `note` guarda el folio.
+    salePaymentId: bigint('sale_payment_id', { mode: 'number' }).references(
+      () => salePayments.id,
+      { onDelete: 'set null' }
+    ),
+    entryPaymentId: bigint('entry_payment_id', { mode: 'number' }).references(
+      () => entryPayments.id,
+      { onDelete: 'set null' }
+    ),
+    expensePaymentId: bigint('expense_payment_id', { mode: 'number' }).references(
+      () => expensePayments.id,
+      { onDelete: 'set null' }
+    ),
+    /** Liga la reversa (anulacion) al movimiento original. */
+    reversesId: bigint('reverses_id', { mode: 'number' }).references(
+      (): AnyPgColumn => banksMovements.id
+    ),
+    /** Cómo entró/salió el dinero. Snapshot del método del pago. */
+    method: paymentMethod('method'),
+    note: text('note'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (t) => [
+    // Saldo corrido por cuenta y filtros por periodo.
+    index('banks_movements_account_occurred_idx').on(t.accountId, t.occurredAt),
+    index('banks_movements_occurred_idx').on(t.occurredAt),
+    // ⚠️ Idempotencia, no adorno: un abono asienta UN solo movimiento de dinero.
+    // Sin esto, un doble clic o un reintento mete el mismo cobro dos veces y el
+    // saldo queda inflado sin rastro de por qué. En Postgres los NULL no chocan
+    // entre sí, así que no estorba a los manuales ni a las anulaciones.
+    unique('banks_movements_sale_payment_uniq').on(t.salePaymentId),
+    unique('banks_movements_entry_payment_uniq').on(t.entryPaymentId),
+    unique('banks_movements_expense_payment_uniq').on(t.expensePaymentId),
+    unique('banks_movements_reverses_uniq').on(t.reversesId),
+    check(
+      'banks_movements_one_source',
+      sql`(CASE WHEN ${t.salePaymentId} IS NULL THEN 0 ELSE 1 END
+         + CASE WHEN ${t.entryPaymentId} IS NULL THEN 0 ELSE 1 END
+         + CASE WHEN ${t.expensePaymentId} IS NULL THEN 0 ELSE 1 END) <= 1`
+    ),
+    // El signo lo manda el concepto. Un importe 0 no es un movimiento.
+    check(
+      'banks_movements_amount_sign',
+      sql`CASE ${t.type}
+            WHEN 'cobro_venta'  THEN ${t.amount} > 0
+            WHEN 'pago_entrada' THEN ${t.amount} < 0
+            WHEN 'pago_gasto'   THEN ${t.amount} < 0
+            WHEN 'prestamo'     THEN ${t.amount} > 0
+            WHEN 'retiro'       THEN ${t.amount} < 0
+            ELSE ${t.amount} <> 0
+          END`
+    ),
+    // Una anulación siempre revierte algo; nadie más lleva reverses_id.
+    check(
+      'banks_movements_reversal_typed',
+      sql`(${t.type} = 'anulacion') = (${t.reversesId} IS NOT NULL)`
+    )
+  ]
 ).enableRLS()
 
 
@@ -912,6 +1126,45 @@ export const expenseItemsRelations = relations(expenseItems, ({ one }) => ({
   expense: one(expenses, { fields: [expenseItems.expenseId], references: [expenses.id] })
 }))
 
+export const bankAccountsRelations = relations(bankAccounts, ({ many }) => ({
+  cashFlow: many(banksMovements),
+  salePayments: many(salePayments),
+  entryPayments: many(entryPayments),
+  expensePayments: many(expensePayments)
+}))
+
+export const banksMovementsRelations = relations(banksMovements, ({ one }) => ({
+  account: one(bankAccounts, {
+    fields: [banksMovements.accountId],
+    references: [bankAccounts.id]
+  }),
+  store: one(stores, {
+    fields: [banksMovements.storeId],
+    references: [stores.id]
+  }),
+  salePayment: one(salePayments, {
+    fields: [banksMovements.salePaymentId],
+    references: [salePayments.id]
+  }),
+  entryPayment: one(entryPayments, {
+    fields: [banksMovements.entryPaymentId],
+    references: [entryPayments.id]
+  }),
+  expensePayment: one(expensePayments, {
+    fields: [banksMovements.expensePaymentId],
+    references: [expensePayments.id]
+  }),
+  reverses: one(banksMovements, {
+    fields: [banksMovements.reversesId],
+    references: [banksMovements.id],
+    relationName: 'cashFlowReversal'
+  }),
+  createdBy: one(profiles, {
+    fields: [banksMovements.createdBy],
+    references: [profiles.id]
+  })
+}))
+
 export const expensePaymentsRelations = relations(expensePayments, ({ one }) => ({
   expense: one(expenses, { fields: [expensePayments.expenseId], references: [expenses.id] }),
   createdBy: one(profiles, { fields: [expensePayments.createdBy], references: [profiles.id] })
@@ -960,3 +1213,7 @@ export type SalesKitItem = typeof salesKitItems.$inferSelect
 export type NewSalesKitItem = typeof salesKitItems.$inferInsert
 export type EntryPayment = typeof entryPayments.$inferSelect
 export type NewEntryPayment = typeof entryPayments.$inferInsert
+export type BanksMovement = typeof banksMovements.$inferSelect
+export type NewBanksMovement = typeof banksMovements.$inferInsert
+export type BankAccount = typeof bankAccounts.$inferSelect
+export type NewBankAccount = typeof bankAccounts.$inferInsert

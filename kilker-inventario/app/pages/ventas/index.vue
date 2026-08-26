@@ -80,6 +80,15 @@ function fmtDate(s: string | null | undefined) {
 }
 // Las fechas de pago son `date` (sin hora): se leen como local, no como UTC, o
 // el día se corre uno hacia atrás.
+// ─── Asignación masiva de cuenta (corrección / relleno del histórico) ───
+// Los pagos en efectivo NO cuentan: no llevan cuenta ni deben llevarla.
+const bankPaymentCount = computed(
+  () => payments.value.filter((p) => p.method !== 'efectivo').length
+)
+const assignedAccountCount = computed(
+  () => payments.value.filter((p) => p.method !== 'efectivo' && p.accountId != null).length
+)
+
 const dayFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
 function fmtDay(s: string | null | undefined) {
   if (!s) return '—'
@@ -227,6 +236,8 @@ const paymentForm = reactive({
   amount: undefined as number | undefined,
   paidAt: '',
   method: 'efectivo' as PaymentMethod,
+  /** null = efectivo. Lo llena SelectorCuentaPago. */
+  accountId: null as number | null,
   note: ''
 })
 
@@ -236,7 +247,9 @@ async function openPayments(sale: ApiSale) {
   Object.assign(paymentForm, {
     amount: undefined,
     paidAt: new Date().toISOString().slice(0, 10),
+    // Precargado con el metodo elegido al vender; el cobro real puede diferir.
     method: sale.paymentMethod,
+    accountId: null,
     note: ''
   })
   await refreshPayments()
@@ -268,6 +281,7 @@ const canSubmitPayment = computed(
     viewingSale.value.status !== 'anulada' &&
     (paymentForm.amount ?? 0) > 0 &&
     paymentForm.paidAt.length > 0 &&
+    isPaymentAccountValid(paymentForm.method, paymentForm.accountId) &&
     // Mismo tope que aplica el servidor; aquí solo evita el viaje perdido.
     (paymentForm.amount ?? 0) <= viewingSale.value.balance + 0.01
 )
@@ -282,10 +296,13 @@ async function submitPayment() {
         amount: paymentForm.amount,
         paidAt: paymentForm.paidAt,
         method: paymentForm.method,
+        accountId: paymentForm.accountId,
         note: paymentForm.note.trim() || undefined
       }
     })
     toast.add({ title: 'Pago registrado', color: 'success', icon: 'i-lucide-circle-check' })
+    // La cuenta y el método NO se limpian: varios abonos seguidos casi siempre
+    // entran a la misma cuenta.
     Object.assign(paymentForm, { amount: undefined, note: '' })
     await refreshPayments()
     await refresh()
@@ -1139,6 +1156,14 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
               El total es el de la venta, con el descuento ya aplicado y sin IVA.
             </p>
 
+            <AsignarCuentaPagos
+              v-if="viewingSale"
+              :endpoint="`/api/sales/${viewingSale.id}`"
+              :bank-payment-count="bankPaymentCount"
+              :assigned-count="assignedAccountCount"
+              @done="refreshPayments"
+            />
+
             <!-- Historial de pagos -->
             <div>
               <h3 class="text-sm font-semibold mb-2">Historial de pagos</h3>
@@ -1194,6 +1219,12 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                   <UFormField label="Método">
                     <USelect v-model="paymentForm.method" :items="paymentMethodItems" class="w-full" />
                   </UFormField>
+                  <SelectorCuentaPago
+                    v-model="paymentForm.accountId"
+                    :method="paymentForm.method"
+                  />
+                </div>
+                <div class="grid gap-3">
                   <UFormField label="Nota (opcional)">
                     <UInput v-model="paymentForm.note" placeholder="Referencia, folio…" class="w-full" />
                   </UFormField>

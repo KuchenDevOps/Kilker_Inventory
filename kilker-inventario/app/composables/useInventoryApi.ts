@@ -4,6 +4,7 @@
 // Lecturas públicas: useFetch (SSR). Llamadas autenticadas: Bearer del cliente
 // (la cookie no resuelve aquí; ver §7 de CLAUDE.md).
 import type {
+  ApiBankAccount,
   ApiCategory,
   ApiCorte,
   ApiKit,
@@ -171,6 +172,52 @@ export function useStores() {
     default: () => [],
     transform: (v) => v ?? []
   })
+}
+
+/**
+ * Cuentas bancarias. Requiere sesión (cualquier rol).
+ *
+ * ⚠️ NO usa `useFetch` como `useStores`: `/api/bank-accounts` exige auth y con
+ * este setup la cookie no resuelve el usuario en el servidor — hay que mandar el
+ * Bearer de la sesión viva (§7 de CLAUDE.md). Mismo patrón que `useKits`.
+ */
+export function useBankAccounts() {
+  const accounts = useState<ApiBankAccount[]>('bank-accounts', () => [])
+  const pending = useState('bank-accounts-pending', () => false)
+  const error = useState<string | null>('bank-accounts-error', () => null)
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      accounts.value = []
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        accounts.value = []
+        return
+      }
+      accounts.value = await $fetch<ApiBankAccount[]>('/api/bank-accounts', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      accounts.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  useSharedScope('bank-accounts', () => {
+    watch(user, () => void refresh(), { immediate: true })
+  })
+
+  return { accounts, pending, error, refresh }
 }
 
 /** Categorías para el selector de alta de producto. */

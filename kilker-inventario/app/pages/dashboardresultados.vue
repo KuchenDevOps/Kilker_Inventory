@@ -24,6 +24,8 @@ const {
 // ───────────────────────────────────────────────
 const EMPTY_BUCKET = {
   subtotal: 0,
+  iva: 0,
+  totalToPay: 0,
   totalPaid: 0,
   balance: 0,
   retentionIva: 0,
@@ -83,9 +85,16 @@ const allProductsProfitPct = computed(() => {
 // ───────────────────────────────────────────────
 //  VISTA CON IVA (16%)
 // ───────────────────────────────────────────────
-// El IVA no se guarda en la BD: es informativo y se calcula en la app, igual
-// que en el detalle de venta y en gastos. El botón cambia SOLO cómo se muestran
-// las cifras facturadas (ventas y gastos).
+// ⚠️ EL BOTÓN "CON IVA" YA NO ES SIMÉTRICO ENTRE VENTAS Y GASTOS.
+//
+// En VENTAS el IVA sigue siendo informativo: no se guarda, `total_amount` va
+// sin él y el 16% se calcula aquí sólo para mostrarlo. El botón sí manda.
+//
+// En GASTOS ya no: el IVA y las retenciones SE PAGAN, y lo que se debe es
+// `expenses.total_to_pay` (columna generada en la BD). Ese importe es dinero
+// real que salió del banco, así que la vista "sin IVA" de un gasto ya no
+// corresponde a ningún desembolso — es sólo la parte que cuenta como gasto del
+// negocio, porque el IVA se entera al SAT en vez de quedárselo.
 //
 // ⚠️ La utilidad y el resultado del periodo siguen saliendo de los importes SIN
 // IVA a propósito: el impuesto no es ingreso ni gasto del negocio (se cobra y se
@@ -97,22 +106,22 @@ const ivaFactor = computed(() => (withIva.value ? 1 + IVA_RATE : 1))
 /** Coletilla para los `hint` de las tarjetas afectadas; que el rótulo no mienta. */
 const ivaHint = computed(() => (withIva.value ? 'con IVA (16%)' : 'sin IVA'))
 const expenseHint = computed(() =>
-  withIva.value ? 'con IVA (16%) y retenciones' : 'sin IVA/retenciones'
+  withIva.value ? 'lo que se paga (IVA − retenciones)' : 'solo subtotal (gasto del negocio)'
 )
 
 const displaySalesValue = computed(() => netSalesValue.value * ivaFactor.value)
 
 /**
- * Total fiscal de un grupo de gastos: `subtotal + IVA − retención IVA −
- * retención ISR`. Es la MISMA cuenta de `/gastos` (la columna "Total con
- * impuestos" y el resumen del formulario); si aquí se sumaran las retenciones
- * en vez de restarlas, el dashboard y esa pantalla darían cifras distintas para
- * el mismo gasto. Las retenciones se restan porque no se le pagan al proveedor:
- * se le retienen para enterarlas al SAT.
+ * Total fiscal de un grupo de gastos: `subtotal + IVA − retenciones`.
+ *
+ * ⚠️ Ya NO se calcula aquí: se lee `totalToPay`, que viene del `total_to_pay`
+ * generado por Postgres. Esta función tenía la fórmula escrita a mano y el
+ * endpoint de abonos tenía otra; divergieron y por ahí entraron pagos inflados.
+ * Ahora hay una sola definición de "cuánto se debe" y vive en la base, así que
+ * este dashboard, /gastos y el tope de los abonos no pueden volver a discrepar.
  */
 function expenseWithTaxes(bucket: typeof EMPTY_BUCKET) {
-  if (!withIva.value) return bucket.subtotal
-  return bucket.subtotal * (1 + IVA_RATE) - bucket.retentionIva - bucket.retentionIsr
+  return withIva.value ? bucket.totalToPay : bucket.subtotal
 }
 
 const displayTotalExpenses = computed(

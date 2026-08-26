@@ -152,6 +152,35 @@ export interface StoreUpdateInput {
   isActive?: boolean
 }
 
+/**
+ * Cuenta bancaria tal como la devuelve `GET /api/bank-accounts`.
+ *
+ * ⚠️ De la tarjeta sólo existen los últimos 4 dígitos, en toda la pila: el
+ * número completo no se guarda ni se acepta. `cardLast4` es null cuando la
+ * cuenta no tiene plástico.
+ *
+ * El EFECTIVO no es una cuenta: un pago en efectivo lleva `accountId: null`.
+ */
+export interface ApiBankAccount {
+  id: number
+  bank: string
+  owner: string
+  cardLast4: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+  /** Pagos (de ventas, entradas y gastos) que usan esta cuenta. Campo aditivo. */
+  paymentCount?: number
+}
+
+/** Cuerpo para crear una cuenta bancaria (`POST /api/bank-accounts`, admin). */
+export interface NewBankAccountInput {
+  bank: string
+  owner: string
+  /** Exactamente 4 dígitos, o null. Un número largo se rechaza con 400. */
+  cardLast4?: string | null
+}
+
 /** Categoría tal como la devuelve `GET /api/categories`. */
 export interface ApiCategory {
   id: number
@@ -379,6 +408,8 @@ export interface ApiSalePayment {
   amount: string
   paidAt: string
   method: PaymentMethod
+  /** Cuenta de la que salió/entró el dinero. null = efectivo (o histórico sin asignar). */
+  accountId: number | null
   note: string | null
   createdByName: string | null
   createdAt: string
@@ -467,6 +498,8 @@ export interface ApiEntryPayment {
   amount: string
   paidAt: string
   method: PaymentMethod
+  /** Cuenta de la que salió/entró el dinero. null = efectivo (o histórico sin asignar). */
+  accountId: number | null
   note: string | null
   createdByName: string | null
   createdAt: string
@@ -688,6 +721,8 @@ export interface ApiExpensePayment {
   paidAt: string
   paidBy: string
   method: PaymentMethod
+  /** Cuenta de la que salió/entró el dinero. null = efectivo (o histórico sin asignar). */
+  accountId: number | null
   note: string | null
   createdByName: string | null
   createdAt: string

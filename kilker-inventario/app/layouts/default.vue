@@ -149,7 +149,13 @@ const allNav: NavEntry[] = [
     icon: 'i-lucide-shield',
     children: [
       { label: 'Sucursales', to: '/tiendas', icon: 'i-lucide-store', roles: ['admin', 'observador'] },
-      { label: 'Empleados', to: '/empleados', icon: 'i-lucide-users', roles: ['admin', 'observador'] }
+      { label: 'Empleados', to: '/empleados', icon: 'i-lucide-users', roles: ['admin', 'observador'] },
+      {
+        label: 'Cuentas bancarias',
+        to: '/cuentas',
+        icon: 'i-lucide-landmark',
+        roles: ['admin', 'observador']
+      }
     ]
   }
 ]

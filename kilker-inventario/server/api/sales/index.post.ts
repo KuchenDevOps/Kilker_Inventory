@@ -431,6 +431,9 @@ export default defineEventHandler(async (event) => {
         .where(and(eq(inventory.productId, l.productId), eq(inventory.storeId, storeId)))
     }
 
+    // ⚠️ Emitir la venta NO mueve dinero: el flujo (`banks_movements`) se
+    // asienta al COBRAR, en POST /api/sales/:id/payments. Una venta a crédito
+    // no entra un peso hasta que el cliente paga.
     return { invoice, items: lines }
   })
 })
