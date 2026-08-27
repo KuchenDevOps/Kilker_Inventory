@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { UNIT_LABELS } from '~/types/inventario'
 
-useHead({ title: 'Dashboard · Inventario Kilker' })
+useHead({ title: 'Dashboard Resultados · Inventario Kilker' })
 
 // Catálogo y sucursales: lecturas públicas, no cuestan verificación de token.
 // Se cargan una sola vez (no dependen del periodo ni de la sucursal elegida).
@@ -20,35 +20,33 @@ const {
 } = useDashboardSummary()
 
 // ───────────────────────────────────────────────
-//  GASTOS: total a pagar, pagado y pendiente — agrupado por tipo
+//  GASTOS: subtotal (a pagar), pagado y pendiente — agrupado por tipo
 // ───────────────────────────────────────────────
-// ⚠️ El total es `totalToPay` (subtotal + IVA − retenciones), NO el subtotal.
-// Este dashboard es operativo: sus tres cifras tienen que cuadrar entre sí
-// —total = pagado + pendiente— y tanto `totalPaid` como `balance` se miden
-// contra el pagable. Con el subtotal aquí, un gasto liquidado mostraba un
-// "pagado" mayor que su propio total y la resta no daba.
-//
-// El desglose fiscal (subtotal vs. IVA) va en /dashboardresultados, que es el
-// de resultados del negocio: ahí sí importa separar el IVA, porque se entera al
-// SAT y no es gasto propio.
-const EMPTY_BUCKET = { subtotal: 0, iva: 0, totalToPay: 0, totalPaid: 0, balance: 0 }
+const EMPTY_BUCKET = {
+  subtotal: 0,
+  iva: 0,
+  totalToPay: 0,
+  totalPaid: 0,
+  balance: 0,
+  retentionIva: 0,
+  retentionIsr: 0
+}
 
 const expensesByType = computed(
   () => summary.value?.expenses ?? { Fijo: EMPTY_BUCKET, Operativo: EMPTY_BUCKET }
 )
-
-const totalExpensesFijo = computed(() => expensesByType.value.Fijo.totalToPay)
-const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.totalToPay)
+const totalExpenses = computed(
+  () => expensesByType.value.Fijo.subtotal + expensesByType.value.Operativo.subtotal
+)
+// El desglose por tipo se muestra vía `displayExpensesFijo`/`displayExpensesOperativo`,
+// que además aplican IVA y retenciones cuando el botón está activo.
 
 const totalExpensesPaid = computed(
   () => expensesByType.value.Fijo.totalPaid + expensesByType.value.Operativo.totalPaid
 )
 
-// Desglose pagado/pendiente por tipo de gasto.
-const totalExpensesPaidFijo = computed(() => expensesByType.value.Fijo.totalPaid)
-const totalExpensesPaidOperativo = computed(() => expensesByType.value.Operativo.totalPaid)
-const totalExpensesPendingFijo = computed(() => expensesByType.value.Fijo.balance)
-const totalExpensesPendingOperativo = computed(() => expensesByType.value.Operativo.balance)
+
+
 
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -83,6 +81,56 @@ const allProductsProfitPct = computed(() => {
   if (netSalesValue.value <= 0) return 0
   return (allProductsNetProfit.value / netSalesValue.value) * 100
 })
+
+// ───────────────────────────────────────────────
+//  VISTA CON IVA (16%)
+// ───────────────────────────────────────────────
+// ⚠️ EL BOTÓN "CON IVA" YA NO ES SIMÉTRICO ENTRE VENTAS Y GASTOS.
+//
+// En VENTAS el IVA sigue siendo informativo: no se guarda, `total_amount` va
+// sin él y el 16% se calcula aquí sólo para mostrarlo. El botón sí manda.
+//
+// En GASTOS ya no: el IVA y las retenciones SE PAGAN, y lo que se debe es
+// `expenses.total_to_pay` (columna generada en la BD). Ese importe es dinero
+// real que salió del banco, así que la vista "sin IVA" de un gasto ya no
+// corresponde a ningún desembolso — es sólo la parte que cuenta como gasto del
+// negocio, porque el IVA se entera al SAT en vez de quedárselo.
+//
+// ⚠️ La utilidad y el resultado del periodo siguen saliendo de los importes SIN
+// IVA a propósito: el impuesto no es ingreso ni gasto del negocio (se cobra y se
+// entera), así que meterlo en la utilidad la infla con dinero ajeno. Por lo
+// mismo no se tocan "Costo total" ni "Compras", que son costo del almacén.
+const IVA_RATE = 0.16
+const withIva = ref(false)
+const ivaFactor = computed(() => (withIva.value ? 1 + IVA_RATE : 1))
+/** Coletilla para los `hint` de las tarjetas afectadas; que el rótulo no mienta. */
+const ivaHint = computed(() => (withIva.value ? 'con IVA (16%)' : 'sin IVA'))
+const expenseHint = computed(() =>
+  withIva.value ? 'lo que se paga (IVA − retenciones)' : 'solo subtotal (gasto del negocio)'
+)
+
+const displaySalesValue = computed(() => netSalesValue.value * ivaFactor.value)
+
+/**
+ * Total fiscal de un grupo de gastos: `subtotal + IVA − retenciones`.
+ *
+ * ⚠️ Ya NO se calcula aquí: se lee `totalToPay`, que viene del `total_to_pay`
+ * generado por Postgres. Esta función tenía la fórmula escrita a mano y el
+ * endpoint de abonos tenía otra; divergieron y por ahí entraron pagos inflados.
+ * Ahora hay una sola definición de "cuánto se debe" y vive en la base, así que
+ * este dashboard, /gastos y el tope de los abonos no pueden volver a discrepar.
+ */
+function expenseWithTaxes(bucket: typeof EMPTY_BUCKET) {
+  return withIva.value ? bucket.totalToPay : bucket.subtotal
+}
+
+const displayTotalExpenses = computed(
+  () => expenseWithTaxes(expensesByType.value.Fijo) + expenseWithTaxes(expensesByType.value.Operativo)
+)
+const displayExpensesFijo = computed(() => expenseWithTaxes(expensesByType.value.Fijo))
+const displayExpensesOperativo = computed(() =>
+  expenseWithTaxes(expensesByType.value.Operativo)
+)
 
 // --- DEFINIR PERIODFROM Y PERIODTO ---
 const periodFrom = ref<string | undefined>(undefined)
@@ -201,7 +249,7 @@ const entriesPaid = computed(() => summary.value?.entriesPaid ?? 0)
 const entriesBalance = computed(() => summary.value?.entriesBalance ?? 0)
 
 
-const totalLoses = computed(() => allProductsNetProfit.value - totalExpensesPaid.value)
+const totalLoses = computed(() => allProductsNetProfit.value - totalExpenses.value)
 const activeStores = computed(() => stores.value.filter((s) => s.isActive).length)
 
 const lowStock = computed(() =>
@@ -323,7 +371,15 @@ const metricsSection1 = computed(() => {
       loading: loadingProducts.value || loadingSummary.value,
       globalOnly: false
     },
-
+    {
+      label: 'Inventario inicial',
+      value: currency.format(summary.value?.startInventoryValue ?? 0),
+      hint: 'entradas "II"',
+      icon: 'i-lucide-calendar-check',
+      color: 'text-warning',
+      loading: loadingSummary.value,
+      globalOnly: false
+    },
   ]
   
   return selectedStoreId.value ? all.filter((m) => !m.globalOnly) : all
@@ -331,6 +387,7 @@ const metricsSection1 = computed(() => {
 
 const metricsSection2 = computed(() => {
   const all = [
+   
     {
       label: 'Compras',
       value: currency.format(entryValue.value),
@@ -340,24 +397,8 @@ const metricsSection2 = computed(() => {
       loading: loadingSummary.value,
       globalOnly: false
     },
-    {
-      label: 'Compras pagadas',
-      value: currency.format(entriesPaid.value),
-      hint: 'abonado a las entradas del periodo',
-      icon: 'i-lucide-circle-check',
-      color: 'text-success',
-      loading: loadingSummary.value,
-      globalOnly: false
-    },
-    {
-      label: 'Compras por pagar',
-      value: currency.format(entriesBalance.value),
-      hint: 'saldo pendiente con proveedores',
-      icon: 'i-lucide-clock',
-      color: 'text-warning',
-      loading: loadingSummary.value,
-      globalOnly: false
-    }
+
+    
   ]
 
  
@@ -373,8 +414,8 @@ const metricsSection2 = computed(() => {
 
   all.push({
     label: 'Venta total',
-    value: currency.format(netSalesValue.value),
-    hint: 'de todos los productos vendidos',
+    value: currency.format(displaySalesValue.value),
+    hint: `de todos los productos vendidos · ${ivaHint.value}`,
     icon: 'i-lucide-trending-up',
     color: 'text-info',
     loading: loadingSummary.value,
@@ -383,29 +424,58 @@ const metricsSection2 = computed(() => {
    all.push({
   label: 'Utilidad total',
   value: currency.format(allProductsNetProfit.value),
-  hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
+  // Siempre sobre importes sin IVA, aunque el botón esté activo: el impuesto
+  // no es utilidad. El rótulo lo dice para que no parezca un descuadre.
+  hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales · sin IVA`,
   icon: (allProductsNetProfit.value >= 0) ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
   color: (allProductsNetProfit.value >= 0) ? 'text-success' : 'text-error',
   loading: loadingSummary.value,
   globalOnly: false
 })
-  all.push({
-    label: 'Total gastos Pagados',
-    value: currency.format(totalExpensesPaid.value),
-    hint: 'en el periodo',
-    icon: 'i-lucide-circle-check',
-    color: 'text-success',
-    loading: loadingSummary.value,
-    globalOnly: false
-  })
+  
+all.push({
+  label: 'Gastos totales',
+  value: currency.format(displayTotalExpenses.value),
+  hint: `${expenseHint.value} · en el periodo`,
+  icon: 'i-lucide-dollar-sign',
+  color: 'text-warning',
+  loading: loadingSummary.value,
+  globalOnly: false
+
+})
 
 
 
- if (totalLoses.value < 0) {
+ 
+
+all.push({
+  label: 'Gastos fijos',
+  value: currency.format(displayExpensesFijo.value),
+  hint: `${expenseHint.value} · en el periodo`,
+  icon: 'i-lucide-home',
+  color: 'text-warning',
+  loading: loadingSummary.value,
+  globalOnly: false
+})
+
+
+all.push({
+  label: 'Gastos operativos',
+  value: currency.format(displayExpensesOperativo.value),
+  hint: `${expenseHint.value} · en el periodo`,
+  icon: 'i-lucide-wrench',
+  color: 'text-warning',
+  loading: loadingSummary.value,
+  globalOnly: false
+})
+
+
+// Resultado del periodo: utilidad − gastos, ambos sin IVA (ver nota del botón).
+if (totalLoses.value < 0) {
     all.push({
       label: 'Pérdidas',
       value: currency.format(totalLoses.value),
-      hint: 'en el periodo',
+      hint: 'en el periodo · sin IVA',
       icon: 'i-lucide-alert-circle',
       color: 'text-error',
       loading: loadingSummary.value,
@@ -415,78 +485,13 @@ const metricsSection2 = computed(() => {
     all.push({
       label: 'Ganancias',
       value: currency.format(totalLoses.value),
-      hint: 'en el periodo',
+      hint: 'en el periodo · sin IVA',
       icon: 'i-lucide-check-circle',
       color: 'text-success',
       loading: loadingSummary.value,
       globalOnly: false
     })
   }
-
-all.push({
-  label: 'Gastos fijos',
-  value: currency.format(totalExpensesFijo.value),
-  hint: 'sin IVA/retenciones · en el periodo',
-  icon: 'i-lucide-home',
-  color: 'text-warning',
-  loading: loadingSummary.value,
-  globalOnly: false
-})
-
-
-
-
-
-all.push({
-  label: 'Gastos Fijos pagados',
-  value: currency.format(totalExpensesPaidFijo.value),
-  hint: 'en el periodo',
-  icon: 'i-lucide-circle-check',
-  color: 'text-success',
-  loading: loadingSummary.value,
-  globalOnly: false
-})
-
-all.push({
-  label: 'Gastos Fijos pendientes',
-  value: currency.format(totalExpensesPendingFijo.value),
-  hint: 'por pagar',
-  icon: 'i-lucide-clock',
-  color: 'text-error',
-  loading: loadingSummary.value,
-  globalOnly: false
-})
-
-all.push({
-  label: 'Gastos operativos',
-  value: currency.format(totalExpensesOperativo.value),
-  hint: 'sin IVA/retenciones · en el periodo',
-  icon: 'i-lucide-wrench',
-  color: 'text-warning',
-  loading: loadingSummary.value,
-  globalOnly: false
-})
-
-all.push({
-  label: 'Gastos Operativos pagados',
-  value: currency.format(totalExpensesPaidOperativo.value),
-  hint: 'en el periodo',
-  icon: 'i-lucide-circle-check',
-  color: 'text-success',
-  loading: loadingSummary.value,
-  globalOnly: false
-})
-
-all.push({
-  label: 'Gastos Operativos pendientes',
-  value: currency.format(totalExpensesPendingOperativo.value),
-  hint: 'por pagar',
-  icon: 'i-lucide-clock',
-  color: 'text-error',
-  loading: loadingSummary.value,
-  globalOnly: false
-})
-
 
 
 
@@ -518,7 +523,7 @@ const filteredTopProducts = computed(() => {
   <UContainer class="py-8 space-y-8">
     <header class="flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-semibold">Dashboard</h1>
+        <h1 class="text-2xl font-semibold">Dashboard Resultados</h1>
         <p class="text-sm text-muted">Resumen del inventario · datos reales</p>
       </div>
       <div class="flex gap-2">
@@ -531,10 +536,29 @@ const filteredTopProducts = computed(() => {
 
     <div class="flex flex-wrap items-center gap-3">
       <FiltroCortePeriodo v-model:from="periodFrom" v-model:to="periodTo" />
+      <!-- Solo cambia la vista: no recarga nada, el IVA se calcula aquí. -->
+      <UButton
+        :icon="withIva ? 'i-lucide-percent' : 'i-lucide-percent-circle'"
+        :color="withIva ? 'primary' : 'neutral'"
+        :variant="withIva ? 'solid' : 'subtle'"
+       
+        @click="withIva = !withIva"
+      >
+        {{ withIva ? 'Con IVA' : 'Sin IVA' }}
+      </UButton>
       <span class="text-xs text-muted ml-auto">
         Última actualización: {{ new Date(lastRefreshTime).toLocaleTimeString() }}
       </span>
     </div>
+
+    <!-- <UAlert
+      v-if="withIva"
+      color="info"
+      variant="soft"
+      icon="i-lucide-info"
+      title="Ventas y gastos mostrados con IVA (16%)"
+      description="El IVA es informativo y se calcula en la app: no está en la base de datos. La utilidad, las ganancias/pérdidas, el costo y las compras siguen sin IVA, porque el impuesto no es ingreso ni gasto del negocio."
+    /> -->
 
 <USelect
   v-model="selectedStoreId"
@@ -584,6 +608,7 @@ const filteredTopProducts = computed(() => {
     <UIcon :name="m.icon" :class="['size-6 shrink-0', m.color]" />
   </div>
 </UCard>
+
  <UCard :ui="{ body: 'p-3 sm:p-4' }">
   <template #header>
     <div class="flex items-center gap-2 py-0">

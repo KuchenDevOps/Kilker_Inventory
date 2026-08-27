@@ -11,6 +11,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db'
 import { entryPayments, inventory, invoices, salePayments, stockMovements } from '../db/schema'
+import { reversePaymentCashFlowTx } from './cashFlow'
 
 /** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -95,12 +96,33 @@ export async function voidInvoiceTx(
     .where(eq(invoices.id, opts.invoiceId))
     .returning()
 
+  // ⚠️ ORDEN: revertir el flujo ANTES de borrar los abonos. Los cobros ya
+  // asentados se devuelven con una fila nueva (`anulacion`), no borrando la
+  // original — `banks_movements` es append-only igual que el kardex. Y la liga
+  // es `ON DELETE SET NULL`: si se borra el abono primero, el movimiento de
+  // dinero queda huérfano y ya no hay por dónde encontrarlo para revertirlo, así
+  // que el cobro se quedaría sumado a la cuenta para siempre.
+  const paymentsToDelete = await tx.query.salePayments.findMany({
+    where: eq(salePayments.invoiceId, opts.invoiceId),
+    columns: { id: true }
+  })
+
+  const cashFlowReversals = await reversePaymentCashFlowTx(tx, {
+    source: { salePaymentIds: paymentsToDelete.map((p) => p.id) },
+    profileId: opts.profileId,
+    reason: opts.reason ?? `Anulación de la venta ${invoice.folio}`
+  })
+
   const deletedPayments = await tx
     .delete(salePayments)
     .where(eq(salePayments.invoiceId, opts.invoiceId))
     .returning({ id: salePayments.id })
 
-  return { ...updated!, deletedPayments: deletedPayments.length }
+  return {
+    ...updated!,
+    deletedPayments: deletedPayments.length,
+    cashFlowReversals: cashFlowReversals.length
+  }
 }
 
 /**
@@ -190,10 +212,28 @@ export async function voidMovementTx(
       )
     )
 
+  // Mismo orden que en la venta, y por la misma razón: revertir el flujo antes
+  // de borrar los abonos, o el movimiento de dinero queda huérfano.
+  const paymentsToDelete = await tx.query.entryPayments.findMany({
+    where: eq(entryPayments.movementId, opts.movementId),
+    columns: { id: true }
+  })
+
+  const cashFlowReversals = await reversePaymentCashFlowTx(tx, {
+    source: { entryPaymentIds: paymentsToDelete.map((p) => p.id) },
+    profileId: opts.profileId,
+    reason: opts.reason || 'Anulación de entrada'
+  })
+
   const deletedPayments = await tx
     .delete(entryPayments)
     .where(eq(entryPayments.movementId, opts.movementId))
     .returning({ id: entryPayments.id })
 
-  return { ok: true as const, movementId: movement.id, deletedPayments: deletedPayments.length }
+  return {
+    ok: true as const,
+    movementId: movement.id,
+    deletedPayments: deletedPayments.length,
+    cashFlowReversals: cashFlowReversals.length
+  }
 }

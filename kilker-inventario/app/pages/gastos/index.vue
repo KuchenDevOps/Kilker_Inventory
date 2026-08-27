@@ -213,6 +213,8 @@ const paymentForm = reactive({
   paidAt: '',
   paidBy: '',
   method: 'efectivo' as PaymentMethod,
+  /** null = efectivo. Lo llena SelectorCuentaPago. */
+  accountId: null as number | null,
   note: ''
 })
 const submittingPayment = ref(false)
@@ -222,9 +224,10 @@ async function openPayments(e: ApiExpense) {
   showPaymentsModal.value = true
   Object.assign(paymentForm, {
     amount: undefined,
-  paidBy: '', 
+  paidBy: '',
     paidAt: new Date().toISOString().slice(0, 10),
     method: 'efectivo',
+    accountId: null,
     note: ''
   })
   await refreshPayments()
@@ -256,6 +259,7 @@ const canSubmitPayment = computed(
     paymentForm.paidAt.length > 0 &&
     !!viewingExpense.value &&
     paymentForm.paidBy != '' &&
+    isPaymentAccountValid(paymentForm.method, paymentForm.accountId) &&
     (paymentForm.amount ?? 0) <= viewingExpense.value.balance + 0.01
 )
 
@@ -270,10 +274,13 @@ async function submitPayment() {
         paidAt: paymentForm.paidAt,
         paidBy: paymentForm.paidBy,
         method: paymentForm.method,
+        accountId: paymentForm.accountId,
         note: paymentForm.note.trim() || undefined
       }
     })
     toast.add({ title: 'Pago registrado', color: 'success', icon: 'i-lucide-circle-check' })
+    // La cuenta y el método NO se limpian: al capturar varios abonos seguidos
+    // casi siempre salen de la misma cuenta.
     Object.assign(paymentForm, { amount: undefined, note: '' })
     await refreshPayments()
     await refresh()
@@ -290,6 +297,15 @@ async function submitPayment() {
     submittingPayment.value = false
   }
 }
+
+// ─── Asignación masiva de cuenta (corrección / relleno del histórico) ───
+// Los pagos en efectivo NO cuentan: no llevan cuenta ni deben llevarla.
+const bankPaymentCount = computed(
+  () => payments.value.filter((p) => p.method !== 'efectivo').length
+)
+const assignedAccountCount = computed(
+  () => payments.value.filter((p) => p.method !== 'efectivo' && p.accountId != null).length
+)
 
 const dayFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' })
 function fmtDay(s: string | null | undefined) {
@@ -704,6 +720,14 @@ onMounted(() => {
               </div>
             </div>
 
+            <AsignarCuentaPagos
+              v-if="viewingExpense"
+              :endpoint="`/api/expenses/${viewingExpense.id}`"
+              :bank-payment-count="bankPaymentCount"
+              :assigned-count="assignedAccountCount"
+              @done="refreshPayments"
+            />
+
             <!-- Historial de pagos -->
             <div>
               <h3 class="text-sm font-semibold mb-2">Historial de pagos</h3>
@@ -722,6 +746,10 @@ onMounted(() => {
                     <p class="text-xs text-muted">
                       {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }} 
                       <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
+                      <span v-if="p.accountLabel"> · {{ p.accountLabel }}</span>
+                      <span v-else-if="p.method !== 'efectivo'" class="text-warning">
+                        · sin cuenta
+                      </span>
                     </p>
                     <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
                   </div>
@@ -760,7 +788,13 @@ onMounted(() => {
                 <UFormField label="Método">
                   <USelect v-model="paymentForm.method" :items="paymentMethodItems" class="w-full" />
                 </UFormField>
-                <UFormField label="Nota (opcional)">
+                <SelectorCuentaPago
+                  v-model="paymentForm.accountId"
+                  :method="paymentForm.method"
+                />
+              </div>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <UFormField label="Nota (opcional)" class="sm:col-span-2">
                   <UInput v-model="paymentForm.note" placeholder="Referencia, folio…" class="w-full" />
                 </UFormField>
               </div>

@@ -7,9 +7,32 @@
 import type { ApiMonthlyInventory } from '~/types/inventario'
 
 export interface ExpenseBucket {
+  /**
+   * Suma de `expenses.amount`. Es el GASTO DEL NEGOCIO, no lo que se desembolsa:
+   * el IVA se paga pero se entera al SAT, así que no es gasto propio.
+   */
   subtotal: number
+  /** IVA de esos gastos (`expenses.iva`, columna generada). */
+  iva: number
+  /**
+   * ⚠️ Lo que REALMENTE se paga: `subtotal + IVA − retenciones`
+   * (`expenses.total_to_pay`, columna generada por Postgres).
+   *
+   * `totalPaid` y `balance` se miden contra ESTE número, no contra `subtotal`.
+   * No lo recalcules en el cliente: la fórmula escrita a mano en el dashboard y
+   * la del endpoint de abonos ya divergieron una vez y por ahí entraron pagos
+   * inflados. Hay una sola definición y vive en la base.
+   */
+  totalToPay: number
   totalPaid: number
   balance: number
+  /**
+   * Retenciones capturadas en los gastos del periodo. YA NO son informativas:
+   * se restan de `totalToPay` porque no se le pagan al proveedor, se le retienen
+   * para enterarlas al SAT. Vienen desglosadas por si se quieren mostrar.
+   */
+  retentionIva: number
+  retentionIsr: number
 }
 
 export interface DashboardSummary {
@@ -18,6 +41,8 @@ export interface DashboardSummary {
   to: string | null
   /** Compras del periodo (entradas, excluyendo facturas 'II' y anuladas). */
   entriesValue: number
+  /** Inventario inicial del periodo (entradas 'II', excluyendo anuladas). */
+  startInventoryValue: number
   /** Abonado y saldo de esas mismas compras: suman `entriesValue`. */
   entriesPaid: number
   entriesBalance: number

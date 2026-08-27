@@ -25,3 +25,24 @@ export const BUSINESS_UTC_OFFSET = '-06:00'
 export function parseBusinessDate(dateOnly: string): Date {
   return new Date(`${dateOnly}T00:00:00${BUSINESS_UTC_OFFSET}`)
 }
+
+const [, offsetSign = '-', offsetHours = '06', offsetMinutes = '00'] =
+  /^([+-])(\d{2}):(\d{2})$/.exec(BUSINESS_UTC_OFFSET) ?? []
+const OFFSET_MS =
+  (offsetSign === '-' ? -1 : 1) *
+  (Number(offsetHours) * 60 + Number(offsetMinutes)) *
+  60_000
+
+/**
+ * Inversa de `parseBusinessDate`: el día del negocio (`YYYY-MM-DD`) en que cayó
+ * un instante. Es lo que hay que usar para llenar cualquier columna `date` a
+ * partir de un `timestamptz`.
+ *
+ * ⚠️ NO usar `toISOString().slice(0, 10)` a secas: una venta de las 8 de la
+ * noche en México es ya el día siguiente en UTC, así que ese atajo la asienta
+ * en el día equivocado — el mismo desfase de seis horas que documenta el
+ * encabezado de este archivo.
+ */
+export function businessDateOnly(instant: Date): string {
+  return new Date(instant.getTime() + OFFSET_MS).toISOString().slice(0, 10)
+}

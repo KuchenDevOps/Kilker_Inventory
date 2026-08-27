@@ -3,9 +3,8 @@
 // ───────────────────────────────────────────────
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { expenses, expenseItems, stores } from '../../db/schema'
+import { expenses, expenseItems, expensePayments, stores } from '../../db/schema'
 
-const IVA_RATE = 0.16
 
 const EXPENSE_TYPES = ['Fijo', 'Operativo'] as const
 type ExpenseTypeValue = (typeof EXPENSE_TYPES)[number]
@@ -109,18 +108,16 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  let retentionIva: number | null | undefined = undefined
   if (body.retentionIva !== undefined) {
-    retentionIva = Number(body.retentionIva)
+    const retentionIva = Number(body.retentionIva)
     if (!Number.isFinite(retentionIva) || retentionIva < 0) {
       throw createError({ statusCode: 400, statusMessage: 'retentionIva inválido' })
     }
     values.retentionIva = String(retentionIva)
   }
 
-  let retentionIsr: number | null | undefined = undefined
   if (body.retentionIsr !== undefined) {
-    retentionIsr = Number(body.retentionIsr)
+    const retentionIsr = Number(body.retentionIsr)
     if (!Number.isFinite(retentionIsr) || retentionIsr < 0) {
       throw createError({ statusCode: 400, statusMessage: 'retentionIsr inválido' })
     }
@@ -165,11 +162,40 @@ export default defineEventHandler(async (event) => {
           .returning()
       }
 
+      // ⚠️ Editar un gasto ya pagado puede dejarlo pagado DE MÁS: basta bajar un
+      // concepto o subir una retención para que el nuevo `total_to_pay` quede
+      // por debajo de lo que ya se abonó. Antes daba igual —las retenciones no
+      // se pagaban—; ahora sí, y el saldo de la cuenta ya movió ese dinero.
+      //
+      // Se compara contra el `total_to_pay` que devolvió el UPDATE, o sea el que
+      // acaba de calcular Postgres: volver a derivarlo aquí reintroduciría la
+      // segunda fórmula que causó los pagos inflados. El throw revierte la
+      // transacción entera, edición incluida.
+      const paidRows = await tx.query.expensePayments.findMany({
+        where: eq(expensePayments.expenseId, id),
+        columns: { amount: true }
+      })
+      const totalPaid = paidRows.reduce((sum, p) => sum + Number(p.amount), 0)
+      const totalToPay = Number(expense.totalToPay)
+      if (totalPaid > totalToPay + 0.01) {
+        throw createError({
+          statusCode: 400,
+          statusMessage:
+            `No se puede dejar el gasto en ${totalToPay.toFixed(2)}: ya tiene ` +
+            `${totalPaid.toFixed(2)} pagados. Cancela o ajusta los abonos primero.`
+        })
+      }
+
       return { ...expense, items }
     })
 
     return updated
   } catch (error) {
+    // Un error de validación de adentro de la transacción (p. ej. "ya tiene N
+    // pagados") es del usuario, no del servidor: hay que dejarlo salir tal cual.
+    // Envolverlo en un 500 genérico le quitaba el mensaje y dejaba al usuario
+    // sin saber qué corregir.
+    if (error && typeof error === 'object' && 'statusCode' in error) throw error
     console.error('Error updating expense:', error)
     throw createError({ statusCode: 500, statusMessage: 'Error al actualizar el gasto' })
   }
