@@ -1,15 +1,18 @@
 // ───────────────────────────────────────────────
 //  POST /api/expenses/:id/payments — registrar un abono
 // ───────────────────────────────────────────────
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { useDb } from '../../../../db'
 import { expensePayments, expenses, paymentMethod } from '../../../../db/schema'
+import { recordPaymentCashFlow, resolvePaymentAccount } from '../../../../utils/cashFlow'
 
 interface NewPaymentBody {
   amount?: number | string
   paidAt?: string
   paidBy?: string
   method?: string
+  /** Cuenta bancaria del pago. Obligatoria salvo en efectivo. */
+  accountId?: number | string | null
   note?: string
 }
 
@@ -38,57 +41,92 @@ export default defineEventHandler(async (event) => {
   const method = ALLOWED_METHODS.includes(body?.method as never)
     ? (body!.method as (typeof ALLOWED_METHODS)[number])
     : 'efectivo'
+  // NULL = efectivo; un método bancario sin cuenta se rechaza (ver cashFlow.ts).
+  const accountId = resolvePaymentAccount(method, body?.accountId)
 
   const db = useDb()
 
-  const expense = await db.query.expenses.findFirst({
-    where: eq(expenses.id, expenseId),
-    with: { payments: { columns: { amount: true } } }
-  })
-  if (!expense) throw createError({ statusCode: 404, statusMessage: 'Gasto no existe' })
+  // Transacción con el gasto bloqueado ANTES de leer el saldo: sin el candado,
+  // dos abonos simultáneos leen el mismo "ya pagado" y el gasto se sobrepaga.
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM ${expenses} WHERE id = ${expenseId} FOR UPDATE`)
 
-  if (isStoreScopedRole(profile.role) && expense.storeId !== profile.storeId) {
-    throw createError({ statusCode: 403, statusMessage: 'No puedes pagar gastos de otra sucursal' })
-  }
-
-// El monto a pagar es el subtotal puro (sin IVA ni retenciones — esos son
-  // solo informativos y ya no afectan lo que se cobra).
-  const totalToPay = Number(expense.amount)
-  const alreadyPaid = expense.payments.reduce((sum, p) => sum + Number(p.amount), 0)
-  const remaining = Math.round((totalToPay - alreadyPaid) * 100) / 100
-
-  // Candado: el abono no puede exceder el saldo NETO. Este chequeo existía
-  // como cálculo pero nunca se aplicaba, y por ahí entraron pagos capturados
-  // con IVA (monto × 1.16) que inflaban el "pagado" del dashboard. La UI ya
-  // topa el campo, pero el tope de la UI se salta con un POST directo.
-  if (remaining <= 0) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Este gasto ya está pagado por completo'
+    const expense = await tx.query.expenses.findFirst({
+      where: eq(expenses.id, expenseId),
+      with: { payments: { columns: { amount: true } } }
     })
-  }
-  // Tolerancia de un centavo por redondeo en el cliente.
-  if (amount > remaining + 0.01) {
-    throw createError({
-      statusCode: 400,
-      statusMessage:
-        `El abono (${amount.toFixed(2)}) excede el saldo pendiente (${remaining.toFixed(2)}). ` +
-        'Los pagos se registran sin IVA ni retenciones: son informativos.'
-    })
-  }
+    if (!expense) throw createError({ statusCode: 404, statusMessage: 'Gasto no existe' })
 
-  const [created] = await db
-    .insert(expensePayments)
-    .values({
-      expenseId,
-      amount: String(amount),
+    if (isStoreScopedRole(profile.role) && expense.storeId !== profile.storeId) {
+      throw createError({
+        statusCode: 403,
+        statusMessage: 'No puedes pagar gastos de otra sucursal'
+      })
+    }
+
+    // ⚠️ El pagable es `total_to_pay` = subtotal + IVA − retenciones, LEÍDO de
+    // la base (es una columna generada). El IVA y las retenciones dejaron de ser
+    // informativos: ahora se pagan.
+    //
+    // Se lee, no se recalcula, y eso es el punto: antes el pagable se derivaba
+    // en un lado y la pantalla lo mostraba con otra fórmula, divergieron, y
+    // entraron pagos inflados (monto × 1.16) que nadie topó. Con la columna
+    // generada hay UNA definición de "cuánto se debe" y la pone Postgres.
+    const totalToPay = Number(expense.totalToPay)
+    const alreadyPaid = expense.payments.reduce((sum, p) => sum + Number(p.amount), 0)
+    const remaining = Math.round((totalToPay - alreadyPaid) * 100) / 100
+
+    if (totalToPay <= 0) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Este gasto no tiene importe que pagar'
+      })
+    }
+    if (remaining <= 0) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Este gasto ya está pagado por completo'
+      })
+    }
+    // Tolerancia de un centavo por redondeo en el cliente. El tope se aplica en
+    // el servidor a propósito: el de la UI se salta con un POST directo.
+    if (amount > remaining + 0.01) {
+      throw createError({
+        statusCode: 400,
+        statusMessage:
+          `El abono (${amount.toFixed(2)}) excede el saldo pendiente (${remaining.toFixed(2)}). ` +
+          `El total a pagar es ${totalToPay.toFixed(2)} (subtotal + IVA − retenciones).`
+      })
+    }
+
+    const [created] = await tx
+      .insert(expensePayments)
+      .values({
+        expenseId,
+        amount: String(amount),
+        paidAt,
+        paidBy,
+        method,
+        accountId,
+        note: body?.note?.trim() || null,
+        createdBy: profile.id
+      })
+      .returning()
+    if (!created) {
+      throw createError({ statusCode: 500, statusMessage: 'No se pudo registrar el pago' })
+    }
+
+    const cashFlow = await recordPaymentCashFlow(tx, {
+      source: { kind: 'gasto', expensePaymentId: created.id },
+      amount,
       paidAt,
-      paidBy,
+      accountId,
       method,
-      note: body?.note?.trim() || null,
-      createdBy: profile.id
+      storeId: expense.storeId,
+      profileId: profile.id,
+      note: `Pago gasto ${expense.supplier} ${expense.supplierInvoiceNumber}`
     })
-    .returning()
 
-  return created
+    return { ...created, cashFlow }
+  })
 })

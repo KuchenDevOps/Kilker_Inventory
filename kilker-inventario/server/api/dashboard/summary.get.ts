@@ -28,12 +28,23 @@ function toExpenseDate(v: unknown): string | null {
   return match ? match[0] : null
 }
 
-// `retentionIva`/`retentionIsr` son informativas, igual que el IVA: NO afectan
-// lo que se paga (el cobrable es `expenses.amount`, el subtotal puro). Van en el
-// resumen para que el dashboard pueda mostrar el total fiscal del gasto
-// —subtotal + IVA − retenciones—, que es la misma cuenta de /gastos.
+// ⚠️ El IVA y las retenciones de un gasto YA NO SON INFORMATIVOS: lo que se
+// paga es `expenses.total_to_pay` (= subtotal + IVA − retenciones), una columna
+// GENERADA por Postgres. `subtotal` sigue viniendo aparte porque es lo que se
+// contabiliza como gasto del negocio —el IVA se entera al SAT, no es gasto—,
+// pero `totalPaid` y `balance` se miden contra `total_to_pay`.
+//
+// Toparlos contra `amount` (el subtotal) era lo que hacía este endpoint hasta
+// que el IVA pasó a pagarse, y dejó de ser correcto en el momento exacto en que
+// cambió el pagable: un gasto liquidado por completo reportaba como pagado sólo
+// su subtotal y su pendiente salía en CERO aunque todavía debiera el 16%.
+//
+// ⚠️ Esto vale sólo para gastos. En VENTAS el IVA sigue siendo informativo y el
+// cobrable sigue siendo `invoices.total_amount` a secas.
 const EMPTY_EXPENSE_BUCKET = {
   subtotal: 0,
+  iva: 0,
+  totalToPay: 0,
   totalPaid: 0,
   balance: 0,
   retentionIva: 0,
@@ -177,8 +188,13 @@ export default defineEventHandler(async (event) => {
       .select({
         type: expenses.type,
         subtotal: sql<string>`coalesce(sum(round(${expenses.amount}, 2)), 0)`,
-        totalPaid: sql<string>`coalesce(sum(least(round(${expenses.amount}, 2), round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
-        balance: sql<string>`coalesce(sum(greatest(0, round(${expenses.amount}, 2) - round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
+        iva: sql<string>`coalesce(sum(round(${expenses.iva}, 2)), 0)`,
+        totalToPay: sql<string>`coalesce(sum(round(${expenses.totalToPay}, 2)), 0)`,
+        // Se topa contra `total_to_pay`, NO contra `amount`: el pagable trae el
+        // IVA. `least`/`greatest` topan por gasto antes de agregar por tipo, si
+        // no un sobrepago compensaría el saldo de otro gasto.
+        totalPaid: sql<string>`coalesce(sum(least(round(${expenses.totalToPay}, 2), round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
+        balance: sql<string>`coalesce(sum(greatest(0, round(${expenses.totalToPay}, 2) - round(coalesce(${paymentsAgg.paid}, 0), 2))), 0)`,
         // Nullables: sin el coalesce interno, un solo gasto sin retención
         // capturada anula la suma del tipo entero.
         retentionIva: sql<string>`coalesce(sum(round(coalesce(${expenses.retentionIva}, 0), 2)), 0)`,
@@ -205,6 +221,8 @@ export default defineEventHandler(async (event) => {
   for (const row of expenseRows) {
     expensesByType[row.type] = {
       subtotal: round2(Number(row.subtotal)),
+      iva: round2(Number(row.iva)),
+      totalToPay: round2(Number(row.totalToPay)),
       totalPaid: round2(Number(row.totalPaid)),
       balance: round2(Number(row.balance)),
       retentionIva: round2(Number(row.retentionIva)),

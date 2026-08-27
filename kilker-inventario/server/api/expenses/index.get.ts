@@ -5,8 +5,6 @@ import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { expenses, expenseItems, expensePayments } from '../../db/schema'
 
-const IVA_RATE = 0.16
-
 function toDateOnly(v: unknown): string | null {
   const s = String(v ?? '')
   const match = s.match(/^\d{4}-\d{2}-\d{2}/)
@@ -102,16 +100,21 @@ export default defineEventHandler(async (event) => {
   })
 
   const mapped = rows.map((e) => {
-    const totalToPay = Math.round(Number(e.amount) * 100) / 100
+    // ⚠️ `subtotal`, `iva` y `totalToPay` se LEEN de la fila; no se recalculan
+    // aquí. `iva` y `total_to_pay` son columnas generadas por Postgres
+    // (subtotal + IVA − retenciones), y ese es justo el punto: cuando esta
+    // pantalla derivaba el IVA por su cuenta y el endpoint de abonos usaba otra
+    // fórmula, las dos divergieron y entraron pagos inflados. Una sola
+    // definición, y vive en la base.
+    const subtotal = Math.round(Number(e.amount) * 100) / 100
+    const iva = Math.round(Number(e.iva) * 100) / 100
+    const totalToPay = Math.round(Number(e.totalToPay) * 100) / 100
     const totalPaid = Math.round(e.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
     const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
 
     let paymentStatus: 'pendiente' | 'parcial' | 'pagado' = 'pendiente'
     if (totalPaid >= totalToPay && totalToPay > 0) paymentStatus = 'pagado'
     else if (totalPaid > 0) paymentStatus = 'parcial'
-
-    const subtotal = Math.round(e.items.reduce((sum, it) => sum + Number(it.amount), 0) * 100) / 100
-    const iva = Math.round(subtotal * IVA_RATE * 100) / 100
 
     // Quién(es) pagaron este gasto, sin repetir. Un gasto en parcialidades
     // puede haber sido cubierto por varias empresas.
