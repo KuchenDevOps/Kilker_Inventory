@@ -29,7 +29,14 @@ export default defineEventHandler(async (event) => {
   const rows = await db.query.salePayments.findMany({
     where: eq(salePayments.invoiceId, invoiceId),
     orderBy: [desc(salePayments.paidAt)],
-    with: { createdBy: { columns: { fullName: true } } }
+    with: {
+      createdBy: { columns: { fullName: true } },
+      // ⚠️ `accountId` sale del mapeo manual de abajo. Se devuelve SIEMPRE, junto
+      // con la etiqueta: sin él, la pantalla no puede distinguir un pago en
+      // efectivo de uno bancario al que todavía no se le asigna cuenta — y los
+      // dos se ven igual (null) desde el cliente.
+      account: { columns: { bank: true, owner: true, cardLast4: true } }
+    }
   })
 
   return rows.map((p) => ({
@@ -38,6 +45,12 @@ export default defineEventHandler(async (event) => {
     amount: p.amount,
     paidAt: p.paidAt,
     method: p.method,
+    accountId: p.accountId,
+    accountLabel: p.account
+      ? p.account.cardLast4
+        ? `${p.account.bank} ···· ${p.account.cardLast4}`
+        : `${p.account.bank} · ${p.account.owner}`
+      : null,
     note: p.note,
     createdByName: p.createdBy?.fullName ?? null,
     createdAt: p.createdAt

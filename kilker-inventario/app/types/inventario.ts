@@ -410,6 +410,8 @@ export interface ApiSalePayment {
   method: PaymentMethod
   /** Cuenta de la que salió/entró el dinero. null = efectivo (o histórico sin asignar). */
   accountId: number | null
+  /** Banco + últimos 4 ya armados por el endpoint. null cuando no hay cuenta. */
+  accountLabel: string | null
   note: string | null
   createdByName: string | null
   createdAt: string
@@ -500,6 +502,8 @@ export interface ApiEntryPayment {
   method: PaymentMethod
   /** Cuenta de la que salió/entró el dinero. null = efectivo (o histórico sin asignar). */
   accountId: number | null
+  /** Banco + últimos 4 ya armados por el endpoint. null cuando no hay cuenta. */
+  accountLabel: string | null
   note: string | null
   createdByName: string | null
   createdAt: string
@@ -723,6 +727,8 @@ export interface ApiExpensePayment {
   method: PaymentMethod
   /** Cuenta de la que salió/entró el dinero. null = efectivo (o histórico sin asignar). */
   accountId: number | null
+  /** Banco + últimos 4 ya armados por el endpoint. null cuando no hay cuenta. */
+  accountLabel: string | null
   note: string | null
   createdByName: string | null
   createdAt: string

@@ -937,6 +937,10 @@ export const entryPaymentsRelations = relations(entryPayments, ({ one }) => ({
     fields: [entryPayments.movementId],
     references: [stockMovements.id]
   }),
+  account: one(bankAccounts, {
+    fields: [entryPayments.accountId],
+    references: [bankAccounts.id]
+  }),
   createdBy: one(profiles, {
     fields: [entryPayments.createdBy],
     references: [profiles.id]
@@ -984,6 +988,10 @@ export const salePaymentsRelations = relations(salePayments, ({ one }) => ({
   invoice: one(invoices, {
     fields: [salePayments.invoiceId],
     references: [invoices.id]
+  }),
+  account: one(bankAccounts, {
+    fields: [salePayments.accountId],
+    references: [bankAccounts.id]
   }),
   createdBy: one(profiles, {
     fields: [salePayments.createdBy],
@@ -1167,6 +1175,10 @@ export const banksMovementsRelations = relations(banksMovements, ({ one }) => ({
 
 export const expensePaymentsRelations = relations(expensePayments, ({ one }) => ({
   expense: one(expenses, { fields: [expensePayments.expenseId], references: [expenses.id] }),
+  account: one(bankAccounts, {
+    fields: [expensePayments.accountId],
+    references: [bankAccounts.id]
+  }),
   createdBy: one(profiles, { fields: [expensePayments.createdBy], references: [profiles.id] })
 }))
 

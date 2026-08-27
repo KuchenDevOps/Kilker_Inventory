@@ -700,6 +700,10 @@ async function exportAll() {
                   <p class="text-xs text-muted">
                     {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
                     <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
+                    <span v-if="p.accountLabel"> · {{ p.accountLabel }}</span>
+                    <span v-else-if="p.method !== 'efectivo'" class="text-warning">
+                      · sin cuenta
+                    </span>
                   </p>
                   <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
                 </li>

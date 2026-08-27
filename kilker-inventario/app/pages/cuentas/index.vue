@@ -244,7 +244,7 @@ async function toggleActive(a: ApiBankAccount) {
               <th class="px-4 py-3 font-medium">Banco</th>
               <th class="px-4 py-3 font-medium">Titular</th>
               <th class="px-4 py-3 font-medium">Tarjeta</th>
-              <th class="px-4 py-3 font-medium text-right">Pagos</th>
+              <!-- <th class="px-4 py-3 font-medium text-right">Pagos</th> -->
               <th class="px-4 py-3 font-medium text-center">Estado</th>
               <th class="px-4 py-3 font-medium text-right">Acciones</th>
             </tr>
@@ -264,7 +264,7 @@ async function toggleActive(a: ApiBankAccount) {
               <td class="px-4 py-3 font-mono text-xs text-muted">
                 {{ a.cardLast4 ? `•••• ${a.cardLast4}` : '—' }}
               </td>
-              <td class="px-4 py-3 text-right tabular-nums">{{ a.paymentCount ?? 0 }}</td>
+              <!-- <td class="px-4 py-3 text-right tabular-nums">{{ a.paymentCount ?? 0 }}</td> -->
               <td class="px-4 py-3 text-center">
                 <UBadge
                   :label="a.isActive ? 'Activa' : 'Inactiva'"
