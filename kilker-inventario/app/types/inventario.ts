@@ -620,6 +620,22 @@ export interface ApiTopProduct {
   zeroCostRevenue: number
 }
 
+/** Fila de `GET /api/reports/top-customers`: costo/venta/utilidad por cliente. */
+export interface ApiTopCustomer {
+  customerId: number
+  customerName: string | null
+  /** Facturas emitidas del cliente en el periodo. */
+  salesCount: number
+  /** Unidades que se llevó (suma de las líneas). */
+  totalQuantity: number
+  totalRevenue: number
+  totalCost: number
+  profit: number
+  profitPct: number
+  /** Unidades costeadas contra una capa de $0 (ver `ApiTopProduct.zeroCostUnits`). */
+  zeroCostUnits: number
+}
+
 export interface ApiUnsoldProduct {
   productId: number
   productName: string | null
