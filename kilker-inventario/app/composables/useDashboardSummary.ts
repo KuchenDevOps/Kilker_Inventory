@@ -41,15 +41,33 @@ export interface DashboardSummary {
   to: string | null
   /** Compras del periodo (entradas, excluyendo facturas 'II' y anuladas). */
   entriesValue: number
-  /** Inventario inicial del periodo (entradas 'II', excluyendo anuladas). */
-  startInventoryValue: number
   /** Abonado y saldo de esas mismas compras: suman `entriesValue`. */
   entriesPaid: number
   entriesBalance: number
   /** Ventas emitidas del periodo. */
   salesValue: number
   expenses: Record<'Fijo' | 'Operativo', ExpenseBucket>
-  soldTotals: { totalCost: number; totalRevenue: number; totalProfit: number }
+  soldTotals: {
+    totalCost: number
+    totalRevenue: number
+    totalProfit: number
+    /**
+     * Unidades vendidas que salieron contra una capa de costo $0 (la entrada
+     * que las trajo se capturó sin costo) y el ingreso que generaron.
+     * `totalCost` está subvaluado en lo que de verdad valían, y `totalProfit`
+     * inflado en lo mismo. Alimenta el aviso de la tarjeta "Costo total".
+     */
+    zeroCostUnits: number
+    zeroCostRevenue: number
+  }
+  /**
+   * ⚠️ El inventario de APERTURA del periodo vive aquí, en
+   * `monthly.openingInventoryValue`: el valor FIFO de las capas justo antes de
+   * `from`, que es el mismo con el que cuadra la conciliación. Hubo un
+   * `startInventoryValue` al lado de `entriesValue` (suma de entradas con
+   * factura 'II') que se quitó porque era un total de toda la historia:
+   * ignoraba el periodo y la sucursal elegidos, y no cuadraba con nada.
+   */
   monthly: ApiMonthlyInventory
 }
 

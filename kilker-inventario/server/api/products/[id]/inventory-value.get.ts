@@ -6,6 +6,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { useDb } from '../../../db'
 import { invoiceItems, invoices, stockMovements } from '../../../db/schema'
+import { voidEffectiveDate } from '../../../utils/fifoEngine'
 import { effectiveMovementDate } from '../../../utils/movementDates'
 
 const EPSILON = 0.0005
@@ -44,6 +45,8 @@ export default defineEventHandler(async (event) => {
   })
 
   const movementTypeById = new Map(movements.map((m) => [m.id, m.type]))
+  // Para fechar cada anulación con la entrada que revierte (ver voidEffectiveDate).
+  const movementById = new Map(movements.map((m) => [m.id, m]))
 
   // Ventas emitidas de este producto (join manual porque el filtro es por producto,
   // no por invoice).
@@ -119,7 +122,11 @@ export default defineEventHandler(async (event) => {
         const originalType = m.reversesMovementId ? movementTypeById.get(m.reversesMovementId) : undefined
         if (originalType === 'entrada') {
           transactions.push({
-            date: m.createdAt,
+            // Fecha de la entrada que revierte, igual que el motor FIFO.
+            date: voidEffectiveDate(
+              m,
+              m.reversesMovementId != null ? movementById.get(m.reversesMovementId) : undefined
+            ),
             type: 'salida',
             quantity: Math.abs(Number(m.quantity)),
             unitValue: Number(m.unitValue)

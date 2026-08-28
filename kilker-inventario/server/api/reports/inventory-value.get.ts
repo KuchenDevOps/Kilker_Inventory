@@ -3,6 +3,7 @@
 import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, stockMovements } from '../../db/schema'
+import { voidEffectiveDate } from '../../utils/fifoEngine'
 import { effectiveMovementDate } from '../../utils/movementDates'
 
 const EPSILON = 0.0005 
@@ -50,6 +51,8 @@ export default defineEventHandler(async (event) => {
   })
 
   const movementTypeById = new Map(allMovements.map((m) => [m.id, m.type]))
+  // Para fechar cada anulación con la entrada que revierte (ver voidEffectiveDate).
+  const movementById = new Map(allMovements.map((m) => [m.id, m]))
 
   const invoiceFilters = [eq(invoices.status, 'emitida'), lt(invoices.issuedAt, asOf)]
   if (storeIds && storeIds.length === 1) {
@@ -110,10 +113,19 @@ export default defineEventHandler(async (event) => {
       if (m.type === 'transferencia_salida' && m.transfer?.issuedAt && m.transfer.issuedAt < asOf) {
         transactions.push({ date: m.transfer.issuedAt, type: 'salida', quantity: Math.abs(Number(m.quantity)), unitValue: Number(m.unitValue) })
       }
-      if (m.type === 'anulacion' && m.createdAt < asOf) {
+      if (m.type === 'anulacion') {
         const originalType = m.reversesMovementId ? movementTypeById.get(m.reversesMovementId) : undefined
         if (originalType === 'entrada') {
-          transactions.push({ date: m.createdAt, type: 'salida', quantity: Math.abs(Number(m.quantity)), unitValue: Number(m.unitValue) })
+          // Fecha de la entrada que revierte, igual que el motor FIFO. Con
+          // `created_at` la entrada anulada seguía viva en cualquier corte
+          // anterior a la anulación.
+          const date = voidEffectiveDate(
+            m,
+            m.reversesMovementId != null ? movementById.get(m.reversesMovementId) : undefined
+          )
+          if (date < asOf) {
+            transactions.push({ date, type: 'salida', quantity: Math.abs(Number(m.quantity)), unitValue: Number(m.unitValue) })
+          }
         }
       }
       if (m.type === 'ajuste') {

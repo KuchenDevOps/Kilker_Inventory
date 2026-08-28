@@ -42,6 +42,19 @@ export interface FifoResult {
   uncoveredUnits: number
   /** Costo asignado a esas unidades (el de la compra que las cubrió). */
   uncoveredValue: number
+  /**
+   * Unidades vendidas dentro de la ventana que consumieron una capa de costo
+   * CERO. No es lo mismo que `uncoveredUnits`: aquí sí había existencia, pero
+   * la entrada que la creó se capturó sin costo, así que esa venta entra al
+   * costo de lo vendido en $0 y su utilidad sale del 100%.
+   *
+   * No se corrige inventándole un costo —el valor del inventario sale de esas
+   * mismas capas y quedaría descuadrado—: se reporta para que la utilidad no
+   * se lea como real. El arreglo de fondo es capturar el costo de la entrada.
+   */
+  zeroCostSaleUnits: number
+  /** Ingreso (a precio de línea, sin prorratear descuento) de esas unidades. */
+  zeroCostSaleRevenue: number
   /** Capas vivas al corte, de la más antigua a la más nueva. */
   layers: FifoLayer[]
 }
@@ -68,8 +81,11 @@ interface WalkOutput {
   openingUnits: number
   /** Por evento con faltante: cuánto se pagó y a qué costo. */
   paidByEvent: Map<number, { qty: number; cost: number }>
-  /** Por evento de salida: costo consumido y unidades sin respaldo. */
-  outflowByEvent: Map<number, { cost: number; uncovered: number }>
+  /**
+   * Por evento de salida: costo consumido, unidades sin respaldo y unidades
+   * que salieron contra una capa de costo cero.
+   */
+  outflowByEvent: Map<number, { cost: number; uncovered: number; zeroCost: number }>
   firstEntryCost: number
 }
 
@@ -104,7 +120,7 @@ function walk(
   const layers: Layer[] = []
   const debts: Debt[] = []
   const paidByEvent = new Map<number, { qty: number; cost: number }>()
-  const outflowByEvent = new Map<number, { cost: number; uncovered: number }>()
+  const outflowByEvent = new Map<number, { cost: number; uncovered: number; zeroCost: number }>()
   let lastEntryCost = 0
   let firstEntryCost = 0
   let opening: { value: number; units: number } | null = null
@@ -157,6 +173,10 @@ function walk(
 
     let remaining = event.quantity
     let cost = 0
+    // Unidades que salieron contra una capa que vale $0. Se rastrea aparte
+    // porque en el costo se vuelven invisibles: suman 0 y no hay forma de
+    // distinguirlas después de una venta legítimamente barata.
+    let zeroCost = 0
 
     // Anulación de entrada: se revierte la capa de esa entrada concreta.
     if (event.reversesEntryId != null) {
@@ -179,6 +199,7 @@ function walk(
       layer.qty -= take
       remaining -= take
       cost += take * layer.unitCost
+      if (Math.abs(layer.unitCost) <= EPSILON) zeroCost += take
     }
 
     // Sin capa que lo respalde: queda como deuda, costeada con la compra que
@@ -194,7 +215,7 @@ function walk(
       uncovered = remaining
     }
 
-    outflowByEvent.set(index, { cost, uncovered })
+    outflowByEvent.set(index, { cost, uncovered, zeroCost })
     prune(layers)
   }
 
@@ -256,6 +277,8 @@ export function runFifo(
   let otherOutflowCost = 0
   let uncoveredUnits = 0
   let uncoveredValue = 0
+  let zeroCostSaleUnits = 0
+  let zeroCostSaleRevenue = 0
   for (const [index, outflow] of final.outflowByEvent) {
     const event = events[index]
     if (!event) continue
@@ -266,6 +289,12 @@ export function runFifo(
         uncoveredUnits += outflow.uncovered
         const unitCost = deficitCosts.get(index) ?? 0
         uncoveredValue += outflow.uncovered * unitCost
+      }
+      if (outflow.zeroCost > 0) {
+        zeroCostSaleUnits += outflow.zeroCost
+        // `unitValue` de un evento de venta es el precio de la línea: sirve
+        // para dimensionar cuánto ingreso quedó sin costo enfrente.
+        zeroCostSaleRevenue += outflow.zeroCost * event.unitValue
       }
     } else {
       otherOutflowCost += outflow.cost
@@ -282,7 +311,9 @@ export function runFifo(
     saleCost,
     otherOutflowCost,
     uncoveredUnits,
-    uncoveredValue
+    uncoveredValue,
+    zeroCostSaleUnits,
+    zeroCostSaleRevenue
   }
 }
 
@@ -309,6 +340,41 @@ export interface FifoSaleRow {
   unitPrice: string | number
 }
 
+/** Misma regla que `effectiveMovementDate`, sin arrastrar el esquema aquí. */
+function ownEffectiveDate(m: {
+  supplierInvoiceDate: string | null
+  createdAt: Date
+}): Date {
+  return m.supplierInvoiceDate ? parseBusinessDate(m.supplierInvoiceDate) : m.createdAt
+}
+
+/**
+ * Fecha con la que una ANULACIÓN DE ENTRADA entra al kardex valuado: **la de
+ * la entrada que revierte**, no la de captura.
+ *
+ * Anular dice "esta entrada nunca ocurrió", así que sacarla en su propia fecha
+ * es lo único que deja el histórico como si nunca hubiera existido. Con
+ * `created_at` la entrada vive en el FIFO entre que se captura y que se anula,
+ * y cualquier salida en ese hueco se lleva su capa: una entrada capturada en
+ * $0 y anulada dos semanas después dejaba que una venta se costeara en cero y
+ * después cobraba el importe real a "Otras salidas". El total cuadraba, pero
+ * el costo de lo vendido salía subvaluado y la utilidad inflada.
+ *
+ * ⚠️ Efecto secundario asumido: anular hoy una entrada de un mes ya cerrado
+ * **cambia los números de ese mes**. Es la misma tensión que las ventas
+ * retroactivas vs. cortes de caja (ver docs/CONTEXTO.md → "Preguntas
+ * abiertas"); aquí se eligió la veracidad del costeo.
+ *
+ * Si no se encuentra la entrada original, cae a la fecha del propio
+ * movimiento: es el comportamiento anterior y nunca es peor.
+ */
+export function voidEffectiveDate(
+  voidMovement: { supplierInvoiceDate: string | null; createdAt: Date },
+  original: { supplierInvoiceDate: string | null; createdAt: Date } | undefined
+): Date {
+  return ownEffectiveDate(original ?? voidMovement)
+}
+
 /**
  * Traduce movimientos y ventas de un (producto, sucursal) a eventos FIFO.
  * Vive aquí para que valuación y costeo no puedan volver a interpretar el
@@ -321,6 +387,13 @@ export function buildFifoEvents(
 ): FifoEvent[] {
   const events: FifoEvent[] = []
 
+  // Índice local para fechar cada anulación con la entrada que revierte. Vive
+  // aquí y no en el `movementTypeById` de los llamadores porque la entrada y su
+  // anulación son siempre del mismo producto y la misma sucursal, así que
+  // ambas están en ESTE arreglo: no hace falta que nadie pase nada más.
+  const movementById = new Map<number, FifoMovementRow>()
+  for (const m of movements) movementById.set(m.id, m)
+
   for (const m of movements) {
     // Transferencia cancelada: se ignoran sus dos patas. Es como si nunca
     // hubiera salido, que es lo que significa cancelarla.
@@ -328,7 +401,7 @@ export function buildFifoEvents(
 
     const quantity = Number(m.quantity)
     const unitValue = Number(m.unitValue)
-    const effective = m.supplierInvoiceDate ? parseBusinessDate(m.supplierInvoiceDate) : m.createdAt
+    const effective = ownEffectiveDate(m)
 
     if (m.type === 'entrada') {
       events.push({
@@ -373,8 +446,14 @@ export function buildFifoEvents(
         ? movementTypeById.get(m.reversesMovementId)
         : undefined
       if (originalType === 'entrada') {
+        const original =
+          m.reversesMovementId != null ? movementById.get(m.reversesMovementId) : undefined
         events.push({
-          date: m.createdAt,
+          // La entrada y su anulación quedan en el MISMO instante, y
+          // `sortEvents` mete primero lo que suma stock: así la anulación
+          // siempre encuentra viva su propia capa y la revierte al costo con
+          // que entró, en vez de morder la más antigua.
+          date: voidEffectiveDate(m, original),
           direction: 'out',
           quantity: Math.abs(quantity),
           unitValue,

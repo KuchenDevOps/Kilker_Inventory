@@ -39,6 +39,14 @@ export interface TopProductRow {
   profit: number
   profitPct: number
   hasSales: boolean
+  /**
+   * Unidades de este producto que salieron contra una capa de costo $0, y el
+   * ingreso que generaron. Su `totalCost` es 0 y su utilidad sale del 100%,
+   * pero no porque el producto sea rentable: porque la entrada que las trajo
+   * se capturó sin costo. Ver `FifoResult.zeroCostSaleUnits`.
+   */
+  zeroCostUnits: number
+  zeroCostRevenue: number
 }
 
 // ─── Caché simple en memoria, TTL corto ───
@@ -146,6 +154,8 @@ export async function computeTopProducts(
 
   // productId -> costo FIFO real consumido por ventas dentro del periodo
   const costByProduct = new Map<number, number>()
+  // productId -> lo que de ese costo se consumió contra capas de $0.
+  const zeroCostByProduct = new Map<number, { units: number; revenue: number }>()
 
   if (topProductIds.length > 0) {
     const movementFilters = [inArray(stockMovements.productId, topProductIds)]
@@ -259,6 +269,13 @@ export async function computeTopProducts(
       )
 
       costByProduct.set(productId, (costByProduct.get(productId) ?? 0) + fifo.saleCost)
+
+      if (fifo.zeroCostSaleUnits > 0) {
+        const acc = zeroCostByProduct.get(productId) ?? { units: 0, revenue: 0 }
+        acc.units += fifo.zeroCostSaleUnits
+        acc.revenue += fifo.zeroCostSaleRevenue
+        zeroCostByProduct.set(productId, acc)
+      }
     }
   }
 
@@ -269,6 +286,7 @@ export async function computeTopProducts(
     const totalCost = Math.round((costByProduct.get(r.productId) ?? 0) * 100) / 100
     const profit = Math.round((totalRevenue - totalCost) * 100) / 100
     const profitPct = totalRevenue > 0 ? Math.round((profit / totalRevenue) * 10000) / 100 : 0
+    const zero = zeroCostByProduct.get(r.productId)
 
     return {
       productId: r.productId,
@@ -280,7 +298,9 @@ export async function computeTopProducts(
       totalCost,
       profit,
       profitPct,
-      hasSales: true
+      hasSales: true,
+      zeroCostUnits: Math.round((zero?.units ?? 0) * 100) / 100,
+      zeroCostRevenue: Math.round((zero?.revenue ?? 0) * 100) / 100
     }
   })
 
@@ -354,7 +374,10 @@ export async function computeTopProducts(
         totalCost: Math.round(stockQty * avgUnitCost * 100) / 100,
         profit: 0,
         profitPct: 0,
-        hasSales: false
+        hasSales: false,
+        // Sin ventas en el periodo no hay nada que costear en $0.
+        zeroCostUnits: 0,
+        zeroCostRevenue: 0
       }
     })
 
@@ -371,13 +394,26 @@ export async function computeTopProducts(
 /** Totales agregados de lo vendido en el periodo (costo, venta, utilidad). */
 export async function computeSoldTotals(
   params: Omit<TopProductsParams, 'limit' | 'includeUnsold'>
-): Promise<{ totalCost: number; totalRevenue: number; totalProfit: number }> {
+): Promise<{
+  totalCost: number
+  totalRevenue: number
+  totalProfit: number
+  zeroCostUnits: number
+  zeroCostRevenue: number
+}> {
   const rows = await computeTopProducts({ ...params, limit: 0, includeUnsold: false })
   const totalRevenue = rows.reduce((sum, r) => sum + r.totalRevenue, 0)
   const totalCost = rows.reduce((sum, r) => sum + r.totalCost, 0)
+  const zeroCostUnits = rows.reduce((sum, r) => sum + r.zeroCostUnits, 0)
+  const zeroCostRevenue = rows.reduce((sum, r) => sum + r.zeroCostRevenue, 0)
   return {
     totalCost: Math.round(totalCost * 100) / 100,
     totalRevenue: Math.round(totalRevenue * 100) / 100,
-    totalProfit: Math.round((totalRevenue - totalCost) * 100) / 100
+    totalProfit: Math.round((totalRevenue - totalCost) * 100) / 100,
+    // Parte de ese `totalCost` que salió contra capas de $0: el costo está
+    // subvaluado en lo que de verdad valían esas piezas, y la utilidad inflada
+    // en lo mismo. Se reporta en la tarjeta para que no se lea como ganancia.
+    zeroCostUnits: Math.round(zeroCostUnits * 100) / 100,
+    zeroCostRevenue: Math.round(zeroCostRevenue * 100) / 100
   }
 }
