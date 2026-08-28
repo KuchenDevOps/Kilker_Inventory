@@ -16,6 +16,15 @@ export interface FifoEvent {
   movementId?: number | null
   /** Anulación de entrada: id de la entrada que revierte. */
   reversesEntryId?: number | null
+  /**
+   * Etiqueta libre de una salida de VENTA, para poder repartir después el costo
+   * FIFO entre las líneas que lo consumieron (hoy: `invoice_items.id`, que es
+   * lo que usa el top de clientes). Sin ella el motor solo sabe decir el costo
+   * total de la ventana, y atribuirlo por cliente obligaría a re-costear a
+   * mano — que es exactamente cómo nacieron las tres copias divergentes del
+   * FIFO que este archivo vino a unificar.
+   */
+  saleRef?: number | null
 }
 
 export interface FifoWindow {
@@ -55,6 +64,13 @@ export interface FifoResult {
   zeroCostSaleUnits: number
   /** Ingreso (a precio de línea, sin prorratear descuento) de esas unidades. */
   zeroCostSaleRevenue: number
+  /**
+   * Desglose de `saleCost` por `saleRef`: qué parte del costo consumió cada
+   * línea de venta etiquetada. Solo lleva las salidas de venta dentro de la
+   * ventana, así que `sum(saleCostByRef) <= saleCost` (la diferencia son las
+   * ventas sin etiqueta). Vacío si nadie etiquetó nada.
+   */
+  saleCostByRef: Map<number, { cost: number; units: number; zeroCostUnits: number }>
   /** Capas vivas al corte, de la más antigua a la más nueva. */
   layers: FifoLayer[]
 }
@@ -279,12 +295,20 @@ export function runFifo(
   let uncoveredValue = 0
   let zeroCostSaleUnits = 0
   let zeroCostSaleRevenue = 0
+  const saleCostByRef = new Map<number, { cost: number; units: number; zeroCostUnits: number }>()
   for (const [index, outflow] of final.outflowByEvent) {
     const event = events[index]
     if (!event) continue
     if (from && event.date.getTime() < from.getTime()) continue
     if (event.isSale) {
       saleCost += outflow.cost
+      if (event.saleRef != null) {
+        const acc = saleCostByRef.get(event.saleRef) ?? { cost: 0, units: 0, zeroCostUnits: 0 }
+        acc.cost += outflow.cost
+        acc.units += event.quantity
+        acc.zeroCostUnits += outflow.zeroCost
+        saleCostByRef.set(event.saleRef, acc)
+      }
       if (outflow.uncovered > 0) {
         uncoveredUnits += outflow.uncovered
         const unitCost = deficitCosts.get(index) ?? 0
@@ -313,7 +337,8 @@ export function runFifo(
     uncoveredUnits,
     uncoveredValue,
     zeroCostSaleUnits,
-    zeroCostSaleRevenue
+    zeroCostSaleRevenue,
+    saleCostByRef
   }
 }
 
@@ -338,6 +363,8 @@ export interface FifoSaleRow {
   issuedAt: Date
   quantity: string | number
   unitPrice: string | number
+  /** Opcional: `invoice_items.id`, para recuperar el costo de ESTA línea. */
+  saleRef?: number | null
 }
 
 /** Misma regla que `effectiveMovementDate`, sin arrastrar el esquema aquí. */
@@ -482,7 +509,8 @@ export function buildFifoEvents(
       direction: 'out',
       quantity: Number(s.quantity),
       unitValue: Number(s.unitPrice),
-      isSale: true
+      isSale: true,
+      saleRef: s.saleRef ?? null
     })
   }
 
