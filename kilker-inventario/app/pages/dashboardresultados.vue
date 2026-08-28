@@ -67,6 +67,18 @@ const {
   refresh: refreshTopProducts
 } = useTopProducts()
 
+// Mismo patrón para el top de clientes: petición propia porque tiene su Top N
+// y su búsqueda, independientes del resto del dashboard.
+const {
+  topCustomers,
+  pending: loadingTopCustomers,
+  storeId: topCustomersStoreId,
+  from: topCustomersFrom,
+  to: topCustomersTo,
+  limit: topCustomersLimit,
+  refresh: refreshTopCustomers
+} = useTopCustomers()
+
 // Totales de lo vendido (costo/venta/utilidad): ya vienen en el resumen.
 // Antes eran una segunda llamada a top-products con limit=0.
 const allProductsTotals = computed(() => summary.value?.soldTotals ?? null)
@@ -161,6 +173,10 @@ async function refreshAllData() {
   topProductsFrom.value = periodFrom.value
   topProductsTo.value = periodTo.value
 
+  topCustomersStoreId.value = storeId
+  topCustomersFrom.value = periodFrom.value
+  topCustomersTo.value = periodTo.value
+
   await Promise.all([
     refreshSummary({
       storeId,
@@ -168,7 +184,8 @@ async function refreshAllData() {
       to: periodTo.value,
       month: derivedMonth.value
     }),
-    refreshTopProducts()
+    refreshTopProducts(),
+    refreshTopCustomers()
   ])
 
   lastRefreshTime.value = Date.now()
@@ -299,20 +316,7 @@ function openingCutoffOf(iso: string | undefined, fallback: string) {
   return dateLabel.format(prevDay)
 }
 
-/**
- * Ventana con la que se muestra "Inventario inicial".
- *
- * Con un periodo elegido es la apertura de ESE periodo (agosto → 31 de julio).
- * Sin periodo ("Todo") no existe un "mes anterior" que signifique nada: el mes
- * al que cae `month` es un default del servidor, no algo que el usuario pidió,
- * y la tarjeta acababa diciendo "valor al 30 jul" sin que nadie eligiera julio.
- * Ahí se usa la apertura de la conciliación — el 31-dic-2025, la carga inicial —
- * que además es el primer renglón de "Cómo se llegó al inventario final", así
- * que las dos tarjetas cuentan la misma historia.
- *
- * Se decide con el `from` de la RESPUESTA, no con el ref local: es el único que
- * dice qué ventana usó de verdad el servidor.
- */
+
 const openingWindow = computed(() => {
   const m = monthlyInventory.value
   if (!m) return null
@@ -379,6 +383,18 @@ const reconciliation = computed(() => {
     uncoveredUnits: m.uncoveredSaleUnits
   }
 })
+
+//Mode 
+type CreateMode = 'product' | 'client' 
+
+// `?tipo=muestra|kit` abre directo en esa pestaña: es lo que usa el botón
+// "Nueva muestra" de /productos/muestras, que si no caería en Producto.
+const QUERY_MODES: Record<string, CreateMode> = { client: 'client' }
+const mode = ref<CreateMode>(
+  QUERY_MODES[String(useRoute().query.tipo ?? '')] ?? 'product'
+)
+
+
 
 // --- MÉTRICAS ---
 const totalProducts = computed(() => products.value.length)
@@ -553,6 +569,34 @@ const filteredTopProducts = computed(() => {
   return topProducts.value.filter(
     (p) => p.productName?.toLowerCase().includes(q) || p.productSku?.toLowerCase().includes(q)
   )
+})
+
+// ───────────────────────────────────────────────
+//  TOP CLIENTES
+// ───────────────────────────────────────────────
+/** Parte roja de la barra: qué proporción de la venta se fue en costo. */
+function customerCostSharePct(c: (typeof topCustomers.value)[number]) {
+  if (c.totalRevenue <= 0) return 100
+  const pct = (c.totalCost / c.totalRevenue) * 100
+  return Math.min(100, Math.max(0, pct))
+}
+
+/** La barra se mide contra la VENTA, que es el criterio del ranking. */
+const maxCustomerRevenue = computed(() =>
+  topCustomers.value.reduce((max, c) => Math.max(max, c.totalRevenue), 0)
+)
+
+function customerBarWidthPct(c: (typeof topCustomers.value)[number]) {
+  if (maxCustomerRevenue.value <= 0) return 0
+  return (c.totalRevenue / maxCustomerRevenue.value) * 100
+}
+
+const topCustomerSearch = ref('')
+
+const filteredTopCustomers = computed(() => {
+  if (!topCustomerSearch.value.trim()) return topCustomers.value
+  const q = topCustomerSearch.value.trim().toLowerCase()
+  return topCustomers.value.filter((c) => c.customerName?.toLowerCase().includes(q))
 })
 </script>
 
@@ -745,8 +789,25 @@ const filteredTopProducts = computed(() => {
         </div>
       </UCard>
 </section>
+ <UButtonGroup class="mb-6">
+      <UButton
+        label="Top Productos"
+        icon="i-lucide-package"
+        :color="mode === 'product' ? 'primary' : 'neutral'"
+        :variant="mode === 'product' ? 'solid' : 'outline'"
+        @click="mode = 'product'"
+      />
+     
+      <UButton
+        label="Top Clientes"
+        icon="i-lucide-users"
+        :color="mode === 'client' ? 'primary' : 'neutral'"
+        :variant="mode === 'client' ? 'solid' : 'outline'"
+        @click="mode = 'client'"
+      />
+    </UButtonGroup>
 
-    <UCard>
+    <UCard       v-if="mode === 'product'">
   <template #header>
   <div class="flex items-center gap-2 flex-wrap">
     <UIcon name="i-lucide-bar-chart-3" class="size-5 text-primary" />
@@ -827,6 +888,87 @@ const filteredTopProducts = computed(() => {
   </li>
 </ul>
 </UCard>
+
+
+    <UCard       v-if="mode === 'client'">
+      <template #header>
+        <div class="flex items-center gap-2 flex-wrap">
+          <UIcon name="i-lucide-users" class="size-5 text-primary" />
+          <h2 class="font-semibold">Clientes que más compraron</h2>
+          <UInput
+            v-model="topCustomerSearch"
+            icon="i-lucide-search"
+            placeholder="Buscar cliente…"
+            size="sm"
+            class="w-48"
+          />
+          <USelect
+            v-model="topCustomersLimit"
+            :items="[{ label: 'Top 5', value: 5 }, { label: 'Top 10', value: 10 }, { label: 'Todos', value: 0 }]"
+            class="ml-auto w-32"
+            @update:model-value="refreshTopCustomers"
+          />
+        </div>
+      </template>
+
+      <div v-if="loadingTopCustomers" class="py-6 text-center">
+        <USpinner class="size-8 animate-spin text-primary" />
+        <p class="mt-2 text-sm text-muted">Cargando clientes…</p>
+      </div>
+
+      <p v-else-if="!topCustomers.length" class="text-sm text-muted py-6 text-center">
+        Sin ventas a clientes registrados en el periodo.
+      </p>
+
+      <ul v-else class="space-y-3">
+        <li v-for="c in filteredTopCustomers" :key="c.customerId">
+          <div class="flex items-center justify-between gap-3 mb-1">
+            <p class="text-sm font-medium truncate">{{ c.customerName }}</p>
+
+            <div class="flex items-center gap-1 shrink-0">
+              <p class="text-xs text-muted">
+                {{ number.format(c.salesCount) }} venta(s)
+              </p>
+
+              <!-- Cae en /ventas con el nombre del cliente en la barra de
+                   búsqueda: `?q` del endpoint ya busca por cliente. -->
+              <UButton
+                :to="`/ventas?q=${encodeURIComponent(c.customerName ?? '')}`"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-external-link"
+                title="Ver historial de ventas de este cliente"
+              />
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between gap-3 text-xs mb-1.5">
+            <span class="text-muted">Costo: {{ currency.format(c.totalCost) }}</span>
+            <span class="text-muted">Venta: {{ currency.format(c.totalRevenue) }}</span>
+            <span :class="c.profit >= 0 ? 'text-success' : 'text-error'" class="font-medium">
+              Utilidad: {{ currency.format(c.profit) }} ({{ c.profitPct.toFixed(1) }}%)
+            </span>
+          </div>
+
+          <div
+            class="h-2 rounded-full bg-elevated overflow-hidden"
+            :style="{ width: `${customerBarWidthPct(c)}%` }"
+          >
+            <div class="h-full flex">
+              <div
+                class="h-full bg-error transition-all duration-500"
+                :style="{ width: `${customerCostSharePct(c)}%` }"
+              />
+              <div
+                class="h-full bg-success transition-all duration-500"
+                :style="{ width: `${100 - customerCostSharePct(c)}%` }"
+              />
+            </div>
+          </div>
+        </li>
+      </ul>
+    </UCard>
 
 
     <div class="grid gap-6 lg:grid-cols-2">

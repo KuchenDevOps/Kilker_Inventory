@@ -608,9 +608,20 @@ const detailDiscountFactor = computed(
 
 const route = useRoute()
 
+// ─── Filtros que llegan por la URL (enlaces del dashboard) ───
+// `search` y `productId` viven en `useState`, así que sobreviven a la
+// navegación: al entrar por un enlace hay que limpiar el OTRO filtro o el que
+// quedó de la visita anterior sigue aplicándose y la lista sale casi vacía
+// (p. ej. "ventas del producto X" + "ventas del cliente Y" a la vez).
 const queryProductId = Number(route.query.productId)
+const querySearch = String(route.query.q ?? '').trim()
+
 if (Number.isFinite(queryProductId) && queryProductId > 0) {
   productId.value = queryProductId
+  search.value = ''
+} else if (querySearch) {
+  search.value = querySearch
+  productId.value = undefined
 }
 
 </script>
