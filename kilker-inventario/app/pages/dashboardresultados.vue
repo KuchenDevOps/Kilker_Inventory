@@ -445,7 +445,7 @@ const metricsSection2 = computed(() => {
 
     hint: 'de todos los productos vendidos',
     icon: 'i-lucide-receipt',
-    color: 'text-info',
+    color: 'text-warning',
     loading: loadingSummary.value,
     globalOnly: false
   })

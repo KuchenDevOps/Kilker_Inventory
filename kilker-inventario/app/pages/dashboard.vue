@@ -20,25 +20,16 @@ const {
 } = useDashboardSummary()
 
 // ───────────────────────────────────────────────
-//  GASTOS: total a pagar, pagado y pendiente — agrupado por tipo
+//  GASTOS: subtotal (a pagar), pagado y pendiente — agrupado por tipo
 // ───────────────────────────────────────────────
-// ⚠️ El total es `totalToPay` (subtotal + IVA − retenciones), NO el subtotal.
-// Este dashboard es operativo: sus tres cifras tienen que cuadrar entre sí
-// —total = pagado + pendiente— y tanto `totalPaid` como `balance` se miden
-// contra el pagable. Con el subtotal aquí, un gasto liquidado mostraba un
-// "pagado" mayor que su propio total y la resta no daba.
-//
-// El desglose fiscal (subtotal vs. IVA) va en /dashboardresultados, que es el
-// de resultados del negocio: ahí sí importa separar el IVA, porque se entera al
-// SAT y no es gasto propio.
-const EMPTY_BUCKET = { subtotal: 0, iva: 0, totalToPay: 0, totalPaid: 0, balance: 0 }
+const EMPTY_BUCKET = { subtotal: 0, totalPaid: 0, balance: 0 }
 
 const expensesByType = computed(
   () => summary.value?.expenses ?? { Fijo: EMPTY_BUCKET, Operativo: EMPTY_BUCKET }
 )
 
-const totalExpensesFijo = computed(() => expensesByType.value.Fijo.totalToPay)
-const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.totalToPay)
+const totalExpensesFijo = computed(() => expensesByType.value.Fijo.subtotal)
+const totalExpensesOperativo = computed(() => expensesByType.value.Operativo.subtotal)
 
 const totalExpensesPaid = computed(
   () => expensesByType.value.Fijo.totalPaid + expensesByType.value.Operativo.totalPaid
@@ -83,13 +74,6 @@ const allProductsProfitPct = computed(() => {
   if (netSalesValue.value <= 0) return 0
   return (allProductsNetProfit.value / netSalesValue.value) * 100
 })
-
-// Piezas vendidas contra capas de costo $0: hunden el "Costo total" e inflan la
-// utilidad. No se corrigen inventándoles un costo —el valor del inventario sale
-// de esas mismas capas—, se avisan. Detalle en /dashboardresultados.
-const zeroCostUnits = computed(() => allProductsTotals.value?.zeroCostUnits ?? 0)
-const zeroCostRevenue = computed(() => allProductsTotals.value?.zeroCostRevenue ?? 0)
-const hasZeroCostSales = computed(() => zeroCostUnits.value > 0)
 
 // --- DEFINIR PERIODFROM Y PERIODTO ---
 const periodFrom = ref<string | undefined>(undefined)
@@ -254,18 +238,10 @@ const cutoffLabel = computed(() => {
   return dateLabel.format(lastDay)
 })
 
-/**
- * Arranque de la conciliación: el día ANTERIOR a `reconciliation.from`, o sea
- * el 31-dic-2025 — la carga del inventario inicial. `from` es el instante en
- * que arranca la ventana, así que el corte del inventario de apertura es el
- * día de antes.
- */
-const reconciliationOpeningLabel = computed(() => {
-  const iso = monthlyInventory.value?.reconciliation.from
-  if (!iso) return 'la carga inicial'
-  const prevDay = new Date(iso)
-  prevDay.setDate(prevDay.getDate() - 1)
-  return dateLabel.format(prevDay)
+/** Fecha de apertura del periodo (el `from` que se usó para valuar). */
+const openingLabel = computed(() => {
+  const iso = monthlyInventory.value?.from ?? periodFrom.value
+  return iso ? dateLabel.format(new Date(iso)) : 'inicio del periodo'
 })
 
 // Conciliación del inventario. "Compras" y "Costo total" responden otra
@@ -273,31 +249,22 @@ const reconciliationOpeningLabel = computed(() => {
 // dejan fuera transferencias, anulaciones y la carga inicial: con ellas dos
 // la cuenta NO cierra. Estos son los flujos que de verdad mueven el almacén,
 // y su suma tiene que dar el inventario final al peso.
-//
-// ⚠️ Va sobre `monthly.reconciliation`, NO sobre la ventana del periodo: la
-// tarjeta acumula desde la carga del inventario inicial (31-dic-2025) hasta el
-// corte elegido. Mismo criterio que en /dashboardresultados.
 const reconciliation = computed(() => {
-  const m = monthlyInventory.value?.reconciliation
+  const m = monthlyInventory.value
   if (!m) return null
 
   const expected = m.openingInventoryValue + m.inflowsValue - m.soldCost - m.otherOutflowsCost
   return {
     rows: [
       {
-        label: `Inventario al ${reconciliationOpeningLabel.value}`,
+        label: `Inventario al ${openingLabel.value}`,
         detail: `${number.format(m.openingUnits)} artículos`,
         amount: m.openingInventoryValue,
         sign: ''
       },
       {
         label: 'Entradas al inventario',
-        // ⚠️ NO decir "compras" aquí: este número NO es la tarjeta "Compras".
-        // Aquélla excluye las entradas anuladas (una compra anulada nunca
-        // ocurrió); ésta las incluye, porque esa mercancía sí estuvo en el
-        // almacén y su reversa se resta abajo, en "Otras salidas". Quitarlas
-        // solo de este renglón descuadraría la conciliación por ese importe.
-        detail: `entradas de stock ${currency.format(m.entriesValue)} —incluye las anuladas, que se restan abajo— · transferencias recibidas ${currency.format(m.transfersInValue)}`,
+        detail: `compras ${currency.format(m.entriesValue)} · transferencias recibidas ${currency.format(m.transfersInValue)}`,
         amount: m.inflowsValue,
         sign: '+'
       },
@@ -388,13 +355,9 @@ const metricsSection2 = computed(() => {
  all.push({
     label: 'Costo total',
     value: currency.format(allProductsTotals.value?.totalCost ?? 0),
-    // Mismo criterio que /dashboardresultados: si hay piezas vendidas contra
-    // capas de $0, el número está subvaluado y el rótulo tiene que decirlo.
-    hint: hasZeroCostSales.value
-      ? `⚠ incompleto: ${number.format(zeroCostUnits.value)} pieza(s) salieron sin costo`
-      : 'de todos los productos vendidos',
+    hint: 'de todos los productos vendidos',
     icon: 'i-lucide-receipt',
-    color: hasZeroCostSales.value ? 'text-error' : 'text-warning',
+    color: 'text-warning',
     loading: loadingSummary.value,
     globalOnly: false
   })
@@ -411,9 +374,7 @@ const metricsSection2 = computed(() => {
    all.push({
   label: 'Utilidad total',
   value: currency.format(allProductsNetProfit.value),
-  hint: hasZeroCostSales.value
-    ? `${allProductsProfitPct.value.toFixed(1)}% · ⚠ inflada: el costo está incompleto`
-    : `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
+  hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales`,
   icon: (allProductsNetProfit.value >= 0) ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
   color: (allProductsNetProfit.value >= 0) ? 'text-success' : 'text-error',
   loading: loadingSummary.value,
@@ -596,8 +557,6 @@ const filteredTopProducts = computed(() => {
       :description="summaryError"
     />
 
-
-
     <!-- Tarjetas de métricas -->
     <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 <UCard v-for="m in metricsSection1" :key="m.label" :ui="{ body: 'p-3 sm:p-4' }">
@@ -641,9 +600,7 @@ const filteredTopProducts = computed(() => {
     <div class="flex items-center gap-2 py-0">
       <UIcon name="i-lucide-scale" class="size-4 text-primary" />
       <h2 class="text-sm font-semibold">Cómo se llegó al inventario final</h2>
-      <span class="ml-auto text-xs text-muted">
-        {{ reconciliationOpeningLabel }} → {{ cutoffLabel }}
-      </span>
+      <span class="ml-auto text-xs text-muted">{{ openingLabel }} → {{ cutoffLabel }}</span>
     </div>
   </template>
 
