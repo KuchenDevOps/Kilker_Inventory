@@ -8,7 +8,8 @@ import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../db'
 import { invoices, stockMovements } from '../db/schema'
 import { isStoreScopedRole, type SessionProfile } from './auth'
-import { buildFifoEvents, runFifo } from './fifoEngine'
+import { parseBusinessDate } from './businessTime'
+import { buildFifoEvents, runFifo, voidEffectiveDate } from './fifoEngine'
 import { effectiveMovementDate } from './movementDates'
 
 const EMPTY_RESULT = {
@@ -37,9 +38,34 @@ const EMPTY_RESULT = {
 
 const EPSILON = 0.0005
 
+/**
+ * Día en que arranca la conciliación acumulada del dashboard.
+ *
+ * Las 208 entradas de inventario inicial (factura `'II'`) están fechadas el
+ * **31-dic-2025** y son lo más viejo del kardex, así que el 1-ene-2026 es el
+ * instante en que ese inventario ya está cargado y todavía no se ha movido
+ * nada. Anclando ahí, el primer renglón de "Cómo se llegó al inventario final"
+ * **es** el inventario inicial ($291,957.68) y los demás renglones son todo lo
+ * que ha pasado desde entonces hasta el corte.
+ *
+ * ⚠️ Si algún día se captura un movimiento anterior a esta fecha, quedaría
+ * fuera de la conciliación: hay que mover la constante, no parchear la tarjeta.
+ */
+export const INVENTORY_OPENING_DATE = '2026-01-01'
+
 /** `from`/`to` son la ventana realmente usada (ISO); `to` es EXCLUSIVO. */
-export type MonthlyInventoryResult = { month: string; from: string; to: string } &
-  typeof EMPTY_RESULT
+export type MonthlyInventoryWindow = { from: string; to: string } & typeof EMPTY_RESULT
+
+export type MonthlyInventoryResult = { month: string } & MonthlyInventoryWindow & {
+    /**
+     * Los mismos flujos, pero acumulados desde `INVENTORY_OPENING_DATE` hasta
+     * el MISMO corte. Alimenta "Cómo se llegó al inventario final": la ventana
+     * del periodo responde "qué pasó en agosto", ésta responde "cómo llegó el
+     * almacén a valer lo que vale". Sale del mismo `SELECT` y del mismo motor
+     * FIFO — no es una segunda consulta.
+     */
+    reconciliation: MonthlyInventoryWindow
+  }
 
 export interface MonthlyInventoryParams {
   profile: SessionProfile
@@ -64,14 +90,28 @@ function parseIsoDate(value?: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+/** `2026-08` → `2026-09-01`. Diciembre rueda al enero siguiente. */
+function nextMonthOf(month: string): string {
+  const [year = 0, mon = 0] = month.split('-').map(Number)
+  const rollsOver = mon === 12
+  const nextYear = rollsOver ? year + 1 : year
+  const next = rollsOver ? 1 : mon + 1
+  return `${nextYear}-${String(next).padStart(2, '0')}-01`
+}
+
 export async function computeMonthlyInventory(
   params: MonthlyInventoryParams
 ): Promise<MonthlyInventoryResult> {
   const { profile, month } = params
 
-  const monthStart = new Date(`${month}-01T00:00:00Z`)
-  const monthEnd = new Date(monthStart)
-  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1)
+  // ⚠️ Los límites del mes van en HORA DEL NEGOCIO (UTC−6), no en UTC. En UTC
+  // el mes arrancaba seis horas antes: las ventas de la tarde-noche del último
+  // día caían en el mes siguiente, y el rótulo del dashboard —que formatea en
+  // hora local— mostraba un día menos ("valor al 30 jul" para un corte que era
+  // el 31). Es exactamente la mezcla de reglas que documenta businessTime.ts, y
+  // la misma que ya usa el filtro de periodo que arma el navegador.
+  const monthStart = parseBusinessDate(`${month}-01`)
+  const monthEnd = parseBusinessDate(nextMonthOf(month))
 
   // Ventana de valuación: el periodo explícito si vino, o el mes completo.
   // `windowEnd` es el corte al que se valúa el inventario (exclusivo).
@@ -80,12 +120,30 @@ export async function computeMonthlyInventory(
 
   const windowMeta = { from: windowStart.toISOString(), to: windowEnd.toISOString() }
 
+  // Arranque de la conciliación acumulada. Se topa al corte por si alguien
+  // valúa un periodo anterior a la carga inicial: ahí la ventana queda vacía
+  // (apertura = final, flujos en cero), que es lo correcto, en vez de un rango
+  // invertido que devolvería basura.
+  const openingDate = parseBusinessDate(INVENTORY_OPENING_DATE)
+  const reconcileStart = openingDate < windowEnd ? openingDate : windowEnd
+  const reconcileMeta = {
+    from: reconcileStart.toISOString(),
+    to: windowEnd.toISOString()
+  }
+
   const db = useDb()
 
   // Sucursales a incluir: una específica, o todas las relevantes para el rol.
   let storeIds: number[] | undefined // undefined = sin restricción (se resuelve más abajo)
   if (isStoreScopedRole(profile.role)) {
-    if (profile.storeId == null) return { month, ...windowMeta, ...EMPTY_RESULT }
+    if (profile.storeId == null) {
+      return {
+        month,
+        ...windowMeta,
+        ...EMPTY_RESULT,
+        reconciliation: { ...reconcileMeta, ...EMPTY_RESULT }
+      }
+    }
     storeIds = [profile.storeId]
   } else if (params.storeId) {
     storeIds = [params.storeId]
@@ -128,8 +186,10 @@ export async function computeMonthlyInventory(
   // (que ya fue excluida del FIFO al filtrar invoices.status = 'emitida', así
   // que procesarla de nuevo aquí sería doble conteo).
   const movementTypeById = new Map<number, string>()
+  const movementById = new Map<number, (typeof allMovements)[number]>()
   for (const m of allMovements) {
     movementTypeById.set(m.id, m.type)
+    movementById.set(m.id, m)
   }
 
   // --- 2. Ventas emitidas hasta el cierre del mes, con sus líneas. ---
@@ -182,161 +242,188 @@ export async function computeMonthlyInventory(
   const allKeys = new Set<string>([...movementsByKey.keys(), ...salesByKey.keys()])
 
   // --- 4. Calcular métricas por (producto, sucursal), acumulando el total. ---
-  let entriesValue = 0
-  let endingInventoryValue = 0
-  let productsWithStock = 0
-  let transfersOutValue = 0
-  let transfersOutUnits = 0
-  let transfersInValue = 0
-  let transfersInUnits = 0
-  let endingUnits = 0
-  let exitsValue = 0
-  let exitsUnits = 0
-  let voidsValue = 0
-  let voidsUnits = 0
-  let adjustmentsValue = 0
-  let adjustmentsUnits = 0
-  // Flujos del FIFO: con ellos cuadra inicial + entradas − consumos = final.
-  let openingInventoryValue = 0
-  let openingUnits = 0
-  let inflowsValue = 0
-  let soldCost = 0
-  let otherOutflowsCost = 0
-  let uncoveredSaleUnits = 0
-  let uncoveredSaleValue = 0
+  // Todo lo de arriba (dos SELECT y el agrupado) se hace UNA vez y sirve para
+  // cualquier ventana: lo único que cambia entre el periodo elegido y la
+  // conciliación acumulada es qué se atribuye a qué rango. Por eso esto es una
+  // función y no un bloque suelto — antes de tenerla, una segunda ventana
+  // habría significado volver a traer todo el kardex.
+  function summarizeWindow(winFrom: Date, winTo: Date): typeof EMPTY_RESULT {
+    let entriesValue = 0
+    let endingInventoryValue = 0
+    let productsWithStock = 0
+    let transfersOutValue = 0
+    let transfersOutUnits = 0
+    let transfersInValue = 0
+    let transfersInUnits = 0
+    let endingUnits = 0
+    let exitsValue = 0
+    let exitsUnits = 0
+    let voidsValue = 0
+    let voidsUnits = 0
+    let adjustmentsValue = 0
+    let adjustmentsUnits = 0
+    // Flujos del FIFO: con ellos cuadra inicial + entradas − consumos = final.
+    let openingInventoryValue = 0
+    let openingUnits = 0
+    let inflowsValue = 0
+    let soldCost = 0
+    let otherOutflowsCost = 0
+    let uncoveredSaleUnits = 0
+    let uncoveredSaleValue = 0
 
-  for (const key of allKeys) {
-    const productMovements = movementsByKey.get(key) ?? []
-    const productSales = salesByKey.get(key) ?? []
+    for (const key of allKeys) {
+      const productMovements = movementsByKey.get(key) ?? []
+      const productSales = salesByKey.get(key) ?? []
 
-    const entries = productMovements
-      .filter((m) => m.type === 'entrada')
-      .sort(
-        (a, b) => effectiveMovementDate(a).getTime() - effectiveMovementDate(b).getTime()
-      )
+      const entries = productMovements
+        .filter((m) => m.type === 'entrada')
+        .sort(
+          (a, b) => effectiveMovementDate(a).getTime() - effectiveMovementDate(b).getTime()
+        )
 
-    const entriesInMonth = entries.filter((e) => {
-      const date = effectiveMovementDate(e)
-      return date >= windowStart && date < windowEnd
-    })
-    for (const e of entriesInMonth) entriesValue += Number(e.totalValue)
+      const entriesInMonth = entries.filter((e) => {
+        const date = effectiveMovementDate(e)
+        return date >= winFrom && date < winTo
+      })
+      for (const e of entriesInMonth) entriesValue += Number(e.totalValue)
 
-    for (const m of productMovements) {
-      // Transferencia cancelada: no cuenta como salida (inflaba
-      // transfersOut*) ni su reversa como ajuste/anulación. Se ignoran todos
-      // sus movimientos, que es lo que significa cancelarla.
-      if (m.transfer?.status === 'cancelada') continue
+      for (const m of productMovements) {
+        // Transferencia cancelada: no cuenta como salida (inflaba
+        // transfersOut*) ni su reversa como ajuste/anulación. Se ignoran todos
+        // sus movimientos, que es lo que significa cancelarla.
+        if (m.transfer?.status === 'cancelada') continue
 
-      if (m.type === 'transferencia_salida') {
-        const issuedAt = m.transfer?.issuedAt
-        if (issuedAt && issuedAt >= windowStart && issuedAt < windowEnd) {
-          transfersOutUnits += Math.abs(Number(m.quantity))
-          transfersOutValue += Math.abs(Number(m.totalValue))
-        }
-      }
-      if (m.type === 'transferencia_entrada') {
-        const receivedAt = m.transfer?.receivedAt
-        if (receivedAt && receivedAt >= windowStart && receivedAt < windowEnd) {
-          transfersInUnits += Number(m.quantity)
-          transfersInValue += Number(m.totalValue)
-        }
-      }
-
-      // Anulaciones: solo cuentan aquí como corrección de inventario si
-      // revierten una 'entrada'. Si revierten una 'venta', su efecto ya
-      // quedó resuelto al excluir la venta anulada del filtro de invoices.
-      if (m.type === 'anulacion') {
-        const originalType = m.reversesMovementId
-          ? movementTypeById.get(m.reversesMovementId)
-          : undefined
-
-        if (originalType === 'entrada') {
-          if (m.createdAt >= windowStart && m.createdAt < windowEnd) {
-            voidsUnits += Number(m.quantity) // negativo: resta stock
-            voidsValue += Number(m.totalValue)
+        if (m.type === 'transferencia_salida') {
+          const issuedAt = m.transfer?.issuedAt
+          if (issuedAt && issuedAt >= winFrom && issuedAt < winTo) {
+            transfersOutUnits += Math.abs(Number(m.quantity))
+            transfersOutValue += Math.abs(Number(m.totalValue))
           }
         }
-        // originalType === 'venta' (o desconocido): se ignora aquí.
-      }
+        if (m.type === 'transferencia_entrada') {
+          const receivedAt = m.transfer?.receivedAt
+          if (receivedAt && receivedAt >= winFrom && receivedAt < winTo) {
+            transfersInUnits += Number(m.quantity)
+            transfersInValue += Number(m.totalValue)
+          }
+        }
 
-      // El ajuste puede sumar o restar stock según el signo de quantity.
-      if (m.type === 'ajuste') {
-        const date = effectiveMovementDate(m)
-        if (date >= windowStart && date < windowEnd) {
-          adjustmentsUnits += Number(m.quantity) // conserva el signo, útil para ver si fue alta o baja
-          adjustmentsValue += Number(m.totalValue)
+        // Anulaciones: solo cuentan aquí como corrección de inventario si
+        // revierten una 'entrada'. Si revierten una 'venta', su efecto ya
+        // quedó resuelto al excluir la venta anulada del filtro de invoices.
+        if (m.type === 'anulacion') {
+          const originalType = m.reversesMovementId
+            ? movementTypeById.get(m.reversesMovementId)
+            : undefined
+
+          if (originalType === 'entrada') {
+            // ⚠️ Misma fecha que usa el FIFO (`voidEffectiveDate`): la de la
+            // entrada que se revierte, no `created_at`. Con dos reglas
+            // distintas, una anulación caía en un periodo para el desglose y
+            // en otro para el costo — exactamente lo que este helper existe
+            // para impedir.
+            const date = voidEffectiveDate(
+              m,
+              m.reversesMovementId != null ? movementById.get(m.reversesMovementId) : undefined
+            )
+            if (date >= winFrom && date < winTo) {
+              voidsUnits += Number(m.quantity) // negativo: resta stock
+              voidsValue += Number(m.totalValue)
+            }
+          }
+          // originalType === 'venta' (o desconocido): se ignora aquí.
+        }
+
+        // El ajuste puede sumar o restar stock según el signo de quantity.
+        if (m.type === 'ajuste') {
+          const date = effectiveMovementDate(m)
+          if (date >= winFrom && date < winTo) {
+            adjustmentsUnits += Number(m.quantity) // conserva el signo, útil para ver si fue alta o baja
+            adjustmentsValue += Number(m.totalValue)
+          }
         }
       }
+
+      const salesInMonth = productSales.filter((s) => s.issuedAt >= winFrom && s.issuedAt < winTo)
+      for (const s of salesInMonth) {
+        exitsValue += s.totalValue
+        exitsUnits += s.quantity
+      }
+
+      // --- FIFO de esta sucursal, con el motor compartido ---
+      const fifo = runFifo(
+        buildFifoEvents(
+          productMovements.map((m) => ({
+            id: m.id,
+            type: m.type,
+            quantity: m.quantity,
+            unitValue: m.unitValue,
+            supplierInvoiceDate: m.supplierInvoiceDate,
+            reversesMovementId: m.reversesMovementId,
+            createdAt: m.createdAt,
+            transferIssuedAt: m.transfer?.issuedAt ?? null,
+            transferReceivedAt: m.transfer?.receivedAt ?? null,
+            transferStatus: m.transfer?.status ?? null
+          })),
+          productSales.map((s) => ({
+            issuedAt: s.issuedAt,
+            quantity: s.quantity,
+            unitPrice: s.unitValue
+          })),
+          movementTypeById
+        ),
+        { from: winFrom, to: winTo }
+      )
+
+      endingInventoryValue += fifo.endingValue
+      openingInventoryValue += fifo.openingValue
+      if (fifo.openingUnits > EPSILON) openingUnits += fifo.openingUnits
+      inflowsValue += fifo.inflowValue
+      soldCost += fifo.saleCost
+      otherOutflowsCost += fifo.otherOutflowCost
+      uncoveredSaleUnits += fifo.uncoveredUnits
+      uncoveredSaleValue += fifo.uncoveredValue
+      if (fifo.endingUnits > EPSILON) {
+        endingUnits += fifo.endingUnits
+        productsWithStock++
+      }
     }
 
-    const salesInMonth = productSales.filter((s) => s.issuedAt >= windowStart && s.issuedAt < windowEnd)
-    for (const s of salesInMonth) {
-      exitsValue += s.totalValue
-      exitsUnits += s.quantity
-    }
-
-    // --- FIFO de esta sucursal, con el motor compartido ---
-    const fifo = runFifo(
-      buildFifoEvents(
-        productMovements.map((m) => ({
-          id: m.id,
-          type: m.type,
-          quantity: m.quantity,
-          unitValue: m.unitValue,
-          supplierInvoiceDate: m.supplierInvoiceDate,
-          reversesMovementId: m.reversesMovementId,
-          createdAt: m.createdAt,
-          transferIssuedAt: m.transfer?.issuedAt ?? null,
-          transferReceivedAt: m.transfer?.receivedAt ?? null,
-          transferStatus: m.transfer?.status ?? null
-        })),
-        productSales.map((s) => ({
-          issuedAt: s.issuedAt,
-          quantity: s.quantity,
-          unitPrice: s.unitValue
-        })),
-        movementTypeById
-      ),
-      { from: windowStart, to: windowEnd }
-    )
-
-    endingInventoryValue += fifo.endingValue
-    openingInventoryValue += fifo.openingValue
-    if (fifo.openingUnits > EPSILON) openingUnits += fifo.openingUnits
-    inflowsValue += fifo.inflowValue
-    soldCost += fifo.saleCost
-    otherOutflowsCost += fifo.otherOutflowCost
-    uncoveredSaleUnits += fifo.uncoveredUnits
-    uncoveredSaleValue += fifo.uncoveredValue
-    if (fifo.endingUnits > EPSILON) {
-      endingUnits += fifo.endingUnits
-      productsWithStock++
+    return {
+      entriesValue: Math.round(entriesValue * 100) / 100,
+      exitsValue: Math.round(exitsValue * 100) / 100,
+      exitsUnits: Math.round(exitsUnits * 100) / 100,
+      endingInventoryValue: Math.round(endingInventoryValue * 100) / 100,
+      endingUnits: Math.round(endingUnits * 100) / 100,
+      transfersOutValue: Math.round(transfersOutValue * 100) / 100,
+      transfersOutUnits: Math.round(transfersOutUnits * 100) / 100,
+      transfersInValue: Math.round(transfersInValue * 100) / 100,
+      transfersInUnits: Math.round(transfersInUnits * 100) / 100,
+      voidsValue: Math.round(voidsValue * 100) / 100,
+      voidsUnits: Math.round(voidsUnits * 100) / 100,
+      adjustmentsUnits: Math.round(adjustmentsUnits * 100) / 100,
+      adjustmentsValue: Math.round(adjustmentsValue * 100) / 100,
+      openingInventoryValue: Math.round(openingInventoryValue * 100) / 100,
+      openingUnits: Math.round(openingUnits * 100) / 100,
+      inflowsValue: Math.round(inflowsValue * 100) / 100,
+      soldCost: Math.round(soldCost * 100) / 100,
+      otherOutflowsCost: Math.round(otherOutflowsCost * 100) / 100,
+      uncoveredSaleUnits: Math.round(uncoveredSaleUnits * 100) / 100,
+      uncoveredSaleValue: Math.round(uncoveredSaleValue * 100) / 100,
+      productsWithStock
     }
   }
 
   return {
     month,
     ...windowMeta,
-    entriesValue: Math.round(entriesValue * 100) / 100,
-    exitsValue: Math.round(exitsValue * 100) / 100,
-    exitsUnits: Math.round(exitsUnits * 100) / 100,
-    endingInventoryValue: Math.round(endingInventoryValue * 100) / 100,
-    endingUnits: Math.round(endingUnits * 100) / 100,
-    transfersOutValue: Math.round(transfersOutValue * 100) / 100,
-    transfersOutUnits: Math.round(transfersOutUnits * 100) / 100,
-    transfersInValue: Math.round(transfersInValue * 100) / 100,
-    transfersInUnits: Math.round(transfersInUnits * 100) / 100,
-    voidsValue: Math.round(voidsValue * 100) / 100,
-    voidsUnits: Math.round(voidsUnits * 100) / 100,
-    adjustmentsUnits: Math.round(adjustmentsUnits * 100) / 100,
-    adjustmentsValue: Math.round(adjustmentsValue * 100) / 100,
-    openingInventoryValue: Math.round(openingInventoryValue * 100) / 100,
-    openingUnits: Math.round(openingUnits * 100) / 100,
-    inflowsValue: Math.round(inflowsValue * 100) / 100,
-    soldCost: Math.round(soldCost * 100) / 100,
-    otherOutflowsCost: Math.round(otherOutflowsCost * 100) / 100,
-    uncoveredSaleUnits: Math.round(uncoveredSaleUnits * 100) / 100,
-    uncoveredSaleValue: Math.round(uncoveredSaleValue * 100) / 100,
-    productsWithStock
+    ...summarizeWindow(windowStart, windowEnd),
+    // Segunda pasada sobre los MISMOS datos ya cargados: la conciliación no
+    // arranca en el periodo elegido sino en la carga del inventario inicial,
+    // para que la tarjeta cuente la historia completa hasta el corte.
+    reconciliation: {
+      ...reconcileMeta,
+      ...summarizeWindow(reconcileStart, windowEnd)
+    }
   }
 }

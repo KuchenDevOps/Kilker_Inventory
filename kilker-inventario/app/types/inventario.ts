@@ -560,8 +560,7 @@ export interface ApiAverageCost {
 }
 
 
-export interface ApiMonthlyInventory {
-  month: string
+export interface ApiMonthlyInventoryWindow {
   from: string
   to: string
   entriesValue: number
@@ -590,6 +589,17 @@ export interface ApiMonthlyInventory {
   uncoveredSaleValue: number
 }
 
+export interface ApiMonthlyInventory extends ApiMonthlyInventoryWindow {
+  month: string
+  /**
+   * Los mismos flujos acumulados desde la carga del inventario inicial
+   * (1-ene-2026) hasta el MISMO corte, en vez de solo el periodo elegido. Es lo
+   * que alimenta "Cómo se llegó al inventario final": el periodo responde "qué
+   * pasó en agosto"; esto responde "cómo llegó el almacén a valer lo que vale".
+   */
+  reconciliation: ApiMonthlyInventoryWindow
+}
+
 export interface ApiTopProduct {
   productId: number
   productName: string | null
@@ -601,6 +611,13 @@ export interface ApiTopProduct {
   profit: number
   profitPct: number
   hasSales: boolean
+  /**
+   * Unidades vendidas que salieron contra una capa de costo $0: su `totalCost`
+   * es 0 y su utilidad da 100%, pero por una entrada capturada sin costo, no
+   * porque el producto sea rentable.
+   */
+  zeroCostUnits: number
+  zeroCostRevenue: number
 }
 
 export interface ApiUnsoldProduct {

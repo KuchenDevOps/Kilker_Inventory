@@ -83,23 +83,16 @@ const allProductsProfitPct = computed(() => {
 })
 
 // ───────────────────────────────────────────────
-//  VISTA CON IVA (16%)
+//  VENTAS COSTEADAS EN $0
 // ───────────────────────────────────────────────
-// ⚠️ EL BOTÓN "CON IVA" YA NO ES SIMÉTRICO ENTRE VENTAS Y GASTOS.
+// Piezas que salieron contra una capa de costo cero: había existencia, pero la
+// entrada que la creó se capturó sin costo. Entran al "Costo total" sumando 0,
+// así que ese renglón queda subvaluado y la utilidad inflada en lo que de
+// verdad valían esas piezas.
 //
-// En VENTAS el IVA sigue siendo informativo: no se guarda, `total_amount` va
-// sin él y el 16% se calcula aquí sólo para mostrarlo. El botón sí manda.
-//
-// En GASTOS ya no: el IVA y las retenciones SE PAGAN, y lo que se debe es
-// `expenses.total_to_pay` (columna generada en la BD). Ese importe es dinero
-// real que salió del banco, así que la vista "sin IVA" de un gasto ya no
-// corresponde a ningún desembolso — es sólo la parte que cuenta como gasto del
-// negocio, porque el IVA se entera al SAT en vez de quedárselo.
-//
-// ⚠️ La utilidad y el resultado del periodo siguen saliendo de los importes SIN
-// IVA a propósito: el impuesto no es ingreso ni gasto del negocio (se cobra y se
-// entera), así que meterlo en la utilidad la infla con dinero ajeno. Por lo
-// mismo no se tocan "Costo total" ni "Compras", que son costo del almacén.
+
+
+
 const IVA_RATE = 0.16
 const withIva = ref(false)
 const ivaFactor = computed(() => (withIva.value ? 1 + IVA_RATE : 1))
@@ -111,15 +104,7 @@ const expenseHint = computed(() =>
 
 const displaySalesValue = computed(() => netSalesValue.value * ivaFactor.value)
 
-/**
- * Total fiscal de un grupo de gastos: `subtotal + IVA − retenciones`.
- *
- * ⚠️ Ya NO se calcula aquí: se lee `totalToPay`, que viene del `total_to_pay`
- * generado por Postgres. Esta función tenía la fórmula escrita a mano y el
- * endpoint de abonos tenía otra; divergieron y por ahí entraron pagos inflados.
- * Ahora hay una sola definición de "cuánto se debe" y vive en la base, así que
- * este dashboard, /gastos y el tope de los abonos no pueden volver a discrepar.
- */
+
 function expenseWithTaxes(bucket: typeof EMPTY_BUCKET) {
   return withIva.value ? bucket.totalToPay : bucket.subtotal
 }
@@ -278,6 +263,13 @@ const derivedMonth = computed(() => {
   return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}`
 })
 
+const derivedLastMonth = computed(() => {
+  const lastDay = periodTo.value ? new Date(periodTo.value) : new Date()
+  if (periodTo.value) lastDay.setDate(lastDay.getDate() - 1)
+  lastDay.setMonth(lastDay.getMonth() - 1)
+  return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}`
+})
+
 const dateLabel = new Intl.DateTimeFormat('es-MX', {
   day: 'numeric',
   month: 'short',
@@ -295,26 +287,67 @@ const cutoffLabel = computed(() => {
   return dateLabel.format(lastDay)
 })
 
-/** Fecha de apertura del periodo (el `from` que se usó para valuar). */
-const openingLabel = computed(() => {
-  const iso = monthlyInventory.value?.from ?? periodFrom.value
-  return iso ? dateLabel.format(new Date(iso)) : 'inicio del periodo'
+/**
+ * Día al que queda valuado un inventario de APERTURA: `from` es el instante en
+ * que ARRANCA la ventana, así que el corte es el día anterior. Elegir agosto
+ * muestra el inventario al 31 de julio, no al 1 de agosto.
+ */
+function openingCutoffOf(iso: string | undefined, fallback: string) {
+  if (!iso) return fallback
+  const prevDay = new Date(iso)
+  prevDay.setDate(prevDay.getDate() - 1)
+  return dateLabel.format(prevDay)
+}
+
+/**
+ * Ventana con la que se muestra "Inventario inicial".
+ *
+ * Con un periodo elegido es la apertura de ESE periodo (agosto → 31 de julio).
+ * Sin periodo ("Todo") no existe un "mes anterior" que signifique nada: el mes
+ * al que cae `month` es un default del servidor, no algo que el usuario pidió,
+ * y la tarjeta acababa diciendo "valor al 30 jul" sin que nadie eligiera julio.
+ * Ahí se usa la apertura de la conciliación — el 31-dic-2025, la carga inicial —
+ * que además es el primer renglón de "Cómo se llegó al inventario final", así
+ * que las dos tarjetas cuentan la misma historia.
+ *
+ * Se decide con el `from` de la RESPUESTA, no con el ref local: es el único que
+ * dice qué ventana usó de verdad el servidor.
+ */
+const openingWindow = computed(() => {
+  const m = monthlyInventory.value
+  if (!m) return null
+  return summary.value?.from ? m : m.reconciliation
 })
+
+/** Corte de la tarjeta "Inventario inicial". */
+const openingCutoffLabel = computed(() =>
+  openingCutoffOf(openingWindow.value?.from, `cierre de ${derivedLastMonth.value}`)
+)
+
+/** Arranque de la conciliación: el 31-dic-2025, la carga del inventario inicial. */
+const reconciliationOpeningLabel = computed(() =>
+  openingCutoffOf(monthlyInventory.value?.reconciliation.from, 'la carga inicial')
+)
 
 // Conciliación del inventario. "Compras" y "Costo total" responden otra
 // pregunta (lo comprado al proveedor, lo que costó lo vendido) y por eso
 // dejan fuera transferencias, anulaciones y la carga inicial: con ellas dos
 // la cuenta NO cierra. Estos son los flujos que de verdad mueven el almacén,
 // y su suma tiene que dar el inventario final al peso.
+//
+// ⚠️ Va sobre `monthly.reconciliation`, NO sobre la ventana del periodo: la
+// tarjeta acumula desde la carga del inventario inicial (31-dic-2025) hasta el
+// corte elegido, para que cuente la historia completa del almacén y no solo el
+// mes en pantalla.
 const reconciliation = computed(() => {
-  const m = monthlyInventory.value
+  const m = monthlyInventory.value?.reconciliation
   if (!m) return null
 
   const expected = m.openingInventoryValue + m.inflowsValue - m.soldCost - m.otherOutflowsCost
   return {
     rows: [
       {
-        label: `Inventario al ${openingLabel.value}`,
+        label: `Inventario al ${reconciliationOpeningLabel.value}`,
         detail: `${number.format(m.openingUnits)} artículos`,
         amount: m.openingInventoryValue,
         sign: ''
@@ -372,9 +405,13 @@ const metricsSection1 = computed(() => {
       globalOnly: false
     },
     {
+      // Valor FIFO del almacén al cierre del periodo ANTERIOR, que es el mismo
+      // `openingInventoryValue` con el que cuadra la conciliación. Antes era la
+      // suma de las entradas con factura 'II': un número global de toda la
+      // historia que ignoraba el periodo y la sucursal elegidos.
       label: 'Inventario inicial',
-      value: currency.format(summary.value?.startInventoryValue ?? 0),
-      hint: 'entradas "II"',
+      value: currency.format(openingWindow.value?.openingInventoryValue ?? 0),
+      hint: `valor al ${openingCutoffLabel.value}`,
       icon: 'i-lucide-calendar-check',
       color: 'text-warning',
       loading: loadingSummary.value,
@@ -405,6 +442,7 @@ const metricsSection2 = computed(() => {
  all.push({
     label: 'Costo total',
     value: currency.format(allProductsTotals.value?.totalCost ?? 0),
+
     hint: 'de todos los productos vendidos',
     icon: 'i-lucide-receipt',
     color: 'text-warning',
@@ -424,8 +462,7 @@ const metricsSection2 = computed(() => {
    all.push({
   label: 'Utilidad total',
   value: currency.format(allProductsNetProfit.value),
-  // Siempre sobre importes sin IVA, aunque el botón esté activo: el impuesto
-  // no es utilidad. El rótulo lo dice para que no parezca un descuadre.
+
   hint: `${allProductsProfitPct.value.toFixed(1)}% sobre ventas totales · sin IVA`,
   icon: (allProductsNetProfit.value >= 0) ? 'i-lucide-circle-check' : 'i-lucide-alert-circle',
   color: (allProductsNetProfit.value >= 0) ? 'text-success' : 'text-error',
@@ -590,6 +627,7 @@ const filteredTopProducts = computed(() => {
       :description="summaryError"
     />
 
+
     <!-- Tarjetas de métricas -->
     <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 <UCard v-for="m in metricsSection1" :key="m.label" :ui="{ body: 'p-3 sm:p-4' }">
@@ -628,13 +666,15 @@ const filteredTopProducts = computed(() => {
     </div>
   </div>
 </UCard>
-
-<!--<UCard class="sm:col-span-2 lg:col-span-3" :ui="{ body: 'p-3 sm:p-4' }">
+<!--
+<UCard class="sm:col-span-2 lg:col-span-3" :ui="{ body: 'p-3 sm:p-4' }">
   <template #header>
     <div class="flex items-center gap-2 py-0">
       <UIcon name="i-lucide-scale" class="size-4 text-primary" />
       <h2 class="text-sm font-semibold">Cómo se llegó al inventario final</h2>
-      <span class="ml-auto text-xs text-muted">{{ openingLabel }} → {{ cutoffLabel }}</span>
+      <span class="ml-auto text-xs text-muted">
+        {{ reconciliationOpeningLabel }} → {{ cutoffLabel }}
+      </span>
     </div>
   </template>
 
@@ -686,7 +726,8 @@ const filteredTopProducts = computed(() => {
       :description="`Se costearon en ${currency.format(reconciliation.uncoveredValue)} con la compra que los cubrió después. Conviene capturar la entrada antes de la venta.`"
     />
   </div> 
-</UCard>-->
+</UCard>
+-->
       <UCard v-for="m in metricsSection2" :key="m.label">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0 flex-1">
