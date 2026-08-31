@@ -38,12 +38,7 @@ const expensesByType = computed(
 const totalExpenses = computed(
   () => expensesByType.value.Fijo.subtotal + expensesByType.value.Operativo.subtotal
 )
-// El desglose por tipo se muestra vía `displayExpensesFijo`/`displayExpensesOperativo`,
-// que además aplican IVA y retenciones cuando el botón está activo.
 
-const totalExpensesPaid = computed(
-  () => expensesByType.value.Fijo.totalPaid + expensesByType.value.Operativo.totalPaid
-)
 
 
 

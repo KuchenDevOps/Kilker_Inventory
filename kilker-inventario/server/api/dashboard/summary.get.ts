@@ -9,6 +9,7 @@ import {
   expensePayments,
   expenses,
   invoices,
+  salePayments,
   stockMovements
 } from '../../db/schema'
 import { effectiveMovementDateBetween } from '../../utils/movementDates'
@@ -83,6 +84,8 @@ export default defineEventHandler(async (event) => {
       entriesPaid: 0,
       entriesBalance: 0,
       salesValue: 0,
+      salesPaid: 0,
+      salesBalance: 0,
       expenses: { Fijo: EMPTY_EXPENSE_BUCKET, Operativo: EMPTY_EXPENSE_BUCKET },
       soldTotals: {
         totalCost: 0,
@@ -150,7 +153,27 @@ export default defineEventHandler(async (event) => {
     .groupBy(entryPayments.movementId)
     .as('entry_payments_agg')
 
-  const [entryRows, entryPaymentRows, saleRows, expenseRows, soldTotals, monthly] = await Promise.all([
+  // Cobrado por factura, para topar por factura antes de agregar. Mismo criterio
+  // que gastos y entradas: sin el tope, un sobrecobro en una venta taparía el
+  // saldo pendiente de otra y "por cobrar" saldría de menos.
+  const salePaymentsAgg = db
+    .select({
+      invoiceId: salePayments.invoiceId,
+      paid: sql<string>`sum(${salePayments.amount})`.as('sale_paid')
+    })
+    .from(salePayments)
+    .groupBy(salePayments.invoiceId)
+    .as('sale_payments_agg')
+
+  const [
+    entryRows,
+    entryPaymentRows,
+    saleRows,
+    salePaymentRows,
+    expenseRows,
+    soldTotals,
+    monthly
+  ] = await Promise.all([
     db
       .select({ value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)` })
       .from(stockMovements)
@@ -170,6 +193,25 @@ export default defineEventHandler(async (event) => {
     db
       .select({ value: sql<string>`coalesce(sum(${invoices.totalAmount}), 0)` })
       .from(invoices)
+      .where(and(...saleFilters)),
+
+    // Cobrado y por cobrar de esas mismas ventas.
+    //
+    // ⚠️ El cobrable es `invoices.total_amount` a secas: ya trae el descuento y
+    // va SIN IVA (en ventas el 16% sigue siendo informativo y no vive en la BD).
+    // Es la misma regla que aplica `POST /api/sales/:id/payments` al topar cada
+    // abono; multiplicarlo por 1.16 aquí es exactamente el bug que dejó pagos
+    // inflados en gastos.
+    //
+    // Una venta de $0 —entrega de muestras, o 100% de descuento— aporta 0 a los
+    // tres números y no queda como pendiente eterna, igual que en el listado.
+    db
+      .select({
+        totalPaid: sql<string>`coalesce(sum(least(round(${invoices.totalAmount}, 2), round(coalesce(${salePaymentsAgg.paid}, 0), 2))), 0)`,
+        balance: sql<string>`coalesce(sum(greatest(0, round(${invoices.totalAmount}, 2) - round(coalesce(${salePaymentsAgg.paid}, 0), 2))), 0)`
+      })
+      .from(invoices)
+      .leftJoin(salePaymentsAgg, eq(salePaymentsAgg.invoiceId, invoices.id))
       .where(and(...saleFilters)),
 
 
@@ -227,6 +269,8 @@ export default defineEventHandler(async (event) => {
     entriesPaid: round2(Number(entryPaymentRows[0]?.totalPaid ?? 0)),
     entriesBalance: round2(Number(entryPaymentRows[0]?.balance ?? 0)),
     salesValue: round2(Number(saleRows[0]?.value ?? 0)),
+    salesPaid: round2(Number(salePaymentRows[0]?.totalPaid ?? 0)),
+    salesBalance: round2(Number(salePaymentRows[0]?.balance ?? 0)),
     expenses: expensesByType,
     soldTotals,
     monthly
