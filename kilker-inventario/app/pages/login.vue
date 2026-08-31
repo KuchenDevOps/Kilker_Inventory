@@ -13,7 +13,7 @@ const errorMsg = ref<string | null>(null)
 
 // Si ya hay sesión activa, no mostrar el login.
 watchEffect(() => {
-  if (user.value) router.replace('/dashboard')
+  if (user.value) router.replace(HOME_ROUTE)
 })
 
 async function onSubmit() {
@@ -29,7 +29,7 @@ async function onSubmit() {
     return
   }
   // useMe() (en el layout) carga el perfil al detectar la sesión.
-  await router.replace('/dashboard')
+  await router.replace(HOME_ROUTE)
 }
 </script>
 

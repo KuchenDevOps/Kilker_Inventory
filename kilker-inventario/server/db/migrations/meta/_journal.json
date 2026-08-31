@@ -239,6 +239,13 @@
       "when": 1787771374155,
       "tag": "0033_organic_bug",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788156290760,
+      "tag": "0034_premium_mindworm",
+      "breakpoints": true
     }
   ]
 }

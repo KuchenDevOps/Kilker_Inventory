@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // La raíz redirige al panel de métricas.
-await navigateTo('/dashboard', { redirectCode: 302 })
+await navigateTo(HOME_ROUTE, { redirectCode: 302 })
 </script>
 
 <template>

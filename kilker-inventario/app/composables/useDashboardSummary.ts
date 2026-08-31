@@ -46,6 +46,17 @@ export interface DashboardSummary {
   entriesBalance: number
   /** Ventas emitidas del periodo. */
   salesValue: number
+  /**
+   * Cobrado y por cobrar de esas mismas ventas: suman `salesValue`.
+   *
+   * ⚠️ Es dinero de la CARTERA, no del banco. Lo que mueve el saldo bancario es
+   * el abono cuando entra, y una venta a crédito no mueve un peso hasta que se
+   * cobra: por eso `salesPaid` del periodo no tiene por qué coincidir con los
+   * cobros asentados en `banks_movements` (un abono de hoy puede cobrar una
+   * factura de hace tres meses).
+   */
+  salesPaid: number
+  salesBalance: number
   expenses: Record<'Fijo' | 'Operativo', ExpenseBucket>
   soldTotals: {
     totalCost: number
