@@ -3,23 +3,19 @@
 // hasta hoy. A diferencia de /api/reports/monthly-inventory, esto solo trae
 // movimientos e invoice-items de ESTE producto, así que es barato incluso
 // llamado bajo demanda desde el catálogo.
+//
+// ⚠️ El costeo se delega en `server/utils/fifoEngine.ts`, igual que el
+// dashboard y que /api/reports/inventory-value: este archivo llevaba su propia
+// copia del FIFO y sobrevaluaba cualquier producto que se hubiera vendido sin
+// existencia (el faltante restaba unidades pero no valor, así que la compra que
+// lo cubría entraba entera al inventario).
 import { and, eq, inArray } from 'drizzle-orm'
 import { useDb } from '../../../db'
 import { invoiceItems, invoices, stockMovements } from '../../../db/schema'
-import { voidEffectiveDate } from '../../../utils/fifoEngine'
-import { effectiveMovementDate } from '../../../utils/movementDates'
-
-const EPSILON = 0.0005
-
-interface Transaction {
-  date: Date
-  type: 'entrada' | 'salida'
-  quantity: number
-  unitValue: number
-}
+import { buildFifoEvents, runFifo } from '../../../utils/fifoEngine'
 
 export default defineEventHandler(async (event) => {
-  const profile = await requireProfile(event)
+  await requireProfile(event)
   const productId = Number(getRouterParam(event, 'id'))
   if (!productId) {
     throw createError({ statusCode: 400, statusMessage: 'id de producto inválido' })
@@ -44,9 +40,7 @@ export default defineEventHandler(async (event) => {
     with: { transfer: { columns: { issuedAt: true, receivedAt: true, status: true } } }
   })
 
-  const movementTypeById = new Map(movements.map((m) => [m.id, m.type]))
-  // Para fechar cada anulación con la entrada que revierte (ver voidEffectiveDate).
-  const movementById = new Map(movements.map((m) => [m.id, m]))
+  const movementTypeById = new Map(movements.map((m) => [m.id, m.type as string]))
 
   // Ventas emitidas de este producto (join manual porque el filtro es por producto,
   // no por invoice).
@@ -90,98 +84,36 @@ export default defineEventHandler(async (event) => {
     const storeMovements = movementsByStore.get(storeId) ?? []
     const storeSales = salesByStore.get(storeId) ?? []
 
-    const transactions: Transaction[] = []
+    const fifo = runFifo(
+      buildFifoEvents(
+        storeMovements.map((m) => ({
+          id: m.id,
+          type: m.type,
+          quantity: m.quantity,
+          unitValue: m.unitValue,
+          supplierInvoiceDate: m.supplierInvoiceDate,
+          reversesMovementId: m.reversesMovementId,
+          createdAt: m.createdAt,
+          transferIssuedAt: m.transfer?.issuedAt ?? null,
+          transferReceivedAt: m.transfer?.receivedAt ?? null,
+          transferStatus: m.transfer?.status ?? null
+        })),
+        storeSales.map((s) => ({
+          issuedAt: s.issuedAt,
+          quantity: s.quantity,
+          unitPrice: s.unitValue
+        })),
+        movementTypeById
+      ),
+      { to: now }
+    )
 
-    for (const m of storeMovements) {
-      // Transferencia cancelada: se ignoran la salida y su reversa, para que
-      // el FIFO quede como si nunca hubiera salido (mismo criterio que
-      // monthlyInventory y inventoryFifo).
-      if (m.transfer?.status === 'cancelada') continue
+    const endingUnits = Math.round(fifo.endingUnits * 1000) / 1000
+    const endingValue = endingUnits === 0 ? 0 : Math.round(fifo.endingValue * 100) / 100
 
-      if (m.type === 'entrada') {
-        const date = effectiveMovementDate(m)
-        transactions.push({ date, type: 'entrada', quantity: Number(m.quantity), unitValue: Number(m.unitValue) })
-      }
-      if (m.type === 'transferencia_entrada' && m.transfer?.receivedAt) {
-        transactions.push({
-          date: m.transfer.receivedAt,
-          type: 'entrada',
-          quantity: Number(m.quantity),
-          unitValue: Number(m.unitValue)
-        })
-      }
-      if (m.type === 'transferencia_salida' && m.transfer?.issuedAt) {
-        transactions.push({
-          date: m.transfer.issuedAt,
-          type: 'salida',
-          quantity: Math.abs(Number(m.quantity)),
-          unitValue: Number(m.unitValue)
-        })
-      }
-      if (m.type === 'anulacion') {
-        const originalType = m.reversesMovementId ? movementTypeById.get(m.reversesMovementId) : undefined
-        if (originalType === 'entrada') {
-          transactions.push({
-            // Fecha de la entrada que revierte, igual que el motor FIFO.
-            date: voidEffectiveDate(
-              m,
-              m.reversesMovementId != null ? movementById.get(m.reversesMovementId) : undefined
-            ),
-            type: 'salida',
-            quantity: Math.abs(Number(m.quantity)),
-            unitValue: Number(m.unitValue)
-          })
-        }
-      }
-      if (m.type === 'ajuste') {
-        const date = effectiveMovementDate(m)
-        const qty = Number(m.quantity)
-        if (qty > 0) transactions.push({ date, type: 'entrada', quantity: qty, unitValue: Number(m.unitValue) })
-        else if (qty < 0) transactions.push({ date, type: 'salida', quantity: Math.abs(qty), unitValue: Number(m.unitValue) })
-      }
-    }
+    byStore.push({ storeId, endingUnits, endingValue })
+  }
 
-    for (const s of storeSales) {
-      transactions.push({ date: s.issuedAt, type: 'salida', quantity: s.quantity, unitValue: s.unitValue })
-    }
-
-    transactions.sort((a, b) => a.date.getTime() - b.date.getTime())
-
-   const layers: Array<{ qty: number; unitCost: number }> = []
-    let remainingQty = 0
-
-    for (const txn of transactions) {
-      if (txn.date > now) continue
-      if (txn.type === 'entrada') {
-        layers.push({ qty: txn.quantity, unitCost: txn.unitValue })
-        remainingQty += txn.quantity
-      } else {
-        let qtyToConsume = txn.quantity
-        let index = 0
-        while (qtyToConsume > EPSILON && index < layers.length) {
-          const layer = layers[index]
-          if (!layer) break
-          const consume = Math.min(layer.qty, qtyToConsume)
-          layer.qty -= consume
-          qtyToConsume -= consume
-          remainingQty -= consume
-          if (layer.qty <= EPSILON) index++
-        }
-        layers.splice(0, index)
-        if (qtyToConsume > EPSILON) remainingQty -= qtyToConsume
-      }
-    }
-
-    const roundedRemainingQty = Math.round(remainingQty * 1000) / 1000
-    const rawValue = layers.reduce((sum, l) => sum + l.qty * l.unitCost, 0)
-    const endingValue = roundedRemainingQty === 0 ? 0 : Math.round(rawValue * 100) / 100
-
-    byStore.push({
-      storeId,
-      endingUnits: roundedRemainingQty,
-      endingValue
-    })
-}
   return {
     productId,
     byStore,
