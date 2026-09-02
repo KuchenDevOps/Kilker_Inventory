@@ -164,12 +164,15 @@ async function toggleActive(c: ApiCustomer) {
       :description="error"
     />
 
-    <UInput
-      v-model="search"
-      icon="i-lucide-search"
-      placeholder="Buscar por nombre, RFC, correo o teléfono…"
-      class="w-full sm:max-w-sm"
-    />
+    <div class="flex flex-wrap items-center gap-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Buscar por nombre, RFC, correo o teléfono…"
+        class="w-full sm:max-w-sm"
+      />
+      <BotonLimpiarFiltros :active="!!search.trim()" label="Limpiar" @clear="search = ''" />
+    </div>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">

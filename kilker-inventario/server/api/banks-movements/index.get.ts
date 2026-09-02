@@ -71,7 +71,7 @@ export default defineEventHandler(async (event) => {
 
   const paginate = query.page != null
   const page = Math.max(1, Number(query.page) || 1)
-  const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50))
+  const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 100))
 
   const filters = []
 

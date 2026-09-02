@@ -40,6 +40,18 @@ const search = ref('')
 const storeFilter = ref(0) // 0 = todas
 const roleFilter = ref('todos')
 
+// Filtros locales (el listado se filtra en cliente), así que limpiar es solo
+// devolverlos a su valor neutro.
+const hasFilters = computed(
+  () => !!search.value.trim() || storeFilter.value !== 0 || roleFilter.value !== 'todos'
+)
+
+function clearFilters() {
+  search.value = ''
+  storeFilter.value = 0
+  roleFilter.value = 'todos'
+}
+
 const storeFilterItems = computed(() => [
   { label: 'Todas las sucursales', value: 0 },
   ...storeItems.value
@@ -220,8 +232,8 @@ const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
     <!-- Filtros: mismo layout que /ventas -->
     <div class="space-y-3">
    
-      <div class="flex flex-wrap gap-3">
-        
+      <div class="flex flex-wrap items-center gap-3">
+
         <USelect v-model="roleFilter" :items="roleFilterItems" class="w-44" />
         <USelect v-model="storeFilter" :items="storeFilterItems" class="w-60" />
            <UInput
@@ -230,6 +242,7 @@ const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
         placeholder="Buscar por nombre, email o sucursal…"
         class="w-auto"
       />
+        <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       </div>
     </div>
 
