@@ -315,6 +315,14 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
 - **Exportación a Excel** (SheetJS, en el cliente) desde catálogo (valor de inventario),
   historial de entradas e historial de ventas (hoja resumen + hoja de líneas), con dos
   variantes: "Exportar todo" y "Exportar con filtro".
+  ⚠️ **Exportar es una LECTURA: la ven todos los roles**, incluido el observador. El botón
+  del catálogo vivía dentro del `v-if="canManageCatalog"` de "Nuevo producto" y por eso el
+  empleado no podía bajar el Excel aunque el endpoint sí se lo permitía; son permisos
+  distintos y van en `v-if` distintos. El aislamiento lo pone el servidor: para un rol
+  acotado, `inventory-value` devuelve solo su sucursal, así que su Excel lleva únicamente
+  su tienda y los productos con stock en otra caen en el grupo
+  "Sin existencias en tu sucursal" (la etiqueta cambia según el rol, para no afirmar que
+  no hay existencias en ningún lado).
 
 ### 10.2 Reglas de negocio implementadas (lo no obvio)
 

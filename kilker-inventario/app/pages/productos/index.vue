@@ -8,7 +8,7 @@ const { products, pending, error, refresh } = useAllProducts()
 const { data: stores } = useStores()
 const storeMap = computed(() => new Map(stores.value.map((s) => [s.id, s])))
 const expandedId = ref<number | null>(null)
-const { me, canManageCatalog } = useMe()
+const { me, canManageCatalog, isStoreScoped } = useMe()
 // El borrado duro de producto sigue siendo exclusivo del admin de empresa; el
 // alta y la edición las comparte con el admin de tienda (canManageCatalog).
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -287,13 +287,17 @@ async function exportInventoryValue() {
 
     // Grupo aparte para productos sin ninguna existencia (no cuentan para
     // el total general de unidades/valor, porque su aporte es cero).
+    // ⚠️ Para un rol acotado el endpoint solo devuelve SU sucursal, así que un
+    // producto con stock en otra tienda cae aquí: la etiqueta lo dice, en vez
+    // de afirmar que no hay existencias en ningún lado.
+    const noStockLabel = isStoreScoped.value ? 'Sin existencias en tu sucursal' : 'Sin existencias'
     if (productsWithoutStock.length) {
       for (const p of productsWithoutStock) {
         sheetRows.push({
           SKU: p.sku,
           Producto: p.name,
           Categoría: p.category ?? '',
-          Sucursal: 'Sin existencias',
+          Sucursal: noStockLabel,
           Existencia: 0,
           'Valor de inventario': 0
         })
@@ -303,7 +307,7 @@ async function exportInventoryValue() {
         SKU: '',
         Producto: '',
         Categoría: '',
-        Sucursal: 'Subtotal Sin existencias',
+        Sucursal: `Subtotal ${noStockLabel}`,
         Existencia: 0,
         'Valor de inventario': 0
       })
@@ -354,26 +358,27 @@ async function exportInventoryValue() {
           {{ asOfMode ? `existencias al ${asOfDate}` : 'existencias actuales' }}
         </p>
       </div>
-       <div v-if="canManageCatalog" class="flex items-center gap-2">
-    <UButton
-      to="/productos/nuevo"
-      icon="i-lucide-plus"
-      color="primary"
-    >
-      Nuevo producto
-    </UButton>
+    
+      <div class="flex items-center gap-2">
+        <UButton
+          v-if="canManageCatalog"
+          to="/productos/nuevo"
+          icon="i-lucide-plus"
+          color="primary"
+        >
+          Nuevo producto
+        </UButton>
 
-    <UButton
-      icon="i-lucide-file-spreadsheet"
-      color="neutral"
-      variant="subtle"
-      :loading="exportingInventoryValue"
-      @click="exportInventoryValue"
-    >
-      Exportar valor de inventario
-    </UButton>
-  </div>
-
+        <UButton
+          icon="i-lucide-file-spreadsheet"
+          color="neutral"
+          variant="subtle"
+          :loading="exportingInventoryValue"
+          @click="exportInventoryValue"
+        >
+          Exportar valor de inventario
+        </UButton>
+      </div>
     </header>
 
     <UAlert
