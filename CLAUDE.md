@@ -470,6 +470,15 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   reconstruyéndolo.
 - **IVA (16%) es informativo y se calcula en la app**, no se guarda en la BD: en el detalle
   de venta y en gastos. Las ventas se registran sin desglose fiscal (no hay CFDI/SAT).
+- ⚠️ **`stock_movements.unit_value` lleva SEIS decimales (`numeric(18,6)`), no dos.**
+  No es un precio: es un costo **calculado**, casi siempre un promedio ponderado de
+  varias capas FIFO (`getFifoUnitCost` = costo total / unidades). Con dos decimales ese
+  promedio se redondeaba al guardarlo y, como el motor valúa cada capa haciendo
+  `quantity * unit_value`, la capa que nacía en la sucursal destino no valía lo mismo
+  que el costo que salió del origen: la transferencia **creaba o destruía centavos de
+  inventario** que no venían de ninguna compra. `total_value` sube con él para que
+  `unit_value * quantity = total_value` siga siendo exacto — si no, la suma nominal de
+  los reportes se vuelve a separar de la valuación FIFO por el otro lado.
 - **Transferencias en dos fases.** Al crearlas descuentan el origen y quedan
   `en_transito`; el destino (o un admin) confirma la recepción y ahí se suma el inventario
   destino; cancelar repone el origen. Un empleado solo despacha desde su tienda y solo

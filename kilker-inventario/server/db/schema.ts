@@ -395,8 +395,23 @@ export const stockMovements = pgTable(
     type: movementType('type').notNull(),
     // Signo: + entra, − sale.
     quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
-    unitValue: numeric('unit_value', { precision: 14, scale: 2 }).notNull(),
-    totalValue: numeric('total_value', { precision: 14, scale: 2 }).notNull(),
+    // ⚠️ SEIS decimales, no dos: `unit_value` NO es un precio, es un COSTO
+    // CALCULADO, y a menudo un promedio ponderado de varias capas FIFO
+    // (`getFifoUnitCost` = totalCost / unidades). Con `scale: 2` ese promedio se
+    // redondeaba al guardarlo, y como el motor FIFO valúa cada capa haciendo
+    // `quantity * unit_value`, la capa que nacía en la sucursal destino no valía
+    // lo mismo que el costo que había salido del origen: la transferencia
+    // creaba (o destruía) centavos de inventario que no venían de ninguna
+    // compra, y el descuadre quedaba vivo en el almacén.
+    // Ejemplo: 3 piezas de capas a $10.00 y $10.01 → costo real $30.01, unitario
+    // 10.003333… → guardado 10.00 → el destino recibe $30.00. Falta un centavo.
+    // `total_value` sube con él para que `unit_value * quantity = total_value`
+    // siga siendo exacto: si no, la suma nominal de los reportes vuelve a
+    // separarse de la valuación FIFO, que es el mismo problema por el otro lado.
+    // Los importes reales quedan con ceros a la derecha; la UI los formatea a
+    // dos decimales igual que siempre.
+    unitValue: numeric('unit_value', { precision: 18, scale: 6 }).notNull(),
+    totalValue: numeric('total_value', { precision: 18, scale: 6 }).notNull(),
     invoiceId: bigint('invoice_id', { mode: 'number' }).references(
       () => invoices.id
     ),
