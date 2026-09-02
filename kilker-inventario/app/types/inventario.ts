@@ -173,6 +173,20 @@ export interface ApiBankAccount {
   paymentCount?: number
 }
 
+/**
+ * Página de `GET /api/bank-accounts?page=…`.
+ *
+ * ⚠️ El endpoint solo envuelve la respuesta cuando se le manda `?page`. Sin él
+ * devuelve `ApiBankAccount[]` completo, que es lo que necesita el selector de
+ * cuenta al capturar un pago.
+ */
+export interface ApiBankAccountsPage {
+  data: ApiBankAccount[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 /** Cuerpo para crear una cuenta bancaria (`POST /api/bank-accounts`, admin). */
 export interface NewBankAccountInput {
   bank: string

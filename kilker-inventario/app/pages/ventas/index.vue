@@ -70,6 +70,33 @@ const storeFilter = computed({
   }
 })
 
+// ───────────────────────────────────────────────
+//  LIMPIAR FILTROS
+// ───────────────────────────────────────────────
+// ⚠️ Estos filtros viven en `useState` (useSalesHistory), o sea que son
+// COMPARTIDOS y sobreviven a la navegación: sin este botón, un periodo puesto
+// hace dos días sigue aplicado al volver y parece que faltan ventas.
+// Se limpian todos en la misma tick para que el watcher del composable dispare
+// UNA sola recarga, no una por filtro.
+const hasFilters = computed(
+  () =>
+    !!search.value.trim() ||
+    !!from.value ||
+    !!to.value ||
+    status.value !== 'todas' ||
+    storeId.value != null ||
+    productId.value != null
+)
+
+function clearFilters() {
+  search.value = ''
+  from.value = undefined
+  to.value = undefined
+  status.value = 'todas'
+  storeId.value = undefined
+  productId.value = undefined
+}
+
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
 function fmtDate(s: string | null | undefined) {
@@ -714,6 +741,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
       placeholder="Buscar producto…"
       class="w-64"
     />
+        <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       </div>
     </div>
 

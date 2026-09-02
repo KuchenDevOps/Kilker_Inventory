@@ -31,6 +31,13 @@ const statusItems = [
   { label: 'Rechazados', value: 'rechazado' }
 ]
 
+// El único filtro de esta pantalla es el estado; vive en `useState` (namespaced
+// por target), así que sobrevive a la navegación como los demás.
+const hasFilters = computed(() => status.value !== 'todos')
+function clearFilters() {
+  status.value = 'todos'
+}
+
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const qtyFmt = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 3 })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
@@ -210,7 +217,10 @@ const colCount = computed(() => (isAdmin.value ? 8 : 7))
       </UButton>
     </header>
 
-    <USelect v-model="status" :items="statusItems" class="w-44" />
+    <div class="flex flex-wrap items-center gap-3">
+      <USelect v-model="status" :items="statusItems" class="w-44" />
+      <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
+    </div>
 
     <UAlert
       v-if="error"

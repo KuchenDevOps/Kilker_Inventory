@@ -10,7 +10,8 @@
 // hay ninguna vista que las una. Si algún día se agrega un cuarto tipo de pago,
 // las dos funciones de este archivo son el único lugar que hay que tocar; no
 // dejes que el conteo se vuelva a escribir a mano en un endpoint.
-import { eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { bankAccounts, banksMovements, entryPayments, expensePayments, salePayments } from '../db/schema'
 import type { Db } from '../db'
 
@@ -19,23 +20,37 @@ import type { Db } from '../db'
  *
  * Los pagos en EFECTIVO (`account_id` null) se excluyen: no pertenecen a ninguna
  * cuenta, son su propia bolsa (ver `bank_accounts` en schema.ts).
+ *
+ * `accountIds` acota el conteo a esas cuentas. El listado paginado lo usa para
+ * no recorrer las tres tablas de pagos ENTERAS cuando solo va a mostrar diez
+ * cuentas: sin el filtro, el costo del conteo crece con los pagos del negocio,
+ * no con las cuentas de la página. Sin el parámetro, cuenta todas (como antes).
  */
-export async function countPaymentsByAccount(db: Db): Promise<Map<number, number>> {
+export async function countPaymentsByAccount(
+  db: Db,
+  accountIds?: number[]
+): Promise<Map<number, number>> {
+  // Lista vacía = no hay nada que contar (y `inArray` con [] no es válido).
+  if (accountIds && accountIds.length === 0) return new Map()
+
+  const scope = <T extends AnyPgColumn>(column: T) =>
+    accountIds ? and(isNotNull(column), inArray(column, accountIds)) : isNotNull(column)
+
   const [sales, entries, expenses] = await Promise.all([
     db
       .select({ accountId: salePayments.accountId, count: sql<number>`count(*)::int` })
       .from(salePayments)
-      .where(isNotNull(salePayments.accountId))
+      .where(scope(salePayments.accountId))
       .groupBy(salePayments.accountId),
     db
       .select({ accountId: entryPayments.accountId, count: sql<number>`count(*)::int` })
       .from(entryPayments)
-      .where(isNotNull(entryPayments.accountId))
+      .where(scope(entryPayments.accountId))
       .groupBy(entryPayments.accountId),
     db
       .select({ accountId: expensePayments.accountId, count: sql<number>`count(*)::int` })
       .from(expensePayments)
-      .where(isNotNull(expensePayments.accountId))
+      .where(scope(expensePayments.accountId))
       .groupBy(expensePayments.accountId)
   ])
 

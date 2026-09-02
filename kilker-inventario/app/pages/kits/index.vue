@@ -243,12 +243,15 @@ async function submitEdit() {
       :description="error"
     />
 
-    <UInput
-      v-model="search"
-      icon="i-lucide-search"
-      placeholder="Buscar por SKU o nombre del kit, o por producto que contiene…"
-      class="w-full sm:max-w-md"
-    />
+    <div class="flex flex-wrap items-center gap-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Buscar por SKU o nombre del kit, o por producto que contiene…"
+        class="w-full sm:max-w-md"
+      />
+      <BotonLimpiarFiltros :active="!!search.trim()" label="Limpiar" @clear="search = ''" />
+    </div>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">

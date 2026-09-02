@@ -40,6 +40,23 @@ const qtyFmt = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 3 })
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 
 // ───────────────────────────────────────────────
+//  LIMPIAR FILTROS
+// ───────────────────────────────────────────────
+// ⚠️ Viven en `useState` (useMovementsHistory): son compartidos y sobreviven a
+// la navegación, así que un periodo viejo sigue aplicado al volver. Se limpian
+// en la misma tick para disparar UNA sola recarga.
+const hasFilters = computed(
+  () => !!search.value.trim() || !!from.value || !!to.value || storeId.value != null
+)
+
+function clearFilters() {
+  search.value = ''
+  from.value = undefined
+  to.value = undefined
+  storeId.value = undefined
+}
+
+// ───────────────────────────────────────────────
 //  SUMATORIA DEL FILTRO (tarjeta)
 // ───────────────────────────────────────────────
 // ⚠️ La calcula el SERVIDOR sobre todo el filtro. Sumar `movements` daría el
@@ -431,7 +448,10 @@ async function exportAll() {
         v-model:to="to"
         search-placeholder="Buscar producto, SKU, factura, sucursal…"
       />
-      <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeItems" class="w-60" />
+      <div class="flex flex-wrap items-center gap-3">
+        <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeItems" class="w-60" />
+        <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
+      </div>
     </div>
 
     <UAlert

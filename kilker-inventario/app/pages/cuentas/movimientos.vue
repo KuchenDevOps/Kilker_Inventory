@@ -272,7 +272,13 @@ async function onSubmit() {
       <div>
         <h1 class="text-2xl font-semibold">Movimientos de banco</h1>
         <p class="text-sm text-muted">
-          Todo el dinero que entra y sale · el efectivo va como bolsa aparte
+          <!-- `movements.length` es lo que hay EN PANTALLA (una página) y
+               `total` lo que cumple el filtro completo: con 100 por página la
+               diferencia importa. -->
+          Mostrando {{ movements.length }} de {{ total }} movimiento(s)<template
+            v-if="hasFilters"
+          > con ese filtro</template>
+          · el efectivo va como bolsa aparte
         </p>
       </div>
       <UButton v-if="canEdit" icon="i-lucide-plus" color="primary" @click="openNew">
@@ -309,22 +315,22 @@ async function onSubmit() {
         v-model:to="to"
         search-placeholder="Buscar por concepto o nota…"
       />
-      <div class="mt-3 flex flex-wrap gap-3">
- 
+      <div class="mt-3 flex flex-wrap items-center gap-3">
+
         <USelect v-model="type" :items="typeFilterItems" class="w-56" />
+        <!-- Mismo botón que el resto de los listados (antes era uno propio). -->
+        <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       </div>
-      <div v-if="hasFilters" class="mt-3 flex flex-wrap items-center justify-between gap-2">
+      <div v-if="hasFilters" class="mt-3 flex flex-wrap items-center gap-2">
         <p class="text-sm text-muted">
-          {{ total }} movimiento(s) ·
-          <!-- Neto del filtro, NO un saldo: por eso se nombra distinto. -->
-          neto del filtro
+          <!-- El conteo se movió al encabezado; aquí queda solo el neto, que es
+               lo propio del filtro. Neto del filtro, NO un saldo: por eso se
+               nombra distinto. -->
+          Neto del filtro
           <span class="font-medium tabular-nums" :class="filteredNet < 0 ? 'text-error' : ''">
             {{ currency.format(filteredNet) }}
           </span>
         </p>
-        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-x" @click="clearFilters">
-          Limpiar filtros
-        </UButton>
       </div>
     </UCard>
 

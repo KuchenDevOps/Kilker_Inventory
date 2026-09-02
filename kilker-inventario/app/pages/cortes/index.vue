@@ -35,6 +35,23 @@ const storeFilter = computed({
   }
 })
 
+// ───────────────────────────────────────────────
+//  LIMPIAR FILTROS
+// ───────────────────────────────────────────────
+// ⚠️ Además de `useState`, este composable refleja los filtros en la URL
+// (`updateUrl`), así que limpiarlos también limpia la query — que es lo que se
+// espera: un enlace compartido con filtros no debe reaparecer al limpiar.
+const hasFilters = computed(
+  () => !!search.value.trim() || !!from.value || !!to.value || storeId.value != null
+)
+
+function clearFilters() {
+  search.value = ''
+  from.value = undefined
+  to.value = undefined
+  storeId.value = undefined
+}
+
 // Hacer corte (panel inline).
 const makingCorte = ref(false)
 const corteStoreId = ref<number | undefined>(undefined)
@@ -139,7 +156,10 @@ async function toggleDetail(c: ApiCorte) {
         search-placeholder="Buscar producto, SKU, factura, sucursal…"
       />
       
-      <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+      <div class="flex flex-wrap items-center gap-3">
+        <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+        <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
+      </div>
     </div>
  <!-- Panel: hacer corte -->
     <UCard v-if="makingCorte">

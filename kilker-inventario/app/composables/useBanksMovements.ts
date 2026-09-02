@@ -19,7 +19,8 @@ export function useBanksMovements() {
   const filteredNet = useState('banks-movements-net', () => 0)
   const total = useState('banks-movements-total', () => 0)
   const page = useState('banks-movements-page', () => 1)
-  const pageSize = useState('banks-movements-pagesize', () => 50)
+  // 100 por página, como el resto de los listados (el endpoint admite hasta 200).
+  const pageSize = useState('banks-movements-pagesize', () => 100)
   const pending = useState('banks-movements-pending', () => false)
   const error = useState<string | null>('banks-movements-error', () => null)
 

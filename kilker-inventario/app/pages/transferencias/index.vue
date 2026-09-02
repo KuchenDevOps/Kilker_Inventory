@@ -30,12 +30,38 @@ const storeFilter = computed({
   }
 })
 
+// ⚠️ "Todas" vale `'todas'`, no `undefined`: es lo que espera el composable
+// (`if (status.value !== 'todas') q.set('status', …)`). Con `undefined` la
+// query salía como `status=undefined` y el select quedaba en blanco al volver
+// a "Todas" — mismo criterio que /ventas.
 const statusItems = [
-  { label: 'Todas', value: undefined },
+  { label: 'Todas', value: 'todas' },
   { label: 'En tránsito', value: 'en_transito' },
   { label: 'Recibida', value: 'recibida' },
   { label: 'Cancelada', value: 'cancelada' }
 ]
+
+// ───────────────────────────────────────────────
+//  LIMPIAR FILTROS
+// ───────────────────────────────────────────────
+// Viven en `useState` (useTransferHistory): compartidos y persistentes entre
+// navegaciones. Se limpian en la misma tick para una sola recarga.
+const hasFilters = computed(
+  () =>
+    !!search.value.trim() ||
+    !!from.value ||
+    !!to.value ||
+    status.value !== 'todas' ||
+    storeId.value != null
+)
+
+function clearFilters() {
+  search.value = ''
+  from.value = undefined
+  to.value = undefined
+  status.value = 'todas'
+  storeId.value = undefined
+}
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
 const dateFmt = new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
@@ -141,9 +167,10 @@ async function openDetail(t: ApiTransfer) {
         />
 
 
-    <div class="flex flex-wrap gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
       <USelect v-model="status" :items="statusItems" class="w-44" />
+      <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
     </div>
 
     <UAlert v-if="error" color="error" variant="soft" icon="i-lucide-triangle-alert" title="No se pudo cargar" :description="error" />
