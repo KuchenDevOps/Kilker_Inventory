@@ -1,8 +1,8 @@
 // ───────────────────────────────────────────────
 //  POST /api/tickets/:id/resolve — resolver (admin)
 // ───────────────────────────────────────────────
-// aprobar: anula el documento (venta o entrada) + marca aprobado, todo en una
-// transacción. rechazar: solo cierra el ticket, no toca inventario.
+// aprobar: anula el documento (venta, entrada o gasto) + marca aprobado, todo
+// en una transacción. rechazar: solo cierra el ticket, no toca nada.
 import { eq, sql } from 'drizzle-orm'
 import { useDb } from '../../../db'
 import { tickets } from '../../../db/schema'
@@ -56,6 +56,18 @@ export default defineEventHandler(async (event) => {
         }
         await voidInvoiceTx(tx, {
           invoiceId: ticket.invoiceId,
+          profileId: profile.id,
+          reason
+        })
+      } else if (ticket.target === 'gasto') {
+        if (ticket.expenseId == null) {
+          throw createError({
+            statusCode: 400,
+            statusMessage: 'El ticket no tiene gasto asociado'
+          })
+        }
+        await voidExpenseTx(tx, {
+          expenseId: ticket.expenseId,
           profileId: profile.id,
           reason
         })

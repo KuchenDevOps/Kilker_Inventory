@@ -1,6 +1,30 @@
 // ───────────────────────────────────────────────
 //  PATCH /api/expenses/:id — editar gasto y sus líneas de concepto
 // ───────────────────────────────────────────────
+// ⚠️ EN CUANTO EL GASTO TIENE UN ABONO, SOLO QUEDAN EDITABLES `note` y `type`.
+// Todo lo demás —conceptos, retenciones, fecha de factura, sucursal, proveedor
+// y número de factura— se congela y hay que ir por una corrección (ticket o
+// `POST /api/expenses/:id/void`), que anula y se recaptura.
+//
+// El motivo no es sólo que ahora existan las correcciones: este PATCH **no deja
+// rastro de nada**. `expenses` no tiene `updated_at` ni bitácora, y las líneas
+// se borran y se reinsertan enteras, así que un gasto editado es
+// indistinguible de uno capturado así desde el principio. Mientras el gasto no
+// hubiera movido dinero eso no hacía daño; una vez pagado, sí:
+//   · `banks_movements.note` guarda un SNAPSHOT `Pago gasto <proveedor>
+//     <factura>` — esa nota existe para que el rastro sobreviva al borrado del
+//     abono, y editar la cabecera la deja nombrando un documento que ya no es.
+//   · `paid_at` decide en qué periodo cae el gasto, pero el `occurred_at` de
+//     sus pagos se queda donde estaba: moverlo descuadra el mes contra el banco.
+//   · `store_id` mueve el gasto de sucursal; el de sus movimientos de banco no.
+// Además cerraba mal el hueco de siempre: la guarda de abajo sólo impide BAJAR
+// el pagable por debajo de lo ya pagado, así que SUBIRLO pasaba libre — un
+// gasto pagado de $1,000 se podía dejar en $50,000 sin ticket y sin registro.
+//
+// No se congela todo a propósito. Anular BORRA los abonos (`voidExpenseTx`), o
+// sea que obligar a "anular y recapturar" para arreglar una errata cuesta las
+// fechas, los métodos, las cuentas y quién pagó cada abono, y cada retecleo mete
+// otra fila en `banks_movements`: el rastro queda peor, no mejor.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { expenses, expenseItems, expensePayments, stores } from '../../db/schema'
@@ -40,6 +64,23 @@ function cleanText(v: unknown): string | null | undefined {
   return t ? t : null
 }
 
+/**
+ * Huella de las líneas de un gasto, para saber si CAMBIARON de verdad.
+ *
+ * ⚠️ Va ordenada y normalizada a propósito. La pantalla manda SIEMPRE el cuerpo
+ * completo —también cuando sólo se tocó la nota—, así que "el campo viene en el
+ * body" no significa "el usuario lo cambió": comparar por presencia rechazaría
+ * editar la nota de un gasto pagado, que es justo lo que se quiere permitir.
+ * Y el orden en que vuelven las líneas de la BD no está garantizado, así que se
+ * comparan como conjunto.
+ */
+function itemsFingerprint(items: { reason: string; amount: string | number }[]): string {
+  return items
+    .map((it) => `${it.reason.trim()}|${Number(it.amount).toFixed(2)}`)
+    .sort()
+    .join('~')
+}
+
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
   const id = Number(getRouterParam(event, 'id'))
@@ -62,6 +103,16 @@ export default defineEventHandler(async (event) => {
 
   if (isStoreScopedRole(profile.role) && existing.storeId !== profile.storeId) {
     throw createError({ statusCode: 403, statusMessage: 'No puedes editar gastos de otra sucursal' })
+  }
+
+  // Un gasto anulado queda congelado: es el documento que explica por qué se
+  // revirtió ese dinero. Editarlo cambiaría la historia a la que apunta el
+  // ticket de corrección que lo anuló.
+  if (existing.status === 'anulado') {
+    throw createError({
+      statusCode: 409,
+      statusMessage: 'Este gasto está anulado: ya no se puede editar'
+    })
   }
 
   const values: Partial<typeof expenses.$inferInsert> = {}
@@ -135,6 +186,68 @@ export default defineEventHandler(async (event) => {
   }
   
 
+  // ─── Campos congelados en cuanto hay un abono ───
+  // Se compara contra lo que ya está guardado, no contra "vino en el body":
+  // la pantalla manda el cuerpo completo aunque sólo se haya tocado la nota.
+  const existingPayments = await db.query.expensePayments.findMany({
+    where: eq(expensePayments.expenseId, id),
+    columns: { id: true }
+  })
+
+  // Fuera del `if` porque también sirve para saltarse el rewrite de líneas
+  // cuando no cambiaron (ver abajo), tenga abonos o no.
+  const itemsChanged = newItems
+    ? itemsFingerprint(existing.items) !== itemsFingerprint(newItems)
+    : false
+
+  if (existingPayments.length > 0) {
+    const frozen: string[] = []
+
+    if (values.storeId !== undefined && values.storeId !== existing.storeId) {
+      frozen.push('la sucursal')
+    }
+    if (values.supplier !== undefined && values.supplier !== existing.supplier) {
+      frozen.push('el proveedor')
+    }
+    if (
+      values.supplierInvoiceNumber !== undefined &&
+      values.supplierInvoiceNumber !== existing.supplierInvoiceNumber
+    ) {
+      frozen.push('el número de factura')
+    }
+    if (values.paidAt !== undefined && values.paidAt !== existing.paidAt) {
+      frozen.push('la fecha de factura')
+    }
+    if (
+      values.retentionIva !== undefined &&
+      Number(values.retentionIva) !== Number(existing.retentionIva ?? 0)
+    ) {
+      frozen.push('la retención de IVA')
+    }
+    if (
+      values.retentionIsr !== undefined &&
+      Number(values.retentionIsr) !== Number(existing.retentionIsr ?? 0)
+    ) {
+      frozen.push('la retención de ISR')
+    }
+    if (itemsChanged) frozen.push('los conceptos')
+
+    if (frozen.length > 0) {
+      throw createError({
+        statusCode: 409,
+        statusMessage:
+          `Este gasto ya tiene ${existingPayments.length} pago(s) registrado(s): no se puede cambiar ` +
+          `${frozen.join(', ')}. Solo la nota y el tipo siguen editables; para lo demás pide ` +
+          'una corrección (se anula el gasto, se borran sus pagos y se recaptura).'
+      })
+    }
+  }
+
+  // Líneas idénticas: no vale la pena borrarlas y reinsertarlas. Ese rewrite
+  // les cambia el id a todas, y en un gasto pagado —donde lo único editable es
+  // la nota— sería puro churn sobre datos que nadie tocó.
+  if (!itemsChanged) newItems = null
+
   // ─── Recalcular el total si cambiaron items o retenciones ───
     if (newItems) {
     const subtotal = Math.round(newItems.reduce((sum, it) => sum + it.amount, 0) * 100) / 100
@@ -162,6 +275,13 @@ export default defineEventHandler(async (event) => {
           .returning()
       }
 
+      // ⚠️ BACKSTOP. Con el congelado de arriba esto ya no debería dispararse
+      // nunca (un gasto con abonos no puede cambiar conceptos ni retenciones, y
+      // uno sin abonos tiene `totalPaid` en 0), pero se queda: es la última
+      // red antes de un sobrepago, y quitarla porque "es inalcanzable" es
+      // exactamente como vuelven estos bugs. Si algún día se relaja el
+      // congelado, esto sigue cubriendo.
+      //
       // ⚠️ Editar un gasto ya pagado puede dejarlo pagado DE MÁS: basta bajar un
       // concepto o subir una retención para que el nuevo `total_to_pay` quede
       // por debajo de lo que ya se abonó. Antes daba igual —las retenciones no

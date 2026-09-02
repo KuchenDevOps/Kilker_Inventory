@@ -443,10 +443,11 @@ export type TicketStatus = 'abierto' | 'aprobado' | 'rechazado'
 
 /**
  * Documento al que apunta el ticket (enum `ticket_target`):
- * `factura` = venta, `movimiento` = entrada de stock. Cada uno tiene su
- * pantalla: /tickets/ventas y /tickets/entradas.
+ * `factura` = venta, `movimiento` = entrada de stock, `gasto` = gasto
+ * operativo. Cada uno tiene su pantalla: /tickets/ventas, /tickets/entradas y
+ * /tickets/gastos.
  */
-export type TicketTarget = 'factura' | 'movimiento'
+export type TicketTarget = 'factura' | 'movimiento' | 'gasto'
 
 /** Ticket de corrección tal como lo lista `GET /api/tickets`. */
 export interface ApiTicket {
@@ -470,6 +471,14 @@ export interface ApiTicket {
   movementQuantity: string | null
   movementTotal: string | null
   movementSupplierInvoice: string | null
+  // ─── target 'gasto' ───
+  expenseId: number | null
+  expenseSupplier: string | null
+  expenseInvoiceNumber: string | null
+  expenseStatus: ExpenseStatus | null
+  /** numeric → string. Lo que se debía pagar (subtotal + IVA − retenciones). */
+  expenseTotal: string | null
+  expensePaidAt: string | null
   raisedByName: string | null
   resolvedByName: string | null
   resolutionNote: string | null
@@ -803,9 +812,29 @@ export const EXPENSE_TYPE_LABELS: Record<ExpenseType, string> = {
 }
 
 
-export type PaymentStatus = 'pendiente' | 'parcial' | 'pagado'
+export type PaymentStatus = 'pendiente' | 'parcial' | 'pagado' | 'anulada'
 /** @deprecated usa PaymentStatus */
 export type ExpensePaymentStatus = PaymentStatus
+
+export const EXPENSE_PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  pendiente: 'Pendiente',
+  parcial: 'Parcial',
+  pagado: 'Pagado',
+  anulada: 'Anulado'
+}
+
+export const EXPENSE_PAYMENT_STATUS_COLORS: Record<
+  PaymentStatus,
+  'success' | 'warning' | 'error' | 'neutral'
+> = {
+  pendiente: 'error',
+  parcial: 'warning',
+  pagado: 'success',
+  anulada: 'neutral'
+}
+
+/** Estado de un gasto (enum `expense_status`). `anulado` = corregido. */
+export type ExpenseStatus = 'emitido' | 'anulado'
 
 /** Línea de concepto de un gasto. */
 export interface ApiExpenseItem {
@@ -844,6 +873,12 @@ export interface ApiExpense {
   payers: string[]
   paidAt: string
   note: string | null
+  /** `anulado` = corregido: se le borraron los pagos y ya no se puede editar. */
+  status: ExpenseStatus
+  voidedAt: string | null
+  voidReason: string | null
+  /** true si hay un ticket de corrección ABIERTO para este gasto. */
+  pendingCorrection: boolean
   createdByName: string | null
   createdAt: string
 }

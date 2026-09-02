@@ -80,7 +80,7 @@ export const ticketStatus = pgEnum('ticket_status', [
   'rechazado'
 ])
 
-export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
+export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento', 'gasto'])
 
 export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'])
 
@@ -511,6 +511,8 @@ export const tickets = pgTable('tickets', {
   movementId: bigint('movement_id', { mode: 'number' }).references(
     () => stockMovements.id
   ),
+  /** target 'gasto': el gasto que se pide anular. */
+  expenseId: bigint('expense_id', { mode: 'number' }).references(() => expenses.id),
   reason: text('reason').notNull(),
   status: ticketStatus('status').notNull().default('abierto'),
   resolvedBy: uuid('resolved_by').references(() => profiles.id),
@@ -591,6 +593,9 @@ export const customers = pgTable(
 export const expenseType = pgEnum('expense_type', ['Fijo', 'Operativo'])
 
 
+export const expenseStatus = pgEnum('expense_status', ['emitido', 'anulado'])
+
+
 /** IVA vigente. Vive aquí porque la BD lo usa en las columnas generadas de `expenses`. */
 export const IVA_RATE = 0.16
 
@@ -643,6 +648,11 @@ export const expenses = pgTable(
       ),
     paidAt: date('paid_at').notNull(),
     note: text('note'),
+    /** `anulado` = corregido. No se borra la fila; ver `expenseStatus`. */
+    status: expenseStatus('status').notNull().default('emitido'),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: uuid('voided_by').references(() => profiles.id),
+    voidReason: text('void_reason'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => profiles.id),
@@ -1103,6 +1113,10 @@ export const ticketsRelations = relations(tickets, ({ one }) => ({
   movement: one(stockMovements, {
     fields: [tickets.movementId],
     references: [stockMovements.id]
+  }),
+  expense: one(expenses, {
+    fields: [tickets.expenseId],
+    references: [expenses.id]
   })
 }))
 
@@ -1121,7 +1135,8 @@ export const expensesRelations = relations(expenses, ({ one, many }) => ({
   store: one(stores, { fields: [expenses.storeId], references: [stores.id] }),
   createdBy: one(profiles, { fields: [expenses.createdBy], references: [profiles.id] }),
   items: many(expenseItems),
-  payments: many(expensePayments)
+  payments: many(expensePayments),
+  tickets: many(tickets)
 }))
 
 export const expenseItemsRelations = relations(expenseItems, ({ one }) => ({

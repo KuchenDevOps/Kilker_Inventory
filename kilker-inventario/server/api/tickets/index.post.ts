@@ -1,9 +1,10 @@
 // ───────────────────────────────────────────────
 //  POST /api/tickets — abrir ticket de corrección
 // ───────────────────────────────────────────────
-// Dos objetivos posibles, uno por ticket:
+// Tres objetivos posibles, uno por ticket:
 //   · target 'factura'    → `invoiceId`  (venta a anular)
 //   · target 'movimiento' → `movementId` (entrada de stock a anular)
+//   · target 'gasto'      → `expenseId`  (gasto a anular)
 //
 // El empleado no anula nada por su cuenta: abre el ticket y un admin lo
 // resuelve en /tickets. Es la única vía de corrección para el empleado, y para
@@ -11,11 +12,12 @@
 // fila del kardex en sitio y chocaba con el trigger append-only de la 0001.
 import { and, eq, isNull } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { invoices, stockMovements, tickets } from '../../db/schema'
+import { expenses, invoices, stockMovements, tickets } from '../../db/schema'
 
 interface NewTicketBody {
   invoiceId?: number
   movementId?: number
+  expenseId?: number
   reason?: string
 }
 
@@ -26,11 +28,16 @@ export default defineEventHandler(async (event) => {
   // `|| null` descarta también el 0, que nunca es un id válido.
   const invoiceId = Number(body?.invoiceId) || null
   const movementId = Number(body?.movementId) || null
+  const expenseId = Number(body?.expenseId) || null
 
-  if ((invoiceId == null) === (movementId == null)) {
+  // Exactamente uno de los tres. Contar es lo que hace que agregar un cuarto
+  // objetivo no obligue a rehacer la condición.
+  const targetsGiven = [invoiceId, movementId, expenseId].filter((v) => v != null).length
+  if (targetsGiven !== 1) {
     throw createError({
       statusCode: 400,
-      statusMessage: 'Manda exactamente uno: invoiceId (venta) o movementId (entrada)'
+      statusMessage:
+        'Manda exactamente uno: invoiceId (venta), movementId (entrada) o expenseId (gasto)'
     })
   }
 
@@ -40,6 +47,46 @@ export default defineEventHandler(async (event) => {
   }
 
   const db = useDb()
+
+  // ─── Objetivo: gasto ───
+  if (expenseId != null) {
+    const expense = await db.query.expenses.findFirst({ where: eq(expenses.id, expenseId) })
+    if (!expense) throw createError({ statusCode: 404, statusMessage: 'El gasto no existe' })
+
+    if (isStoreScopedRole(profile.role) && profile.storeId !== expense.storeId) {
+      throw createError({
+        statusCode: 403,
+        statusMessage: 'Solo puedes solicitar correcciones de tu sucursal'
+      })
+    }
+    if (expense.status === 'anulado') {
+      throw createError({ statusCode: 409, statusMessage: 'El gasto ya está anulado' })
+    }
+
+    const open = await db.query.tickets.findFirst({
+      where: and(eq(tickets.expenseId, expenseId), eq(tickets.status, 'abierto'))
+    })
+    if (open) {
+      throw createError({
+        statusCode: 409,
+        statusMessage: 'Ya hay un ticket abierto para este gasto'
+      })
+    }
+
+    const [created] = await db
+      .insert(tickets)
+      .values({
+        raisedBy: profile.id,
+        storeId: expense.storeId,
+        target: 'gasto',
+        expenseId,
+        reason,
+        status: 'abierto'
+      })
+      .returning()
+
+    return created
+  }
 
   // ─── Objetivo: entrada de stock ───
   if (movementId != null) {

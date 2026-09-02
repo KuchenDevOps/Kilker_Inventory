@@ -10,7 +10,15 @@
 // `reverses_movement_id`, y mover `inventory` en la misma transacción.
 import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db'
-import { entryPayments, inventory, invoices, salePayments, stockMovements } from '../db/schema'
+import {
+  entryPayments,
+  expensePayments,
+  expenses,
+  inventory,
+  invoices,
+  salePayments,
+  stockMovements
+} from '../db/schema'
 import { reversePaymentCashFlowTx } from './cashFlow'
 
 /** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
@@ -233,6 +241,80 @@ export async function voidMovementTx(
   return {
     ok: true as const,
     movementId: movement.id,
+    deletedPayments: deletedPayments.length,
+    cashFlowReversals: cashFlowReversals.length
+  }
+}
+
+/**
+ * Anula un GASTO en transacción: lo marca `anulado` y borra sus pagos.
+ *
+ * Compartido por `POST /api/expenses/:id/void` (admin directo) y por
+ * `POST /api/tickets/:id/resolve` (admin aprobando la solicitud de un
+ * empleado), igual que `voidInvoiceTx` y `voidMovementTx`.
+ *
+ * ⚠️ Un gasto no mueve inventario, así que aquí no hay kardex que revertir: lo
+ * único que hay que deshacer es el DINERO. Por eso el borrado de
+ * `expense_payments` no es un extra de esta función, es su trabajo principal —
+ * un gasto anulado que conservara sus abonos seguiría restando de la cuenta
+ * bancaria para siempre.
+ *
+ * ⚠️ La fila NO se borra, se marca. `expense_items` y `expense_payments` cuelgan
+ * con `ON DELETE CASCADE`: un DELETE se llevaría el gasto entero sin dejar
+ * rastro de que existió, y el movimiento de banco quedaría sin explicación.
+ */
+export async function voidExpenseTx(
+  tx: Tx,
+  opts: { expenseId: number; profileId: string; reason: string | null }
+) {
+  // Candado de fila ANTES de leer el estado, igual que en las otras dos: sin
+  // él, dos anulaciones simultáneas (doble clic, o el admin anulando mientras
+  // se resuelve el ticket) leen ambas 'emitido' y revierten el dinero dos veces.
+  await tx.execute(sql`SELECT id FROM ${expenses} WHERE id = ${opts.expenseId} FOR UPDATE`)
+
+  const expense = await tx.query.expenses.findFirst({
+    where: eq(expenses.id, opts.expenseId)
+  })
+  if (!expense) throw createError({ statusCode: 404, statusMessage: 'Gasto no existe' })
+  if (expense.status === 'anulado') {
+    throw createError({ statusCode: 409, statusMessage: 'El gasto ya está anulado' })
+  }
+
+  // Mismo orden que en venta y entrada, y por la misma razón: revertir el flujo
+  // ANTES de borrar los abonos. `banks_movements.expense_payment_id` es
+  // `ON DELETE SET NULL`, así que borrando primero el movimiento de dinero
+  // queda huérfano y ese pago se quedaría restado de la cuenta para siempre.
+  const paymentsToDelete = await tx.query.expensePayments.findMany({
+    where: eq(expensePayments.expenseId, opts.expenseId),
+    columns: { id: true }
+  })
+
+  const cashFlowReversals = await reversePaymentCashFlowTx(tx, {
+    source: { expensePaymentIds: paymentsToDelete.map((p) => p.id) },
+    profileId: opts.profileId,
+    reason:
+      opts.reason ??
+      `Anulación del gasto ${expense.supplier} ${expense.supplierInvoiceNumber}`
+  })
+
+  const deletedPayments = await tx
+    .delete(expensePayments)
+    .where(eq(expensePayments.expenseId, opts.expenseId))
+    .returning({ id: expensePayments.id })
+
+  const [updated] = await tx
+    .update(expenses)
+    .set({
+      status: 'anulado',
+      voidedAt: new Date(),
+      voidedBy: opts.profileId,
+      voidReason: opts.reason
+    })
+    .where(eq(expenses.id, opts.expenseId))
+    .returning()
+
+  return {
+    ...updated!,
     deletedPayments: deletedPayments.length,
     cashFlowReversals: cashFlowReversals.length
   }

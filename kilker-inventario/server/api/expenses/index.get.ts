@@ -3,7 +3,7 @@
 // ───────────────────────────────────────────────
 import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { expenses, expenseItems, expensePayments } from '../../db/schema'
+import { expenses, expenseItems, expensePayments, tickets } from '../../db/schema'
 
 function toDateOnly(v: unknown): string | null {
   const s = String(v ?? '')
@@ -99,6 +99,19 @@ export default defineEventHandler(async (event) => {
     }
   })
 
+  // Tickets de corrección ABIERTOS contra estos gastos: la pantalla los marca
+  // como "corrección solicitada" y esconde el botón de pedir otra. Mismo
+  // patrón que `pendingCorrection` en ventas y entradas.
+  const expenseIds = rows.map((r) => r.id)
+  const pending = new Set<number>()
+  if (expenseIds.length) {
+    const open = await db
+      .select({ expenseId: tickets.expenseId })
+      .from(tickets)
+      .where(and(eq(tickets.status, 'abierto'), inArray(tickets.expenseId, expenseIds)))
+    for (const t of open) if (t.expenseId != null) pending.add(t.expenseId)
+  }
+
   const mapped = rows.map((e) => {
     // ⚠️ `subtotal`, `iva` y `totalToPay` se LEEN de la fila; no se recalculan
     // aquí. `iva` y `total_to_pay` son columnas generadas por Postgres
@@ -112,8 +125,12 @@ export default defineEventHandler(async (event) => {
     const totalPaid = Math.round(e.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
     const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
 
-    let paymentStatus: 'pendiente' | 'parcial' | 'pagado' = 'pendiente'
-    if (totalPaid >= totalToPay && totalToPay > 0) paymentStatus = 'pagado'
+    // `anulada` gana sobre el resto, igual que en ventas y entradas: anular el
+    // gasto borra sus abonos, así que sin esta rama un gasto corregido
+    // reaparecería como "pendiente" y alguien iría a pagarlo otra vez.
+    let paymentStatus: 'pendiente' | 'parcial' | 'pagado' | 'anulada' = 'pendiente'
+    if (e.status === 'anulado') paymentStatus = 'anulada'
+    else if (totalPaid >= totalToPay && totalToPay > 0) paymentStatus = 'pagado'
     else if (totalPaid > 0) paymentStatus = 'parcial'
 
     // Quién(es) pagaron este gasto, sin repetir. Un gasto en parcialidades
@@ -142,6 +159,10 @@ export default defineEventHandler(async (event) => {
       payers,
       paidAt: e.paidAt,
       note: e.note,
+      status: e.status,
+      voidedAt: e.voidedAt,
+      voidReason: e.voidReason,
+      pendingCorrection: pending.has(e.id),
       createdByName: e.createdBy?.fullName ?? null,
       createdAt: e.createdAt
     }

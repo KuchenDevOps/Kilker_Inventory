@@ -149,6 +149,12 @@ const allNav: NavEntry[] = [
         to: '/gastos',
         icon: 'i-lucide-credit-card',
         roles: ['admin', 'admin_tienda', 'empleado', 'observador']
+      },
+      {
+        label: 'Correcciones',
+        to: '/tickets/gastos',
+        icon: 'i-lucide-ticket',
+        roles: ['admin', 'admin_tienda', 'empleado', 'observador']
       }
     ]
   },
