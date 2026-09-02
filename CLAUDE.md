@@ -304,8 +304,16 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   sucursal en el header (`app/layouts/default.vue`). Layout responsivo (sidebar fija en
   desktop, drawer en móvil).
 - **Paginación** (`?page&pageSize`, respuesta `{data,total,page,pageSize}`) en products,
-  movements, sales, transfers, tickets, cortes, customers, expenses y users. Sin `page` en
-  la query, esos endpoints devuelven el arreglo completo (lo usan las exportaciones).
+  movements, sales, transfers, tickets, cortes, customers, expenses, users y
+  **bank-accounts**. Sin `page` en la query, esos endpoints devuelven el arreglo completo
+  (lo usan las exportaciones).
+  ⚠️ En **bank-accounts** ese "sin `page`" es una dependencia dura, no una comodidad:
+  `SelectorCuentaPago.vue` pide la lista COMPLETA para ofrecer las cuentas al capturar un
+  pago. Por eso la pantalla `/cuentas` usa `useBankAccountsHistory()` (paginado, con `?q`)
+  y el selector sigue con `useBankAccounts()` (completo) — son **dos estados distintos**,
+  así que dar de alta o desactivar una cuenta refresca los dos (`refreshAll()` en la
+  página). Paginar esa respuesta por omisión dejaría al selector sin la mitad de las
+  cuentas, y no se notaría hasta que faltara una al cobrar.
   ⚠️ **Excepción: `GET /api/sales`.** Sin `?page` recorta a **200 filas** salvo que se
   mande `?all=true`, y lo hace en silencio (devuelve un arreglo que parece completo). Por
   eso las exportaciones de `/ventas` salían truncadas. Usar siempre `useAllSales()`
@@ -329,6 +337,20 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
     (`app/utils/iva.ts`, tasa única — estaba copiada en tres pantallas).
 - **Filtros compartidos:** `app/components/FiltroPeriodo.vue` y `FiltroCortePeriodo.vue`
   (Todo/Día/Semana/Mes sobre el periodo concreto elegido + búsqueda `?q`).
+- **Limpiar filtros:** `app/components/BotonLimpiarFiltros.vue`, en todos los listados y
+  en los tres dashboards. El botón solo unifica cómo se ve y cuándo se habilita
+  (`:active`); **qué se limpia lo decide cada pantalla** en su `@clear`, porque periodo y
+  búsqueda son comunes pero sucursal, estado, producto o tipo viven en cada página.
+  ⚠️ **No es cosmético:** los filtros de ventas, entradas, gastos, cortes, transferencias
+  y tickets viven en `useState`, o sea que son COMPARTIDOS y sobreviven a la navegación —
+  un periodo puesto hace dos días sigue aplicado al volver y parece que faltan datos.
+  Dos detalles al agregar una pantalla nueva:
+  - **Limpia todos los refs en la misma tick.** El watcher del composable agrupa los
+    cambios síncronos, así que se dispara UNA recarga y no una por filtro.
+  - **El componente de periodo se resincroniza solo** cuando `from`/`to` quedan en
+    `undefined` (vuelve a «Todo»). Ese watcher existe en los DOS componentes; sin él,
+    limpiar dejaba el chip «Mes» marcado mostrando todo el histórico, y volver a
+    pulsarlo no reparaba nada porque `period` ya valía eso.
 - **Exportación a Excel** (SheetJS, en el cliente) desde catálogo (valor de inventario),
   historial de entradas e historial de ventas (hoja resumen + hoja de líneas), con dos
   variantes: "Exportar todo" y "Exportar con filtro". El de ventas lleva **IVA (16%) y

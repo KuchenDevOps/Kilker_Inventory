@@ -52,6 +52,32 @@ function fmtDate(s: string | null | undefined) {
 }
 
 // ───────────────────────────────────────────────
+//  LIMPIAR FILTROS
+// ───────────────────────────────────────────────
+// ⚠️ Viven en `useState` (useExpenses): compartidos y persistentes entre
+// navegaciones. `periodSearch` es local de esta pantalla (lo pide
+// FiltroCortePeriodo), así que también se resetea.
+const hasFilters = computed(
+  () =>
+    !!search.value.trim() ||
+    !!paidBy.value.trim() ||
+    !!from.value ||
+    !!to.value ||
+    !!type.value ||
+    storeId.value != null
+)
+
+function clearFilters() {
+  search.value = ''
+  paidBy.value = ''
+  periodSearch.value = ''
+  from.value = undefined
+  to.value = undefined
+  type.value = undefined
+  storeId.value = undefined
+}
+
+// ───────────────────────────────────────────────
 //  SUMATORIA DEL FILTRO (tarjetas)
 // ───────────────────────────────────────────────
 // ⚠️ La calcula el SERVIDOR sobre todo el filtro; sumar `expenses` daría el
@@ -500,9 +526,10 @@ onMounted(() => {
         v-model:from="from"
         v-model:to="to"
       />
-      <div class="flex flex-wrap gap-3">
+      <div class="flex flex-wrap items-center gap-3">
         <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
         <USelect v-model="type" :items="expenseTypeFilterItems" placeholder="Tipo de gasto" class="w-48" />
+        <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       </div>
     </div>
 

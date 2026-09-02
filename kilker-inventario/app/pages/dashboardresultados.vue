@@ -129,6 +129,22 @@ const displayExpensesOperativo = computed(() =>
 const periodFrom = ref<string | undefined>(undefined)
 const periodTo = ref<string | undefined>(undefined)
 
+/**
+ * Limpiar filtros: vuelve al periodo completo y a "todas las sucursales".
+ *
+ * ⚠️ No toca `selectedStoreId` si el rol está acotado a una sucursal: ahí el
+ * selector va deshabilitado y su valor no es un filtro, es su tienda.
+ */
+const hasFilters = computed(
+  () => !!periodFrom.value || !!periodTo.value || (!isStoreScoped.value && selectedStoreId.value !== 0)
+)
+
+function clearFilters() {
+  periodFrom.value = undefined
+  periodTo.value = undefined
+  if (!isStoreScoped.value) selectedStoreId.value = 0
+}
+
 // Selector de sucursal: 0 = todas.
 const storeFilterItems = computed(() => {
   if (isStoreScoped.value && me.value?.storeId != null) {
@@ -623,6 +639,7 @@ const filteredTopCustomers = computed(() => {
       >
         {{ withIva ? 'Con IVA' : 'Sin IVA' }}
       </UButton>
+      <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       <span class="text-xs text-muted ml-auto">
         Última actualización: {{ new Date(lastRefreshTime).toLocaleTimeString() }}
       </span>

@@ -94,6 +94,22 @@ const {
 const periodFrom = ref<string | undefined>(undefined)
 const periodTo = ref<string | undefined>(undefined)
 
+/**
+ * Limpiar filtros: vuelve al periodo completo y a "todas las sucursales".
+ *
+ * ⚠️ No toca `selectedStoreId` si el rol está acotado a una sucursal: ahí el
+ * selector va deshabilitado y su valor no es un filtro, es su tienda.
+ */
+const hasFilters = computed(
+  () => !!periodFrom.value || !!periodTo.value || (!isStoreScoped.value && selectedStoreId.value !== 0)
+)
+
+function clearFilters() {
+  periodFrom.value = undefined
+  periodTo.value = undefined
+  if (!isStoreScoped.value) selectedStoreId.value = 0
+}
+
 const derivedMonth = computed(() => {
   const lastDay = periodTo.value ? new Date(periodTo.value) : new Date()
   if (periodTo.value) lastDay.setDate(lastDay.getDate() - 1)
@@ -299,6 +315,7 @@ const metricsSection2 = computed(() => {
 
     <div class="flex flex-wrap items-center gap-3">
       <FiltroCortePeriodo v-model:from="periodFrom" v-model:to="periodTo" />
+      <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       <span class="text-xs text-muted ml-auto">
         Última actualización: {{ new Date(lastRefreshTime).toLocaleTimeString() }}
       </span>

@@ -73,11 +73,23 @@ watch(
   { immediate: true } // Se ejecuta inmediatamente al montar
 )
 
-// También observamos cambios en from/to por si se modifican externamente
-watch([from, to], () => {
-  // Si cambian externamente, actualizamos el período correspondiente
-  // Esto es opcional pero ayuda a mantener sincronización
-}, { deep: true })
+/**
+ * Sincroniza el botón cuando alguien LIMPIA el rango desde fuera. Mismo watcher
+ * que `FiltroPeriodo.vue` (aquí estaba vacío).
+ *
+ * ⚠️ Sin esto, "Limpiar filtros" deja el rango vacío pero el botón «Mes» (o
+ * «Día», o «Semana») marcado: la pantalla dice que hay un periodo activo y el
+ * listado muestra todo. Peor todavía, volver a pulsar ese mismo botón no repara
+ * nada, porque `period` ya vale eso y su watcher no dispara.
+ *
+ * Solo reacciona al caso "quedaron los dos en vacío": poner un rango desde fuera
+ * no puede deducir qué botón le tocaría, así que ahí no se toca nada. No hay
+ * bucle — con `period` ya en 'todo', `updateFilters` vuelve a dejar los dos en
+ * `undefined` y este watcher no encuentra nada que cambiar.
+ */
+watch([from, to], ([f, t]) => {
+  if (!f && !t && period.value !== 'todo') period.value = 'todo'
+})
 </script>
 
 <template>

@@ -72,6 +72,20 @@ const paged = computed(() => {
 watch(search, () => { page.value = 1 })
 
 // ───────────────────────────────────────────────
+//  LIMPIAR FILTROS
+// ───────────────────────────────────────────────
+// Además de la búsqueda, limpia el corte a una fecha: volver a "Actual" es lo
+// que espera quien pulsa "limpiar", y de paso suelta el cálculo pesado del
+// kardex (ver `loadAsOf`).
+const hasFilters = computed(() => !!search.value.trim() || asOfMode.value)
+
+function clearFilters() {
+  search.value = ''
+  asOfMode.value = false
+  asOfDate.value = new Date().toISOString().slice(0, 10)
+}
+
+// ───────────────────────────────────────────────
 //  EXISTENCIA A UNA FECHA DE CORTE
 // ───────────────────────────────────────────────
 // `inventory.quantity` (lo que trae /api/products) es solo el saldo de HOY.
@@ -414,6 +428,8 @@ async function exportInventoryValue() {
       </UButtonGroup>
 
       <UInput v-if="asOfMode" v-model="asOfDate" type="date" class="w-44" />
+
+      <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
 
       <span v-if="asOfMode && asOfLoading" class="text-sm text-muted">
         Calculando inventario…

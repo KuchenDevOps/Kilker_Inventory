@@ -120,12 +120,15 @@ async function toggleSample(sample: ApiProduct) {
       :description="`${withNonZeroPrice.length} muestra(s) no están en $0. Revísalas: una muestra debe entregarse siempre sin costo para el cliente.`"
     />
 
-    <UInput
-      v-model="search"
-      icon="i-lucide-search"
-      placeholder="Buscar por SKU o nombre…"
-      class="w-full sm:max-w-sm"
-    />
+    <div class="flex flex-wrap items-center gap-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Buscar por SKU o nombre…"
+        class="w-full sm:max-w-sm"
+      />
+      <BotonLimpiarFiltros :active="!!search.trim()" label="Limpiar" @clear="search = ''" />
+    </div>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">

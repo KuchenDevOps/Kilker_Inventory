@@ -11,8 +11,45 @@ const { me } = useMe()
 const canEdit = computed(() => me.value?.role === 'admin')
 
 const toast = useToast()
-const { accounts, pending, error, refresh } = useBankAccounts()
 const apiFetch = useApiFetch()
+
+// ───────────────────────────────────────────────
+//  BÚSQUEDA + PAGINACIÓN (en el servidor)
+// ───────────────────────────────────────────────
+// Mismo contrato que el resto de los listados: `?page&pageSize` + `?q`, y el
+// endpoint responde `{data,total,page,pageSize}`.
+//
+// ⚠️ Este listado y el SELECTOR de cuenta al capturar un pago usan dos estados
+// distintos y eso es a propósito: `useBankAccounts()` sigue pidiendo la lista
+// COMPLETA (sin `?page`, que es como el endpoint la devuelve entera) porque el
+// selector tiene que poder ofrecerlas todas. La consecuencia es que dar de alta
+// o desactivar aquí obliga a refrescar LOS DOS — si no, el selector sigue
+// mostrando lo de antes hasta recargar la app.
+const {
+  accounts,
+  total,
+  page,
+  pageSize,
+  pending,
+  error,
+  search,
+  refresh
+} = useBankAccountsHistory()
+
+/** Lista completa, la del selector de pagos: se refresca junto con el listado. */
+const { refresh: refreshAllAccounts } = useBankAccounts()
+
+/** Tras crear, editar o desactivar: el listado y la lista del selector. */
+async function refreshAll() {
+  await Promise.all([refresh(), refreshAllAccounts()])
+}
+
+// Desactivar la última cuenta de la página deja `page` fuera de rango y la
+// tabla en blanco: se corrige sola.
+watch(total, (n) => {
+  const lastPage = Math.max(1, Math.ceil(n / pageSize.value))
+  if (page.value > lastPage) page.value = lastPage
+})
 
 // Estado del formulario: null = cerrado; 0 = nueva; >0 = editando esa cuenta.
 // Mismo esquema que /tiendas.
@@ -109,7 +146,7 @@ async function save() {
       })
       toast.add({ title: 'Cuenta actualizada', color: 'success', icon: 'i-lucide-circle-check' })
     }
-    await refresh()
+    await refreshAll()
     closeForm()
   } catch (e) {
     toast.add({
@@ -142,7 +179,7 @@ async function toggleActive(a: ApiBankAccount) {
       color: 'success',
       icon: 'i-lucide-circle-check'
     })
-    await refresh()
+    await refreshAll()
   } catch (e) {
     toast.add({
       title: 'No se pudo cambiar el estado',
@@ -162,7 +199,8 @@ async function toggleActive(a: ApiBankAccount) {
       <div>
         <h1 class="text-2xl font-semibold">Cuentas bancarias</h1>
         <p class="text-sm text-muted">
-          {{ accounts.length }} cuenta(s) · de aquí se eligen al registrar un pago
+          {{ total }} cuenta(s)<template v-if="search.trim()"> con ese filtro</template>
+          · de aquí se eligen al registrar un pago
         </p>
       </div>
       <UButton
@@ -176,7 +214,15 @@ async function toggleActive(a: ApiBankAccount) {
       </UButton>
     </header>
 
-  
+    <div class="flex flex-wrap items-center gap-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Buscar por banco, titular o últimos 4…"
+        class="w-full sm:max-w-sm"
+      />
+      <BotonLimpiarFiltros :active="!!search.trim()" label="Limpiar" @clear="search = ''" />
+    </div>
 
     <UAlert
       v-if="error"
@@ -253,6 +299,11 @@ async function toggleActive(a: ApiBankAccount) {
             <tr v-if="pending">
               <td colspan="6" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
+            <tr v-else-if="!accounts.length && search.trim()">
+              <td colspan="6" class="px-4 py-8 text-center text-muted">
+                Ninguna cuenta coincide con la búsqueda.
+              </td>
+            </tr>
             <tr v-else-if="!accounts.length">
               <td colspan="6" class="px-4 py-8 text-center text-muted">
                 Aún no hay cuentas. Crea la primera.
@@ -296,5 +347,10 @@ async function toggleActive(a: ApiBankAccount) {
         </table>
       </div>
     </UCard>
+
+    <div v-if="total > pageSize" class="flex flex-col items-center gap-2">
+      <p class="text-xs text-muted">Mostrando {{ accounts.length }} de {{ total }} cuentas</p>
+      <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+    </div>
   </UContainer>
 </template>

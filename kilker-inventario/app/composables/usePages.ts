@@ -1,4 +1,6 @@
 import type {
+  ApiBankAccount,
+  ApiBankAccountsPage,
   ApiMovement,
   ApiMovementsPage,
   ApiMovementsTotals,
@@ -473,6 +475,77 @@ export function useCortesHistory() {
   })
 
   return { cortes, total, page, pageSize, pending, error, storeId, from, to, search, refresh }
+}
+
+/**
+ * Cuentas bancarias PAGINADAS, con búsqueda en el servidor (`?q`).
+ *
+ * ⚠️ No sustituye a `useBankAccounts()` de `useInventoryApi.ts`: ese sigue
+ * trayendo la lista COMPLETA y es el que alimenta `SelectorCuentaPago.vue` al
+ * capturar un pago. Este es solo para el listado de /cuentas. Son dos estados
+ * distintos a propósito — dar de alta o desactivar una cuenta desde la pantalla
+ * tiene que refrescar LOS DOS, o el selector sigue ofreciendo lo de antes.
+ */
+export function useBankAccountsHistory() {
+  const accounts = useState<ApiBankAccount[]>('bank-accounts-history', () => [])
+  const total = useState('bank-accounts-history-total', () => 0)
+  const page = useState('bank-accounts-history-page', () => 1)
+  const pageSize = useState('bank-accounts-history-pagesize', () => 20)
+  const pending = useState('bank-accounts-history-pending', () => false)
+  const error = useState<string | null>('bank-accounts-history-error', () => null)
+  const search = useState('bank-accounts-history-search', () => '')
+  const user = useSupabaseUser()
+  const supabase = useSupabaseClient()
+
+  async function refresh() {
+    if (!user.value) {
+      accounts.value = []
+      total.value = 0
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        accounts.value = []
+        return
+      }
+      const q = new URLSearchParams()
+      if (search.value.trim()) q.set('q', search.value.trim())
+      q.set('page', String(page.value))
+      q.set('pageSize', String(pageSize.value))
+
+      const res = await $fetch<ApiBankAccountsPage>(`/api/bank-accounts?${q.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      accounts.value = res.data
+      total.value = res.total
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      accounts.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  useSharedScope('bank-accounts-history', () => {
+    // La búsqueda se debouncea: sin esto cada tecla dispara una petición.
+    let searchTimeout: ReturnType<typeof setTimeout> | null = null
+    watch(user, () => { page.value = 1; void refresh() }, { immediate: true })
+    watch(search, () => {
+      if (searchTimeout) clearTimeout(searchTimeout)
+      searchTimeout = setTimeout(() => {
+        searchTimeout = null
+        if (page.value !== 1) page.value = 1
+        else void refresh()
+      }, 300)
+    })
+    watch(page, () => void refresh())
+  })
+
+  return { accounts, total, page, pageSize, pending, error, search, refresh }
 }
 
 /** Usuarios/empleados (admin). Llamar refresh() en onMounted. */
