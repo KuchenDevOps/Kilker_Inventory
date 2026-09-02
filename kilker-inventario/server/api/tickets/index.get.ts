@@ -24,8 +24,12 @@ export default defineEventHandler(async (event) => {
   ) {
     filters.push(eq(tickets.status, query.status))
   }
-  // Filtro por objetivo: venta o entrada de stock.
-  if (query.target === 'factura' || query.target === 'movimiento') {
+  // Filtro por objetivo: venta, entrada de stock o gasto.
+  if (
+    query.target === 'factura' ||
+    query.target === 'movimiento' ||
+    query.target === 'gasto'
+  ) {
     filters.push(eq(tickets.target, query.target))
   }
 
@@ -54,6 +58,15 @@ const rows = await db.query.tickets.findMany({
           inventoryEntryInvoiceNumber: true
         },
         with: { product: { columns: { name: true, sku: true, unit: true } } }
+      },
+      expense: {
+        columns: {
+          supplier: true,
+          supplierInvoiceNumber: true,
+          status: true,
+          totalToPay: true,
+          paidAt: true
+        }
       }
     }
   })
@@ -78,6 +91,13 @@ const rows = await db.query.tickets.findMany({
     movementQuantity: t.movement?.quantity ?? null,
     movementTotal: t.movement?.totalValue ?? null,
     movementSupplierInvoice: t.movement?.supplierInvoiceNumber ?? null,
+    // ─── Objetivo 'gasto' ───
+    expenseId: t.expenseId,
+    expenseSupplier: t.expense?.supplier ?? null,
+    expenseInvoiceNumber: t.expense?.supplierInvoiceNumber ?? null,
+    expenseStatus: t.expense?.status ?? null,
+    expenseTotal: t.expense?.totalToPay ?? null,
+    expensePaidAt: t.expense?.paidAt ?? null,
     raisedByName: t.raisedBy?.fullName ?? null,
     resolvedByName: t.resolvedBy?.fullName ?? null,
     resolutionNote: t.resolutionNote,

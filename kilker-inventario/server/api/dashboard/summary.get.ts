@@ -124,7 +124,11 @@ export default defineEventHandler(async (event) => {
   if (to) saleFilters.push(lt(invoices.issuedAt, new Date(to)))
 
   // ─── Gastos ───
-  const expenseFilters = []
+  // Solo los emitidos, igual que las ventas de arriba: un gasto anulado ya no
+  // costó nada (sus abonos se borraron y su movimiento de banco se revirtió),
+  // así que seguir sumándolo aquí inflaría el gasto del periodo contra un saldo
+  // bancario que ya no lo refleja.
+  const expenseFilters = [eq(expenses.status, 'emitido')]
   if (storeId) expenseFilters.push(eq(expenses.storeId, storeId))
   const expenseFrom = toExpenseDate(from)
   const expenseTo = toExpenseDate(to)

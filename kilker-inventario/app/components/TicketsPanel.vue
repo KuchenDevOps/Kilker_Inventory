@@ -2,10 +2,11 @@
 // ───────────────────────────────────────────────
 //  PANEL DE TICKETS DE CORRECCIÓN
 // ───────────────────────────────────────────────
-// Una sola tabla que sirve a las dos pantallas (/tickets/ventas y
-// /tickets/entradas) parametrizada por `target`. El flujo es idéntico —
-// el empleado solicita, el admin aprueba o rechaza — y lo único que cambia
-// es qué documento se describe y qué pasa al aprobar; eso vive en TARGET_META.
+// Una sola tabla que sirve a las tres pantallas (/tickets/ventas,
+// /tickets/entradas y /tickets/gastos) parametrizada por `target`. El flujo es
+// idéntico — el empleado solicita, el admin aprueba o rechaza — y lo único que
+// cambia es qué documento se describe y qué pasa al aprobar; eso vive en
+// TARGET_META.
 import type { ApiTicket, TicketTarget } from '~/types/inventario'
 
 const props = defineProps<{ target: TicketTarget }>()
@@ -65,21 +66,43 @@ const TARGET_META = {
     backTo: '/movimientos',
     backLabel: 'Historial de entradas',
     backIcon: 'i-lucide-package-plus'
+  },
+  gasto: {
+    title: 'Correcciones de gastos',
+    docLabel: 'Gasto',
+    docColumn: 'Gasto',
+    emptyHint: 'Las solicitudes se abren desde el listado de gastos.',
+    backTo: '/gastos',
+    backLabel: 'Gastos operativos',
+    backIcon: 'i-lucide-credit-card'
   }
 } as const
 
 const meta = computed(() => TARGET_META[props.target])
 const isSales = computed(() => props.target === 'factura')
+const isExpense = computed(() => props.target === 'gasto')
+/** Palabra del documento en minúsculas, para armar frases. */
+const docWord = computed(() =>
+  isSales.value ? 'la venta' : isExpense.value ? 'el gasto' : 'la entrada'
+)
 
-/** Folio del documento al que apunta el ticket. */
+/** Folio (o identificador) del documento al que apunta el ticket. */
 function docFolio(t: ApiTicket) {
-  return (isSales.value ? t.invoiceFolio : t.movementFolio) ?? '—'
+  if (isSales.value) return t.invoiceFolio ?? '—'
+  // El gasto no tiene folio propio: lo identifica la factura del proveedor.
+  if (isExpense.value) return t.expenseInvoiceNumber ?? '—'
+  return t.movementFolio ?? '—'
 }
 
-/** Segunda línea de la celda del documento: importe (venta) o producto (entrada). */
+/** Segunda línea de la celda: importe (venta/gasto) o producto (entrada). */
 function docDetail(t: ApiTicket) {
   if (isSales.value) {
     return t.invoiceTotal ? currency.format(Number(t.invoiceTotal)) : null
+  }
+  if (isExpense.value) {
+    const monto = t.expenseTotal ? currency.format(Number(t.expenseTotal)) : null
+    if (!t.expenseSupplier) return monto
+    return monto ? `${t.expenseSupplier} · ${monto}` : t.expenseSupplier
   }
   if (!t.movementProductName) return null
   const qty = t.movementQuantity
@@ -90,9 +113,13 @@ function docDetail(t: ApiTicket) {
 
 /** Qué va a pasar si el admin aprueba. */
 function approvalWarning(t: ApiTicket) {
-  return isSales.value
-    ? `Aprobar anula la venta ${docFolio(t)}: repone el inventario y deja registro en el kardex. No se puede deshacer.`
-    : `Aprobar anula la entrada ${docFolio(t)}: descuenta esa mercancía del inventario y borra sus abonos. Solo funciona si ese stock no se ha vendido ni transferido. No se puede deshacer.`
+  if (isSales.value) {
+    return `Aprobar anula la venta ${docFolio(t)}: repone el inventario y deja registro en el kardex. No se puede deshacer.`
+  }
+  if (isExpense.value) {
+    return `Aprobar anula el gasto ${docFolio(t)}: BORRA todos sus pagos y revierte el dinero en la cuenta de la que salió. El gasto queda marcado como anulado y ya no se podrá editar ni pagar. No se puede deshacer.`
+  }
+  return `Aprobar anula la entrada ${docFolio(t)}: descuenta esa mercancía del inventario y borra sus abonos. Solo funciona si ese stock no se ha vendido ni transferido. No se puede deshacer.`
 }
 
 // Resolución (admin): panel inline con nota para aprobar o rechazar.
@@ -117,23 +144,39 @@ async function confirmAction(t: ApiTicket) {
   const wasApproval = actingAction.value === 'aprobar'
   submitting.value = true
   try {
-    await apiFetch(`/api/tickets/${t.id}/resolve`, {
-      method: 'POST',
-      body: { action: actingAction.value, note: note.value.trim() || undefined }
-    })
+    const res = await apiFetch<{ deletedPayments?: number }>(
+      `/api/tickets/${t.id}/resolve`,
+      {
+        method: 'POST',
+        body: { action: actingAction.value, note: note.value.trim() || undefined }
+      }
+    )
+    // El endpoint devuelve el ticket, no el documento anulado, así que
+    // `deletedPayments` sólo viene en los targets que lo reportan.
+    const borrados = res?.deletedPayments ?? 0
+    let description = 'El ticket quedó rechazado.'
+    if (wasApproval) {
+      if (isSales.value) {
+        description = `Se anuló la venta ${docFolio(t)} y se repuso el inventario.`
+      } else if (isExpense.value) {
+        description =
+          borrados > 0
+            ? `Se anuló el gasto ${docFolio(t)} y se borraron ${borrados} pago(s).`
+            : `Se anuló el gasto ${docFolio(t)}.`
+      } else {
+        description = `Se anuló la entrada ${docFolio(t)} y se descontó del inventario.`
+      }
+    }
     toast.add({
       title: wasApproval ? 'Ticket aprobado' : 'Ticket rechazado',
-      description: !wasApproval
-        ? 'El ticket quedó rechazado.'
-        : isSales.value
-          ? `Se anuló la venta ${docFolio(t)} y se repuso el inventario.`
-          : `Se anuló la entrada ${docFolio(t)} y se descontó del inventario.`,
+      description,
       color: 'success',
       icon: 'i-lucide-circle-check'
     })
     cancelAction()
     await refresh()
-    if (wasApproval) await refreshNuxtData('products')
+    // Los gastos no mueven inventario: recargar el catálogo ahí no aporta nada.
+    if (wasApproval && !isExpense.value) await refreshNuxtData('products')
   } catch (e) {
     toast.add({
       title: 'No se pudo resolver el ticket',
@@ -157,7 +200,7 @@ const colCount = computed(() => (isAdmin.value ? 8 : 7))
         <h1 class="text-2xl font-semibold">{{ meta.title }}</h1>
         <p class="text-sm text-muted">
           {{ total }} ticket(s)
-          <template v-if="isAdmin"> · aprueba para anular {{ isSales ? 'la venta' : 'la entrada' }}</template>
+          <template v-if="isAdmin"> · aprueba para anular {{ docWord }}</template>
           <template v-else-if="seesAllStores"> · solicitudes de todas las sucursales</template>
           <template v-else> · solicitudes de tu sucursal</template>
         </p>

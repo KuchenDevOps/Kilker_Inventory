@@ -131,25 +131,37 @@ export async function recordPaymentCashFlow(
 export async function reversePaymentCashFlowTx(
   tx: Tx,
   opts: {
-    source: { salePaymentIds: number[] } | { entryPaymentIds: number[] }
+    source:
+      | { salePaymentIds: number[] }
+      | { entryPaymentIds: number[] }
+      | { expensePaymentIds: number[] }
     profileId: string
     reason: string | null
   }
 ): Promise<BanksMovement[]> {
+  // Una sola forma de resolver "qué columna liga el abono con su movimiento":
+  // con un if por cada origen, agregar el cuarto significaba acordarse de
+  // tocar los dos sitios (la lista de ids y el `where`), y olvidar el segundo
+  // no falla — simplemente no revierte nada.
+  const column = 'salePaymentIds' in opts.source
+    ? banksMovements.salePaymentId
+    : 'entryPaymentIds' in opts.source
+      ? banksMovements.entryPaymentId
+      : banksMovements.expensePaymentId
+
   const ids =
-    'salePaymentIds' in opts.source ? opts.source.salePaymentIds : opts.source.entryPaymentIds
+    'salePaymentIds' in opts.source
+      ? opts.source.salePaymentIds
+      : 'entryPaymentIds' in opts.source
+        ? opts.source.entryPaymentIds
+        : opts.source.expensePaymentIds
   if (ids.length === 0) return []
 
   const reversals: BanksMovement[] = []
   const today = businessDateOnly(new Date())
 
   for (const id of ids) {
-    const where =
-      'salePaymentIds' in opts.source
-        ? eq(banksMovements.salePaymentId, id)
-        : eq(banksMovements.entryPaymentId, id)
-
-    const original = await tx.query.banksMovements.findFirst({ where })
+    const original = await tx.query.banksMovements.findFirst({ where: eq(column, id) })
     if (!original) continue
 
     // Candado de fila antes de decidir, igual que en corrections.ts: sin él dos

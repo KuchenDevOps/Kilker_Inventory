@@ -2,7 +2,13 @@
 useHead({ title: 'Gastos · Inventario Kilker' })
 
 import type { ApiExpense, ApiExpensePayment, PaymentMethod } from '~/types/inventario'
-import { PAYMENT_LABELS, EXPENSE_TYPE_LABELS, type ExpenseType } from '~/types/inventario'
+import {
+  PAYMENT_LABELS,
+  EXPENSE_TYPE_LABELS,
+  EXPENSE_PAYMENT_STATUS_LABELS,
+  EXPENSE_PAYMENT_STATUS_COLORS,
+  type ExpenseType
+} from '~/types/inventario'
 const { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me, canWrite, seesAllStores } = useMe()
@@ -68,6 +74,13 @@ const form = reactive({
 
 const showRetentions = ref(false)
 const editingId = ref<number | null>(null)
+/**
+ * Editando un gasto que YA tiene abonos: solo quedan abiertos el tipo y la
+ * nota. El candado real es el del servidor (`PATCH /api/expenses/:id` responde
+ * 409); esto solo evita que el usuario capture cambios que van a rebotar.
+ * Para lo demás hay que ir por una corrección: anula el gasto y se recaptura.
+ */
+const editingLocked = ref(false)
 
 function emptyItem(): ExpenseItemForm {
   return { reason: '', amount: undefined }
@@ -83,6 +96,7 @@ function removeItem(i: number) {
 
 function openCreate() {
   editingId.value = null
+  editingLocked.value = false
   showRetentions.value = false
   Object.assign(form, {
     storeId: undefined,
@@ -100,6 +114,7 @@ function openCreate() {
 
 function openEdit(e: ApiExpense) {
   editingId.value = e.id
+  editingLocked.value = e.totalPaid > 0
   const retIVA = Number(e.retentionIva ?? 0)
   const retISR = Number(e.retentionIsr ?? 0)
   Object.assign(form, {
@@ -128,6 +143,9 @@ const totalsSummary = computed(() => {
     Operativo: { subtotal: 0, total: 0 }
   }
   for (const e of expenses.value) {
+    // Un gasto anulado ya no costó nada: sus pagos se borraron y el dinero
+    // volvió a la cuenta. Sumarlo aquí inflaría el total del periodo.
+    if (e.status === 'anulado') continue
     base[e.type].subtotal += e.subtotal
     base[e.type].total += Number(e.amount)
   }
@@ -196,6 +214,100 @@ async function onSubmit() {
 }
 
 // ───────────────────────────────────────────────
+//  CORRECCIÓN DE GASTOS (ticket) Y ANULACIÓN (admin)
+// ───────────────────────────────────────────────
+// Mismo reparto que en ventas y entradas: el admin anula directo, el empleado
+// abre un ticket que el admin resuelve en /tickets/gastos. En ambos caminos
+// anular BORRA los pagos del gasto y revierte el dinero en la cuenta.
+const requestingId = ref<number | null>(null)
+const requestReason = ref('')
+const submittingRequest = ref(false)
+
+function openRequest(e: ApiExpense) {
+  requestingId.value = e.id
+  requestReason.value = ''
+}
+function cancelRequest() {
+  requestingId.value = null
+  requestReason.value = ''
+}
+
+async function confirmRequest(e: ApiExpense) {
+  if (!requestReason.value.trim()) {
+    toast.add({ title: 'Escribe el motivo', color: 'error', icon: 'i-lucide-triangle-alert' })
+    return
+  }
+  submittingRequest.value = true
+  try {
+    await apiFetch('/api/tickets', {
+      method: 'POST',
+      body: { expenseId: e.id, reason: requestReason.value.trim() }
+    })
+    toast.add({
+      title: 'Solicitud enviada',
+      description: `Se abrió un ticket para anular el gasto ${e.supplierInvoiceNumber}. Un admin lo revisará.`,
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    cancelRequest()
+    await refresh()
+  } catch (err) {
+    toast.add({
+      title: 'No se pudo enviar la solicitud',
+      description: apiErrorMessage(err),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submittingRequest.value = false
+  }
+}
+
+const voidingId = ref<number | null>(null)
+const voidReason = ref('')
+const submittingVoid = ref(false)
+
+function openVoid(e: ApiExpense) {
+  voidingId.value = e.id
+  voidReason.value = ''
+}
+function cancelVoidPanel() {
+  voidingId.value = null
+  voidReason.value = ''
+}
+
+async function confirmVoid(e: ApiExpense) {
+  submittingVoid.value = true
+  try {
+    const res = await apiFetch<{ deletedPayments: number }>(`/api/expenses/${e.id}/void`, {
+      method: 'POST',
+      body: { reason: voidReason.value.trim() || undefined }
+    })
+    const borrados = res?.deletedPayments ?? 0
+    toast.add({
+      title: 'Gasto anulado',
+      description:
+        borrados > 0
+          ? `Se borraron ${borrados} pago(s) y se revirtió el dinero en la cuenta.`
+          : 'El gasto quedó anulado.',
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    cancelVoidPanel()
+    await refresh()
+  } catch (err) {
+    toast.add({
+      title: 'No se pudo anular el gasto',
+      description: apiErrorMessage(err),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submittingVoid.value = false
+  }
+}
+
+// ───────────────────────────────────────────────
 //  MODAL DE PAGOS (muestra desglose de items)
 // ───────────────────────────────────────────────
 const viewingExpense = ref<ApiExpense | null>(null)
@@ -252,9 +364,22 @@ async function refreshPayments() {
   }
 }
 
-const canSubmitPayment = computed(
+/**
+ * Un gasto anulado no admite abonos: anularlo borró los que tenía y devolvió el
+ * dinero. Sin esta guarda el modal seguiría ofreciendo el alta —el saldo vuelve
+ * a ser el total al borrarse los pagos— y el servidor lo rechazaría con un 409.
+ */
+const canRegisterPayment = computed(
   () =>
     canWrite.value &&
+    !!viewingExpense.value &&
+    viewingExpense.value.status !== 'anulado' &&
+    viewingExpense.value.balance > 0
+)
+
+const canSubmitPayment = computed(
+  () =>
+    canRegisterPayment.value &&
     (paymentForm.amount ?? 0) > 0 &&
     paymentForm.paidAt.length > 0 &&
     !!viewingExpense.value &&
@@ -324,6 +449,10 @@ const viewingTotalWithTaxes = computed(() => {
     Number(viewingExpense.value.retentionIsr ?? 0)
   )
 })
+
+// Fecha de factura, Proveedor, Factura, Tipo, A pagar, Con IVA, Sucursal,
+// Fecha de registro, Nota, Estado, Saldo, Acciones.
+const colCount = 12
 
 // Resumen de conceptos para la tabla (evita mostrar N filas por gasto).
 function reasonsSummary(e: ApiExpense) {
@@ -418,54 +547,175 @@ onMounted(() => {
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="13" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td :colspan="colCount" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!expenses.length">
-              <td colspan="13" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
+              <td :colspan="colCount" class="px-4 py-8 text-center text-muted">Sin resultados.</td>
             </tr>
-            <tr v-else v-for="e in expenses" :key="e.id" class="hover:bg-elevated/50">
-              <td class="px-4 py-3 text-muted whitespace-nowrap">{{ e.paidAt }}</td>
-              <td class="px-4 py-3 font-medium">{{ e.supplier }}</td>
-              <td class="px-4 py-3 font-mono text-xs">{{ e.supplierInvoiceNumber }}</td>
-              <td class="px-4 py-3">
-                <UBadge :label="e.type" :color="e.type === 'Fijo' ? 'info' : 'neutral'" variant="subtle" />
-              </td>
-              <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(Number(e.amount)) }}</td>
-              <td class="px-4 py-3 text-right tabular-nums text-muted">
-                {{ currency.format(Number(e.amount) + e.iva - Number(e.retentionIva ?? 0) - Number(e.retentionIsr ?? 0)) }}
-              </td>
-              <td class="px-4 py-3 text-muted">{{ e.storeCode ?? '—' }}</td>
-              <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(e.createdAt) }}</td>
-              <td class="px-4 py-3 text-muted truncate max-w-48">{{ e.note ?? '—' }}</td>
-             
-              <td class="px-4 py-3">
-                <UBadge
-                  :label="e.paymentStatus === 'pagado' ? 'Pagado' : e.paymentStatus === 'parcial' ? 'Parcial' : 'Pendiente'"
-                  :color="e.paymentStatus === 'pagado' ? 'success' : e.paymentStatus === 'parcial' ? 'warning' : 'error'"
-                  variant="subtle"
-                />
-              </td>
-              <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(e.balance) }}</td>
-              <td class="px-4 py-3 text-right">
-                <div class="flex items-center justify-end gap-1">
-                  <UButton
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    icon="i-lucide-wallet"
-                    @click="openPayments(e)"
+            <template v-for="e in expenses" v-else :key="e.id">
+              <tr class="hover:bg-elevated/50" :class="{ 'opacity-50': e.status === 'anulado' }">
+                <td class="px-4 py-3 text-muted whitespace-nowrap">{{ e.paidAt }}</td>
+                <td class="px-4 py-3 font-medium">{{ e.supplier }}</td>
+                <td class="px-4 py-3 font-mono text-xs">{{ e.supplierInvoiceNumber }}</td>
+                <td class="px-4 py-3">
+                  <UBadge :label="e.type" :color="e.type === 'Fijo' ? 'info' : 'neutral'" variant="subtle" />
+                </td>
+                <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(Number(e.amount)) }}</td>
+                <td class="px-4 py-3 text-right tabular-nums text-muted">
+                  {{ currency.format(Number(e.amount) + e.iva - Number(e.retentionIva ?? 0) - Number(e.retentionIsr ?? 0)) }}
+                </td>
+                <td class="px-4 py-3 text-muted">{{ e.storeCode ?? '—' }}</td>
+                <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(e.createdAt) }}</td>
+                <td class="px-4 py-3 text-muted truncate max-w-48">{{ e.note ?? '—' }}</td>
+
+                <td class="px-4 py-3">
+                  <UBadge
+                    :label="EXPENSE_PAYMENT_STATUS_LABELS[e.paymentStatus]"
+                    :color="EXPENSE_PAYMENT_STATUS_COLORS[e.paymentStatus]"
+                    variant="subtle"
                   />
-                  <UButton
-                    v-if="canWrite"
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    icon="i-lucide-pencil"
-                    @click="openEdit(e)"
-                  />
-                </div>
-              </td>
-            </tr>
+                </td>
+                <td class="px-4 py-3 text-right tabular-nums">{{ currency.format(e.balance) }}</td>
+                <td class="px-4 py-3 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-wallet"
+                      :title="e.status === 'anulado' ? 'Gasto anulado' : 'Ver pagos'"
+                      @click="openPayments(e)"
+                    />
+                    <UBadge
+                      v-if="e.status === 'anulado'"
+                      label="Anulado"
+                      color="error"
+                      variant="subtle"
+                      size="xs"
+                    />
+                    <UBadge
+                      v-else-if="e.pendingCorrection"
+                      label="Corrección pendiente"
+                      color="warning"
+                      variant="subtle"
+                      size="xs"
+                    />
+                    <template v-else>
+                      <UButton
+                        v-if="canWrite"
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-pencil"
+                        title="Editar gasto"
+                        @click="openEdit(e)"
+                      />
+                      <!-- El admin anula directo; el empleado solicita y el admin resuelve. -->
+                      <UButton
+                        v-if="isAdmin && voidingId !== e.id"
+                        size="xs"
+                        color="error"
+                        variant="ghost"
+                        icon="i-lucide-ban"
+                        title="Anular gasto"
+                        @click="openVoid(e)"
+                      />
+                      <UButton
+                        v-else-if="!isAdmin && canWrite && requestingId !== e.id"
+                        size="xs"
+                        color="warning"
+                        variant="ghost"
+                        icon="i-lucide-message-square-warning"
+                        title="Solicitar corrección"
+                        @click="openRequest(e)"
+                      />
+                    </template>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Panel de solicitud de corrección (empleado / admin_tienda) -->
+              <tr v-if="!isAdmin && requestingId === e.id" class="bg-elevated/40">
+                <td :colspan="colCount" class="px-4 py-3">
+                  <div class="flex flex-wrap items-start gap-3">
+                    <div class="flex-1">
+                      <p class="text-xs text-muted mb-1">
+                        Solicitar corrección del gasto de <strong>{{ e.supplier }}</strong> ·
+                        factura <span class="font-mono">{{ e.supplierInvoiceNumber }}</span>
+                        ({{ currency.format(e.totalToPay) }})
+                      </p>
+                      <UInput
+                        v-model="requestReason"
+                        placeholder="Motivo (obligatorio): qué está mal en este gasto…"
+                        class="max-w-md"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <UButton
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        :disabled="submittingRequest"
+                        @click="cancelRequest"
+                      >
+                        Cancelar
+                      </UButton>
+                      <UButton
+                        size="xs"
+                        color="warning"
+                        :loading="submittingRequest"
+                        @click="confirmRequest(e)"
+                      >
+                        Enviar solicitud
+                      </UButton>
+                    </div>
+                  </div>
+                  <p class="mt-2 text-xs text-muted">
+                    No anula nada todavía: abre un ticket para que un administrador lo revise. Si
+                    lo aprueba, el gasto se anula, se borran sus pagos y tendrás que volver a
+                    capturarlo corregido.
+                  </p>
+                </td>
+              </tr>
+
+              <!-- Panel de confirmación de anulación (admin) -->
+              <tr v-if="isAdmin && voidingId === e.id" class="bg-elevated/40">
+                <td :colspan="colCount" class="px-4 py-3">
+                  <div class="flex flex-wrap items-start gap-3">
+                    <div class="flex-1">
+                      <p class="text-xs text-muted mb-1">
+                        Anular el gasto de <strong>{{ e.supplier }}</strong> · factura
+                        <span class="font-mono">{{ e.supplierInvoiceNumber }}</span>
+                        ({{ currency.format(e.totalToPay) }})
+                      </p>
+                      <UInput v-model="voidReason" placeholder="Motivo (opcional)…" class="max-w-md" />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <UButton
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        :disabled="submittingVoid"
+                        @click="cancelVoidPanel"
+                      >
+                        Cancelar
+                      </UButton>
+                      <UButton size="xs" color="error" :loading="submittingVoid" @click="confirmVoid(e)">
+                        Confirmar anulación
+                      </UButton>
+                    </div>
+                  </div>
+                  <p class="mt-2 text-xs text-muted">
+                    El gasto queda marcado como anulado: deja de contar en los totales y ya no se
+                    podrá editar ni pagar.
+                  </p>
+                  <p v-if="e.totalPaid > 0" class="mt-1 text-xs text-error">
+                    Se borrarán los pagos registrados ({{ currency.format(e.totalPaid) }}) y ese
+                    dinero se devolverá a la cuenta de la que salió.
+                  </p>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -485,23 +735,48 @@ onMounted(() => {
           </template>
 
           <form class="space-y-4" @submit.prevent="onSubmit">
+            <UAlert
+              v-if="editingLocked"
+              color="warning"
+              variant="soft"
+              icon="i-lucide-lock"
+              title="Gasto con pagos registrados"
+              description="Solo puedes cambiar el tipo y la nota. Para corregir importes, conceptos, fechas o datos del proveedor hay que anular el gasto (se borran sus pagos) y volver a capturarlo."
+            />
+
             <UFormField v-if="isAdmin" label="Sucursal" required>
-              <USelect v-model="form.storeId" :items="storeItems" placeholder="Selecciona una sucursal" class="w-full" />
+              <USelect
+                v-model="form.storeId"
+                :items="storeItems"
+                :disabled="editingLocked"
+                placeholder="Selecciona una sucursal"
+                class="w-full"
+              />
             </UFormField>
 
             <UFormField label="Fecha de Factura" required>
-              <UInput v-model="form.paidAt" type="date" class="w-full" />
+              <UInput v-model="form.paidAt" type="date" :disabled="editingLocked" class="w-full" />
             </UFormField>
             <div class="grid gap-4 sm:grid-cols-2">
               <UFormField label="Proveedor" required>
-                <UInput v-model="form.supplier" placeholder="Nombre del proveedor" class="w-full" />
+                <UInput
+                  v-model="form.supplier"
+                  :disabled="editingLocked"
+                  placeholder="Nombre del proveedor"
+                  class="w-full"
+                />
               </UFormField>
               <UFormField label="Tipo de gasto" required>
                 <USelect v-model="form.type" :items="expenseTypeItems" class="w-full" />
               </UFormField>
             </div>
             <UFormField label="Número de factura" required>
-              <UInput v-model="form.supplierInvoiceNumber" placeholder="A-12345" class="w-full" />
+              <UInput
+                v-model="form.supplierInvoiceNumber"
+                :disabled="editingLocked"
+                placeholder="A-12345"
+                class="w-full"
+              />
             </UFormField>
 
             <USeparator />
@@ -511,6 +786,7 @@ onMounted(() => {
               <div class="flex items-center justify-between">
                 <h3 class="font-semibold text-sm">Conceptos</h3>
                 <UButton
+                  v-if="!editingLocked"
                   type="button"
                   size="xs"
                   variant="soft"
@@ -526,20 +802,26 @@ onMounted(() => {
                 :key="i"
                 class="grid items-end gap-3 sm:grid-cols-12 rounded-lg border border-default p-3"
               >
-                <UFormField label="Concepto" class="sm:col-span-7">
-                  <UInput v-model="item.reason" placeholder="Renta, luz, mantenimiento…" class="w-full" />
+                <UFormField label="Concepto" :class="editingLocked ? 'sm:col-span-8' : 'sm:col-span-7'">
+                  <UInput
+                    v-model="item.reason"
+                    :disabled="editingLocked"
+                    placeholder="Renta, luz, mantenimiento…"
+                    class="w-full"
+                  />
                 </UFormField>
                 <UFormField label="Monto (MXN)" class="sm:col-span-4">
                   <UInputNumber
                     v-model="item.amount"
                     :min="0"
                     :step="0.01"
+                    :disabled="editingLocked"
                     :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
                     placeholder="0"
                     class="w-full"
                   />
                 </UFormField>
-                <div class="sm:col-span-1 flex justify-end">
+                <div v-if="!editingLocked" class="sm:col-span-1 flex justify-end">
                   <UButton
                     type="button"
                     size="xs"
@@ -586,6 +868,7 @@ onMounted(() => {
                     v-model="form.retentionIVA"
                     :min="0"
                     :step="0.01"
+                    :disabled="editingLocked"
                     :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
                     placeholder="0"
                     class="w-full"
@@ -596,6 +879,7 @@ onMounted(() => {
                     v-model="form.retentionISR"
                     :min="0"
                     :step="0.01"
+                    :disabled="editingLocked"
                     :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
                     placeholder="0"
                     class="w-full"
@@ -636,20 +920,8 @@ onMounted(() => {
               <h2 class="font-semibold">{{ viewingExpense?.supplier }}</h2>
               <UBadge
                 v-if="viewingExpense"
-                :label="
-                  viewingExpense.paymentStatus === 'pagado'
-                    ? 'Pagado'
-                    : viewingExpense.paymentStatus === 'parcial'
-                      ? 'Parcial'
-                      : 'Pendiente'
-                "
-                :color="
-                  viewingExpense.paymentStatus === 'pagado'
-                    ? 'success'
-                    : viewingExpense.paymentStatus === 'parcial'
-                      ? 'warning'
-                      : 'error'
-                "
+                :label="EXPENSE_PAYMENT_STATUS_LABELS[viewingExpense.paymentStatus]"
+                :color="EXPENSE_PAYMENT_STATUS_COLORS[viewingExpense.paymentStatus]"
                 variant="subtle"
                 class="ml-auto"
               />
@@ -757,10 +1029,10 @@ onMounted(() => {
               </ul>
             </div>
 
-            <USeparator v-if="canWrite && viewingExpense.balance > 0" />
+            <USeparator v-if="canRegisterPayment" />
 
             <!-- Registrar nuevo pago (el observador ve el historial, no el alta) -->
-            <div v-if="canWrite && viewingExpense.balance > 0" class="space-y-3">
+            <div v-if="canRegisterPayment" class="space-y-3">
               <h3 class="text-sm font-semibold">Registrar pago</h3>
               <div class="grid gap-3 sm:grid-cols-2">
                 <UFormField label="Monto">
@@ -810,6 +1082,18 @@ onMounted(() => {
                 </UButton>
               </div>
             </div>
+            <UAlert
+              v-else-if="viewingExpense.status === 'anulado'"
+              color="neutral"
+              variant="soft"
+              icon="i-lucide-ban"
+              title="Gasto anulado"
+              :description="
+                viewingExpense.voidReason
+                  ? `Motivo: ${viewingExpense.voidReason}`
+                  : 'Se borraron sus pagos y el dinero volvió a la cuenta de origen.'
+              "
+            />
             <UAlert
               v-else
               color="success"

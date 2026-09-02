@@ -64,6 +64,16 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    // Un gasto anulado no admite abonos: anularlo borró los que tenía y
+    // revirtió su movimiento de banco. Un abono nuevo volvería a restar de la
+    // cuenta por un gasto que ya no existe.
+    if (expense.status === 'anulado') {
+      throw createError({
+        statusCode: 409,
+        statusMessage: 'Este gasto está anulado: no admite pagos'
+      })
+    }
+
     // ⚠️ El pagable es `total_to_pay` = subtotal + IVA − retenciones, LEÍDO de
     // la base (es una columna generada). El IVA y las retenciones dejaron de ser
     // informativos: ahora se pagan.
