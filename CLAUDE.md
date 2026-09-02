@@ -188,7 +188,8 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 - **Reparto de permisos vigente (lo que hace el código hoy):**
   - **Solo admin:** alta/edición/borrado de productos y categorías, alta/edición de
     sucursales y usuarios, anulación de ventas (`POST /api/sales/:id/void`), resolución de
-    tickets, anulación de entradas de stock (`POST /api/movements/:id/void`).
+    tickets, anulación de entradas de stock (`POST /api/movements/:id/void`) y de gastos
+    (`POST /api/expenses/:id/void`).
   - **Admin + empleado:** vender, registrar entradas, crear/recibir/cancelar
     transferencias, gastos y sus pagos, clientes, cortes de caja y abrir tickets.
   - **`admin_tienda` (administrador de sucursal):** es el encargado de UNA tienda,
@@ -197,9 +198,9 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
     además **gestiona el catálogo compartido**: alta y edición de productos, kits,
     **muestras** y categorías (rutas `/productos/nuevo`, `/productos/:id/editar`,
     `/categorias`).
-    **No puede:** borrar del catálogo, anular ventas o entradas (abre ticket de
-    corrección como el empleado), resolver tickets, ni administrar sucursales y
-    usuarios. Lleva `store_id` obligatorio, igual que el empleado.
+    **No puede:** borrar del catálogo, anular ventas, entradas o gastos (abre
+    ticket de corrección como el empleado), resolver tickets, ni administrar
+    sucursales y usuarios. Lleva `store_id` obligatorio, igual que el empleado.
   - **Solo lectura (`observador`):** ve **todo** (todas las sucursales, todos los
     listados, tickets, cortes, gastos, sucursales y empleados) pero **no puede
     escribir nada**. El candado es central: `requireProfile` rechaza con 403
@@ -292,9 +293,9 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
 | **Ventas** | `ventas/nueva`, `ventas/index` (modal de pagos) | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void`, `GET/POST /api/sales/:id/payments` |
 | **Transferencias** | `transferencias/nueva`, `transferencias/index` | `POST/GET /api/transfers`, `GET /api/transfers/:id`, `POST /api/transfers/:id/receive`, `POST /api/transfers/:id/cancel` |
 | **Clientes** | `clientes/index` | `GET/POST /api/customers`, `PATCH/DELETE /api/customers/:id` |
-| **Gastos** | `gastos/index` | `GET/POST /api/expenses` (filtros `?q`, `?paidBy`, `?type`, `?storeId`, fechas), `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments` |
+| **Gastos** | `gastos/index` | `GET/POST /api/expenses` (filtros `?q`, `?paidBy`, `?type`, `?storeId`, fechas), `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments`, `POST /api/expenses/:id/void` |
 | **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id` |
-| **Tickets de corrección** | `tickets/ventas`, `tickets/entradas` (ambas montan `components/TicketsPanel.vue`; `tickets/index` solo redirige a ventas) | `GET/POST /api/tickets` (filtro `?target=factura\|movimiento`), `POST /api/tickets/:id/resolve` |
+| **Tickets de corrección** | `tickets/ventas`, `tickets/entradas`, `tickets/gastos` (las tres montan `components/TicketsPanel.vue`; `tickets/index` solo redirige a ventas) | `GET/POST /api/tickets` (filtro `?target=factura\|movimiento\|gasto`), `POST /api/tickets/:id/resolve` |
 | **Administración** | `tiendas/index`, `empleados/index` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id` |
 | **Reportes / Dashboard** | `dashboard` | `GET /api/dashboard/summary` (agregado del dashboard), `GET /api/reports/monthly-inventory`, `/api/reports/top-products`, `/api/reports/inventory-value`, `/api/average-costs` |
 
@@ -447,7 +448,35 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
 - **Gastos.** Cabecera + `expense_items` (conceptos) + `expense_payments` (parcialidades,
   con `paid_by` y método). Tipo `Fijo|Operativo`, retenciones IVA/ISR opcionales; el
   endpoint deriva `subtotal`, `iva`, `totalToPay`, `totalPaid`, `balance` y
-  `paymentStatus` (pendiente/parcial/pagado).
+  `paymentStatus` (pendiente/parcial/pagado/**anulada**).
+- ⚠️ **Un gasto con abonos solo admite editar `note` y `type`.** Conceptos,
+  retenciones, `paid_at`, sucursal, proveedor y número de factura se **congelan** en cuanto
+  entra el primer pago (`PATCH /api/expenses/:id` → 409); para lo demás hay que ir por una
+  corrección. El motivo no es solo que existan las correcciones: **este PATCH no deja
+  rastro** —`expenses` no tiene `updated_at` ni bitácora y las líneas se borran y
+  reinsertan enteras—, así que un gasto editado es indistinguible de uno capturado así.
+  Una vez pagado eso sí hace daño: `banks_movements.note` guarda el snapshot
+  `Pago gasto <proveedor> <factura>` (editar la cabecera lo deja nombrando otro
+  documento), `paid_at` decide el periodo mientras el `occurred_at` de los pagos no se
+  mueve, y `store_id` cambia de sucursal sin que sus movimientos de banco lo hagan.
+  Cerraba mal, además, el hueco de siempre: la guarda del `totalPaid > totalToPay` solo
+  impedía **bajar** el pagable, así que subirlo pasaba libre.
+  **No se congela todo a propósito:** anular borra los abonos, así que forzar
+  "anular y recapturar" por una errata cuesta fechas, métodos, cuentas y pagadores, y cada
+  retecleo mete otra fila en `banks_movements` — el rastro queda peor, no mejor.
+  ⚠️ El congelado compara **contra lo guardado**, no contra "el campo vino en el body":
+  la pantalla manda el cuerpo completo aunque solo se toque la nota.
+- ⚠️ **Anular un gasto BORRA sus pagos** (`voidExpenseTx`, mismo patrón que
+  `voidInvoiceTx` con las ventas y `voidMovementTx` con las entradas): revierte primero el
+  flujo de dinero (`banks_movements`, append-only) y luego borra `expense_payments`. El
+  orden importa: la liga es `ON DELETE SET NULL`, así que borrando primero el abono el
+  movimiento de banco queda huérfano y ese dinero se quedaría restado de la cuenta para
+  siempre. El gasto **no se borra**: pasa a `status = 'anulado'` con `voided_at/by/reason`
+  —un `DELETE` se llevaría por cascada sus líneas y sus pagos, y con ellos la explicación
+  del movimiento bancario—. Un gasto anulado deja de contar en el dashboard
+  (`eq(expenses.status,'emitido')`), no admite abonos y no se puede editar. Las dos vías
+  son `POST /api/expenses/:id/void` (admin directo) y el ticket `target = 'gasto'` que
+  levanta el empleado y resuelve el admin en `/tickets/gastos`.
 - **Bajas suaves en todo:** productos, sucursales, clientes y empleados se **desactivan**
   (`is_active`), no se borran. El único `DELETE` duro es de productos sin historial y de
   categorías sin hijos ni productos (si no, 409). Desactivar una sucursal **propaga** el
@@ -480,12 +509,12 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   (`useSalesHistory`, `useMovementsHistory`) y `useExpenses`. `useSales` además registra su
   `watch` y su listener de `visibilitychange` **sin guard** (cada montaje acumulaba otro);
   está inerte mientras nadie lo llame, pero conviene borrarlo antes de que alguien lo use.
-- **Tickets:** cubren los dos `target`, con **una pantalla por tipo** —
-  `/tickets/ventas` y `/tickets/entradas`, ambas montando el mismo
+- **Tickets:** cubren los tres `target`, con **una pantalla por tipo** —
+  `/tickets/ventas`, `/tickets/entradas` y `/tickets/gastos`, las tres montando el mismo
   `components/TicketsPanel.vue` parametrizado por `target`. `factura` → aprobar anula la
-  venta; `movimiento` → aprobar anula la entrada de stock. Ambos comparten
-  `voidInvoiceTx`/`voidMovementTx` de `server/utils/corrections.ts` con los endpoints de
-  anulación directa del admin.
+  venta; `movimiento` → aprobar anula la entrada de stock; `gasto` → aprobar anula el
+  gasto. Los tres comparten `voidInvoiceTx`/`voidMovementTx`/`voidExpenseTx` de
+  `server/utils/corrections.ts` con los endpoints de anulación directa del admin.
   ⚠️ `useTicketsHistory(target)` **namespacea su `useState` por target**: con claves
   compartidas, una pantalla pisaba el listado y el filtro de la otra.
 - **Hardening:** policies de RLS (hoy innecesarias: todo el acceso es server-side),

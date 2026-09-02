@@ -80,7 +80,7 @@ export const ticketStatus = pgEnum('ticket_status', [
   'rechazado'
 ])
 
-export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento'])
+export const ticketTarget = pgEnum('ticket_target', ['factura', 'movimiento', 'gasto'])
 
 export const productUnit = pgEnum('product_unit', ['litro', 'galon', 'cubeta', 'pieza', 'cuarto', 'tambo'])
 
@@ -511,6 +511,8 @@ export const tickets = pgTable('tickets', {
   movementId: bigint('movement_id', { mode: 'number' }).references(
     () => stockMovements.id
   ),
+  /** target 'gasto': el gasto que se pide anular. */
+  expenseId: bigint('expense_id', { mode: 'number' }).references(() => expenses.id),
   reason: text('reason').notNull(),
   status: ticketStatus('status').notNull().default('abierto'),
   resolvedBy: uuid('resolved_by').references(() => profiles.id),
@@ -591,6 +593,9 @@ export const customers = pgTable(
 export const expenseType = pgEnum('expense_type', ['Fijo', 'Operativo'])
 
 
+export const expenseStatus = pgEnum('expense_status', ['emitido', 'anulado'])
+
+
 /** IVA vigente. Vive aquí porque la BD lo usa en las columnas generadas de `expenses`. */
 export const IVA_RATE = 0.16
 
@@ -643,6 +648,11 @@ export const expenses = pgTable(
       ),
     paidAt: date('paid_at').notNull(),
     note: text('note'),
+    /** `anulado` = corregido. No se borra la fila; ver `expenseStatus`. */
+    status: expenseStatus('status').notNull().default('emitido'),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: uuid('voided_by').references(() => profiles.id),
+    voidReason: text('void_reason'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => profiles.id),
@@ -709,15 +719,7 @@ export const expensePayments = pgTable(
   (t) => [index('expense_payments_expense_idx').on(t.expenseId, t.paidAt)]
 ).enableRLS()
 
-/**
- * Concepto de cada movimiento de dinero. Define también el signo permitido
- * (ver el check `banks_movements_amount_sign`).
- *
- * ⚠️ Postgres NO sabe quitar un valor de un enum (por eso la migración 0030
- * tuvo que RECREAR `payment_method` para partir 'tarjeta'). Agregar valores sí
- * es barato: un `ALTER TYPE … ADD VALUE` y ya. Pensarlo antes de meter un
- * concepto "por si acaso".
- */
+
 export const cashFlowType = pgEnum('cash_flow_type', [
   /** Abono cobrado de una venta (+). */
   'cobro_venta',
@@ -725,6 +727,16 @@ export const cashFlowType = pgEnum('cash_flow_type', [
   'pago_entrada',
   /** Abono pagado de un gasto, ya con IVA y retenciones (−). */
   'pago_gasto',
+  // ─── LEGADO: ya no se capturan ───
+  // Los cuatro siguientes eran los conceptos fijos del alta manual. Se
+  // retiraron de la captura por decisión del cliente: el signo forzado de
+  // préstamo y retiro peleaba con poder elegirlo, y el saldo inicial limitado a
+  // uno por bolsa impedía asentar los saldos que hicieran falta. Hoy todo eso se
+  // escribe libre y entra como 'movimiento'.
+  //
+  // Siguen aquí porque Postgres NO sabe quitar un valor de un enum: borrarlos
+  // obligaría a recrear el tipo, como tuvo que hacer la migración 0030 con
+  // `payment_method`. No hay ninguna fila con estos valores.
   /** Saldo con el que arranca la cuenta. Puede ser negativo. */
   'saldo_inicial',
   /** Dinero que entra sin documento detrás (+). */
@@ -734,37 +746,26 @@ export const cashFlowType = pgEnum('cash_flow_type', [
   /** Corrección manual de cuadre; cualquier signo. */
   'ajuste',
   /** Reversa de otro movimiento de dinero. */
-  'anulacion'
+  'anulacion',
+  /**
+   * Movimiento manual con concepto LIBRE, escrito por quien lo captura
+   * (`banks_movements.concept`): nómina, préstamo de un socio, compra de equipo…
+   * Cualquier signo, igual que `ajuste`.
+   *
+   * ⚠️ Va al FINAL de la lista a propósito: así la migración es un
+   * `ALTER TYPE … ADD VALUE` barato. Insertarlo en medio obligaría a recrear el
+   * enum entero, como tuvo que hacer la 0030 con `payment_method`.
+   *
+   * Los cuatro conceptos con nombre (`saldo_inicial`, `prestamo`, `retiro`,
+   * `ajuste`) NO se van: siguen existiendo porque cada uno lleva una regla que
+   * el texto libre no puede llevar —el signo fijo de préstamo y retiro, la
+   * unicidad del saldo inicial— y porque los reportes filtran por ellos. Lo que
+   * cambia es que ya no son la única opción.
+   */
+  'movimiento'
 ])
 
-/**
- * FLUJO DE DINERO — libro append-only, con saldo POR CUENTA.
- *
- * El saldo de una cuenta es `sum(amount) WHERE account_id = X`. El efectivo va
- * aparte: `account_id IS NULL` (decisión del cliente — el efectivo no está en
- * `bank_accounts`), así que su saldo es `sum(amount) WHERE account_id IS NULL`
- * y el global es la suma de todo.
- *
- * ⚠️ Lo que asienta dinero son los PAGOS, no los documentos. Una venta emitida
- * a crédito no mueve un peso hasta que se cobra; una entrada facturada no lo
- * mueve hasta que se paga. Por eso las tres ligas son a `sale_payments`,
- * `entry_payments` y `expense_payments`, y NO a `invoices` ni a
- * `stock_movements`. Consecuencia que hay que tener presente al leer reportes:
- * **este saldo no cuadra contra "ventas del periodo"** y no debe cuadrar — la
- * diferencia es justamente la cartera por cobrar y por pagar.
- *
- * Convención de signo, igual que el kardex (`stock_movements.quantity`):
- * **+ entra, − sale**. El saldo se saca sumando `amount`; nunca hay que mirar
- * el `type` para saber el sentido.
- *
- * `store_id` es procedencia informativa (de qué sucursal salió el documento) y
- * es NULLABLE: un saldo inicial o un retiro no son de ninguna tienda. El saldo
- * es por CUENTA, no por sucursal.
- *
- * ⚠️ Append-only, como el kardex: una fila asentada no se edita ni se borra.
- * Revertir es agregar una `anulacion` con el importe invertido y `reverses_id`
- * apuntando al original.
- */
+
 export const banksMovements = pgTable(
   'banks_movements',
   {
@@ -807,6 +808,8 @@ export const banksMovements = pgTable(
     ),
     /** Cómo entró/salió el dinero. Snapshot del método del pago. */
     method: paymentMethod('method'),
+
+    concept: text('concept'),
     note: text('note'),
     createdBy: uuid('created_by')
       .notNull()
@@ -818,11 +821,7 @@ export const banksMovements = pgTable(
   (t) => [
     // Saldo corrido por cuenta y filtros por periodo.
     index('banks_movements_account_occurred_idx').on(t.accountId, t.occurredAt),
-    index('banks_movements_occurred_idx').on(t.occurredAt),
-    // ⚠️ Idempotencia, no adorno: un abono asienta UN solo movimiento de dinero.
-    // Sin esto, un doble clic o un reintento mete el mismo cobro dos veces y el
-    // saldo queda inflado sin rastro de por qué. En Postgres los NULL no chocan
-    // entre sí, así que no estorba a los manuales ni a las anulaciones.
+ 
     unique('banks_movements_sale_payment_uniq').on(t.salePaymentId),
     unique('banks_movements_entry_payment_uniq').on(t.entryPaymentId),
     unique('banks_movements_expense_payment_uniq').on(t.expensePaymentId),
@@ -849,6 +848,11 @@ export const banksMovements = pgTable(
     check(
       'banks_movements_reversal_typed',
       sql`(${t.type} = 'anulacion') = (${t.reversesId} IS NOT NULL)`
+    ),
+ 
+    check(
+      'banks_movements_concept_required',
+      sql`${t.type}::text <> 'movimiento' OR (${t.concept} IS NOT NULL AND btrim(${t.concept}) <> '')`
     )
   ]
 ).enableRLS()
@@ -1109,6 +1113,10 @@ export const ticketsRelations = relations(tickets, ({ one }) => ({
   movement: one(stockMovements, {
     fields: [tickets.movementId],
     references: [stockMovements.id]
+  }),
+  expense: one(expenses, {
+    fields: [tickets.expenseId],
+    references: [expenses.id]
   })
 }))
 
@@ -1127,7 +1135,8 @@ export const expensesRelations = relations(expenses, ({ one, many }) => ({
   store: one(stores, { fields: [expenses.storeId], references: [stores.id] }),
   createdBy: one(profiles, { fields: [expenses.createdBy], references: [profiles.id] }),
   items: many(expenseItems),
-  payments: many(expensePayments)
+  payments: many(expensePayments),
+  tickets: many(tickets)
 }))
 
 export const expenseItemsRelations = relations(expenseItems, ({ one }) => ({

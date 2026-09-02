@@ -181,6 +181,130 @@ export interface NewBankAccountInput {
   cardLast4?: string | null
 }
 
+// ───────────────────────────────────────────────
+//  FLUJO DE DINERO (banks_movements)
+// ───────────────────────────────────────────────
+
+/**
+ * Clasificación de un movimiento de dinero (enum `cash_flow_type`).
+ *
+ * ⚠️ NO es lo que el usuario escribe. El concepto que se ve en pantalla es
+ * `ApiBanksMovement.concept` (texto libre); esto es la clasificación que entiende
+ * la base y de la que dependen el signo permitido y los reportes. `movimiento` es
+ * justamente "concepto libre, sin regla propia".
+ */
+export type CashFlowType =
+  | 'cobro_venta'
+  | 'pago_entrada'
+  | 'pago_gasto'
+  | 'saldo_inicial'
+  | 'prestamo'
+  | 'retiro'
+  | 'ajuste'
+  | 'anulacion'
+  | 'movimiento'
+
+export const CASH_FLOW_LABELS: Record<CashFlowType, string> = {
+  cobro_venta: 'Cobro de venta',
+  pago_entrada: 'Pago de entrada',
+  pago_gasto: 'Pago de gasto',
+  saldo_inicial: 'Saldo inicial',
+  prestamo: 'Préstamo',
+  retiro: 'Retiro',
+  ajuste: 'Ajuste',
+  anulacion: 'Anulación',
+  movimiento: 'Movimiento'
+}
+
+/**
+ * Semilla de sugerencias del campo de concepto, para cuando el libro todavía no
+ * tiene ninguno propio.
+ *
+ * ⚠️ Son texto, NO conceptos reservados: el servidor no los reconoce ni les
+ * aplica ninguna regla. Escribir "Saldo inicial" dos veces en la misma cuenta es
+ * válido, igual que escribir cualquier otra cosa. Están aquí solo para que el
+ * primer movimiento no arranque con el campo en blanco.
+ */
+export const SUGGESTED_CASH_FLOW_CONCEPTS = ['Saldo inicial'] as const
+
+/** Movimiento de dinero tal como lo lista `GET /api/banks-movements`. */
+export interface ApiBanksMovement {
+  id: number
+  type: CashFlowType
+  /**
+   * Concepto escrito por quien lo capturó. NULL en los que asienta un pago: ahí
+   * el concepto es la etiqueta del `type` y el folio va en `note`.
+   */
+  concept: string | null
+  /** numeric → string, CON signo: + entra, − sale. Nunca mirar `type` para el sentido. */
+  amount: string
+  occurredAt: string
+  /** null = efectivo, que es su propia bolsa (el efectivo no es una cuenta). */
+  accountId: number | null
+  accountLabel: string | null
+  storeId: number | null
+  storeCode: string | null
+  storeName: string | null
+  method: PaymentMethod | null
+  note: string | null
+  /** De dónde salió el movimiento, ya resuelto por el endpoint. */
+  source: 'venta' | 'entrada' | 'gasto' | 'anulacion' | 'manual'
+  reversesId: number | null
+  createdByName: string | null
+  createdAt: string
+}
+
+/** Saldo de una bolsa: una cuenta bancaria, o el efectivo (`accountId: null`). */
+export interface ApiCashFlowBalance {
+  accountId: number | null
+  label: string
+  isActive: boolean
+  movements: number
+  balance: number
+}
+
+/**
+ * Respuesta de `GET /api/banks-movements`.
+ *
+ * ⚠️ Siempre viene envuelta, con o sin `?page` (a diferencia del resto de los
+ * listados). `balances` es la historia COMPLETA de cada bolsa e ignora los
+ * filtros; `filteredNet` es el neto de lo filtrado y no es un saldo.
+ */
+export interface ApiBanksMovementsPage {
+  data: ApiBanksMovement[]
+  total: number
+  page: number
+  pageSize: number
+  filteredNet: number
+  balances: ApiCashFlowBalance[]
+  globalBalance: number
+  /** Conceptos ya usados, para sugerirlos al capturar. Ignora los filtros. */
+  concepts: string[]
+  /**
+   * Clasificaciones presentes en el libro, para el filtro. Es la lista real, no
+   * el enum completo: el enum conserva valores que ya no se capturan.
+   */
+  types: CashFlowType[]
+}
+
+/** Cuerpo para capturar un movimiento manual (`POST /api/banks-movements`, admin). */
+export interface NewBanksMovementInput {
+  /** Texto libre. El servidor deriva de aquí el `type` que guarda la base. */
+  concept: string
+  /** SIEMPRE positivo: el signo lo pone `direction` (o el concepto). */
+  amount: number
+  /**
+   * Obligatorio salvo cuando el concepto ya fija el sentido (Préstamo, Retiro).
+   * Mandarlo al revés en esos dos se rechaza con 400 en vez de invertirse solo.
+   */
+  direction?: 'in' | 'out'
+  occurredAt: string
+  method?: PaymentMethod
+  accountId?: number | null
+  storeId?: number | null
+  note?: string
+}
+
 /** Categoría tal como la devuelve `GET /api/categories`. */
 export interface ApiCategory {
   id: number
@@ -319,10 +443,11 @@ export type TicketStatus = 'abierto' | 'aprobado' | 'rechazado'
 
 /**
  * Documento al que apunta el ticket (enum `ticket_target`):
- * `factura` = venta, `movimiento` = entrada de stock. Cada uno tiene su
- * pantalla: /tickets/ventas y /tickets/entradas.
+ * `factura` = venta, `movimiento` = entrada de stock, `gasto` = gasto
+ * operativo. Cada uno tiene su pantalla: /tickets/ventas, /tickets/entradas y
+ * /tickets/gastos.
  */
-export type TicketTarget = 'factura' | 'movimiento'
+export type TicketTarget = 'factura' | 'movimiento' | 'gasto'
 
 /** Ticket de corrección tal como lo lista `GET /api/tickets`. */
 export interface ApiTicket {
@@ -346,6 +471,14 @@ export interface ApiTicket {
   movementQuantity: string | null
   movementTotal: string | null
   movementSupplierInvoice: string | null
+  // ─── target 'gasto' ───
+  expenseId: number | null
+  expenseSupplier: string | null
+  expenseInvoiceNumber: string | null
+  expenseStatus: ExpenseStatus | null
+  /** numeric → string. Lo que se debía pagar (subtotal + IVA − retenciones). */
+  expenseTotal: string | null
+  expensePaidAt: string | null
   raisedByName: string | null
   resolvedByName: string | null
   resolutionNote: string | null
@@ -679,9 +812,29 @@ export const EXPENSE_TYPE_LABELS: Record<ExpenseType, string> = {
 }
 
 
-export type PaymentStatus = 'pendiente' | 'parcial' | 'pagado'
+export type PaymentStatus = 'pendiente' | 'parcial' | 'pagado' | 'anulada'
 /** @deprecated usa PaymentStatus */
 export type ExpensePaymentStatus = PaymentStatus
+
+export const EXPENSE_PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  pendiente: 'Pendiente',
+  parcial: 'Parcial',
+  pagado: 'Pagado',
+  anulada: 'Anulado'
+}
+
+export const EXPENSE_PAYMENT_STATUS_COLORS: Record<
+  PaymentStatus,
+  'success' | 'warning' | 'error' | 'neutral'
+> = {
+  pendiente: 'error',
+  parcial: 'warning',
+  pagado: 'success',
+  anulada: 'neutral'
+}
+
+/** Estado de un gasto (enum `expense_status`). `anulado` = corregido. */
+export type ExpenseStatus = 'emitido' | 'anulado'
 
 /** Línea de concepto de un gasto. */
 export interface ApiExpenseItem {
@@ -720,6 +873,12 @@ export interface ApiExpense {
   payers: string[]
   paidAt: string
   note: string | null
+  /** `anulado` = corregido: se le borraron los pagos y ya no se puede editar. */
+  status: ExpenseStatus
+  voidedAt: string | null
+  voidReason: string | null
+  /** true si hay un ticket de corrección ABIERTO para este gasto. */
+  pendingCorrection: boolean
   createdByName: string | null
   createdAt: string
 }

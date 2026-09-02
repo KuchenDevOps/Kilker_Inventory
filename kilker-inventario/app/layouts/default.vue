@@ -16,8 +16,16 @@ const isSection = (e: NavEntry): e is NavSection => 'section' in e
 
 // Estructura en secciones: Dashboard suelto; el resto agrupado (plegable).
 const allNav: NavEntry[] = [
-  { label: 'Dashboard', to: '/dashboard', icon: 'i-lucide-layout-dashboard' },
   { label: 'Dashboard Resultados', to: '/dashboardresultados', icon: 'i-lucide-layout-dashboard' },
+  {
+    label: 'Dashboard Flujo',
+    to: '/dashboardbanco',
+    icon: 'i-lucide-layout-dashboard',
+    // Espejo del `requiresRole` de la página: esconder el enlace no es el
+    // candado (el guard y los endpoints lo son), pero sin esto el empleado ve
+    // en el menú una entrada que lo rebota.
+    roles: ['admin', 'observador', 'admin_tienda']
+  },
   {
     section: 'Productos',
     icon: 'i-lucide-package',
@@ -141,6 +149,12 @@ const allNav: NavEntry[] = [
         to: '/gastos',
         icon: 'i-lucide-credit-card',
         roles: ['admin', 'admin_tienda', 'empleado', 'observador']
+      },
+      {
+        label: 'Correcciones',
+        to: '/tickets/gastos',
+        icon: 'i-lucide-ticket',
+        roles: ['admin', 'admin_tienda', 'empleado', 'observador']
       }
     ]
   },
@@ -154,6 +168,12 @@ const allNav: NavEntry[] = [
         label: 'Cuentas bancarias',
         to: '/cuentas',
         icon: 'i-lucide-landmark',
+        roles: ['admin', 'observador']
+      },
+      {
+        label: 'Movimientos de banco',
+        to: '/cuentas/movimientos',
+        icon: 'i-lucide-arrow-left-right',
         roles: ['admin', 'observador']
       }
     ]
@@ -258,7 +278,7 @@ async function logout() {
         <!-- Logotipo de marca. Dos archivos porque es tinta plana sobre
              transparente: el azul desaparece sobre el fondo oscuro de Nuxt UI,
              así que el modo oscuro usa la misma silueta en blanco. -->
-        <NuxtLink to="/dashboard" class="flex items-center gap-2">
+        <NuxtLink :to="HOME_ROUTE" class="flex items-center gap-2">
           <img
             src="/kilker-logo.png"
             alt="Kilker Industrial Coatings"

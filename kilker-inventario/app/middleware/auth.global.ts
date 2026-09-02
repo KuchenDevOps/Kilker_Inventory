@@ -19,7 +19,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
 
   // Con sesión activa, /login redirige al panel.
-  if (to.path === '/login') return navigateTo('/dashboard')
+  if (to.path === '/login') return navigateTo(HOME_ROUTE)
 
   // Rutas que exigen rol (definePageMeta requiresRole). Acepta un rol o una
   // lista: /tiendas y /empleados los ve admin y observador (este último en
@@ -41,8 +41,12 @@ export default defineNuxtRouteMiddleware(async (to) => {
     }
   }
 
-  // Sin el rol requerido → al dashboard.
+  // Sin el rol requerido → a la pantalla de entrada.
+  //
+  // ⚠️ `HOME_ROUTE` NO debe declarar `requiresRole`: es el destino de este
+  // rebote, así que si ella misma pudiera rechazar a alguien, ese usuario
+  // quedaría rebotando entre las dos rutas en vez de ver un 403.
   if (!me.value || !allowedRoles.includes(me.value.role)) {
-    return navigateTo('/dashboard')
+    return navigateTo(HOME_ROUTE)
   }
 })
