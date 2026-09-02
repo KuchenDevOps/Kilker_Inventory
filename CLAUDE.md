@@ -344,10 +344,20 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
 - **Costeo FIFO** — motor único en **`server/utils/fifoEngine.ts`**. Reconstruye capas de
   costo desde el histórico completo (entradas, transferencias, ajustes, anulaciones y
   ventas emitidas, ordenadas por fecha efectiva —`supplier_invoice_date` cuando existe—).
-  Lo consumen `monthlyInventory.ts` (valuación), `topProducts.ts` (costo de lo vendido) e
-  `inventoryFifo.ts` (transferencias, vía `getFifoUnitCost`). **Estaba triplicado y las
+  Lo consumen `monthlyInventory.ts` (valuación), `topProducts.ts` (costo de lo vendido),
+  `inventoryFifo.ts` (transferencias, vía `getFifoUnitCost`) y **los dos endpoints
+  `inventory-value`** (`api/reports/inventory-value.get.ts` y
+  `api/products/:id/inventory-value.get.ts`, que alimentan el catálogo: su exportación de
+  valor de inventario, el desglose por sucursal al expandir un producto y el filtro
+  "existencia a una fecha"). **Estaba triplicado y las
   tres copias divergían**, y de ahí salía el descuadre entre el inventario final y
-  "inicial + compras − costo". Dos reglas no obvias:
+  "inicial + compras − costo". ⚠️ Los dos `inventory-value` fueron la **cuarta y quinta
+  copias**, unificadas después: valuaban las ventas sin existencia restando unidades pero
+  **no valor**, así que la compra que cubría el faltante entraba entera al inventario y el
+  catálogo valuaba 5 piezas al importe de 6. Contra la base real el catálogo salía
+  **$440.81 por encima** del dashboard (3 productos con faltante). **Ninguna pantalla debe
+  volver a costear a mano: si necesitas valor de inventario, llama al motor.**
+  Dos reglas no obvias:
   - **Vender sin existencia deja una deuda explícita** (capa negativa), costeada con la
     compra que termina cubriéndola. Antes el faltante se cobraba a *precio de venta* en el
     costo y el inventario lo borraba de golpe cuando el saldo volvía a cero, sin dejar

@@ -364,7 +364,6 @@ async function exportInventoryValue() {
     </UButton>
 
     <UButton
-      v-if="isAdmin"
       icon="i-lucide-file-spreadsheet"
       color="neutral"
       variant="subtle"

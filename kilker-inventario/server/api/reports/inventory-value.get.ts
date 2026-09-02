@@ -1,19 +1,16 @@
 // GET /api/reports/inventory-value?storeId=&asOf=
 // Valor de inventario "a hoy" (o a una fecha de corte) por producto y sucursal.
+//
+// ⚠️ El costeo NO se implementa aquí: se delega en `server/utils/fifoEngine.ts`,
+// el mismo motor que valúa el dashboard. Este endpoint tenía su propia copia del
+// FIFO y divergía justo donde más duele: una venta sin existencia solo restaba
+// unidades y nunca dejaba deuda, así que la compra que la cubría entraba entera
+// al valor y el catálogo valuaba 5 piezas al importe de 6. Contra la base real
+// eso inflaba el total del catálogo en $440.81 frente al dashboard.
 import { and, eq, lt } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { invoices, stockMovements } from '../../db/schema'
-import { voidEffectiveDate } from '../../utils/fifoEngine'
-import { effectiveMovementDate } from '../../utils/movementDates'
-
-const EPSILON = 0.0005 
-
-interface Transaction {
-  date: Date
-  type: 'entrada' | 'salida'
-  quantity: number
-  unitValue: number
-}
+import { buildFifoEvents, runFifo } from '../../utils/fifoEngine'
 
 export default defineEventHandler(async (event) => {
   const profile = await requireProfile(event)
@@ -50,9 +47,10 @@ export default defineEventHandler(async (event) => {
     with: { transfer: { columns: { issuedAt: true, receivedAt: true, status: true } } }
   })
 
-  const movementTypeById = new Map(allMovements.map((m) => [m.id, m.type]))
-  // Para fechar cada anulación con la entrada que revierte (ver voidEffectiveDate).
-  const movementById = new Map(allMovements.map((m) => [m.id, m]))
+  // Qué tipo de movimiento revierte cada 'anulacion': el motor solo procesa las
+  // que revierten una ENTRADA (la de una venta ya quedó fuera al filtrar
+  // invoices.status = 'emitida').
+  const movementTypeById = new Map(allMovements.map((m) => [m.id, m.type as string]))
 
   const invoiceFilters = [eq(invoices.status, 'emitida'), lt(invoices.issuedAt, asOf)]
   if (storeIds && storeIds.length === 1) {
@@ -95,87 +93,36 @@ export default defineEventHandler(async (event) => {
 
     const productMovements = movementsByKey.get(key) ?? []
     const productSales = salesByKey.get(key) ?? []
-    const transactions: Transaction[] = []
 
-    for (const m of productMovements) {
-      // Transferencia cancelada: se ignoran la salida y su reversa, para que
-      // el FIFO quede como si nunca hubiera salido (mismo criterio que
-      // monthlyInventory y inventoryFifo).
-      if (m.transfer?.status === 'cancelada') continue
+    const fifo = runFifo(
+      buildFifoEvents(
+        productMovements.map((m) => ({
+          id: m.id,
+          type: m.type,
+          quantity: m.quantity,
+          unitValue: m.unitValue,
+          supplierInvoiceDate: m.supplierInvoiceDate,
+          reversesMovementId: m.reversesMovementId,
+          createdAt: m.createdAt,
+          transferIssuedAt: m.transfer?.issuedAt ?? null,
+          transferReceivedAt: m.transfer?.receivedAt ?? null,
+          transferStatus: m.transfer?.status ?? null
+        })),
+        productSales.map((s) => ({
+          issuedAt: s.issuedAt,
+          quantity: s.quantity,
+          unitPrice: s.unitValue
+        })),
+        movementTypeById
+      ),
+      { to: asOf }
+    )
 
-      if (m.type === 'entrada') {
-        const date = effectiveMovementDate(m)
-        if (date < asOf) transactions.push({ date, type: 'entrada', quantity: Number(m.quantity), unitValue: Number(m.unitValue) })
-      }
-      if (m.type === 'transferencia_entrada' && m.transfer?.receivedAt && m.transfer.receivedAt < asOf) {
-        transactions.push({ date: m.transfer.receivedAt, type: 'entrada', quantity: Number(m.quantity), unitValue: Number(m.unitValue) })
-      }
-      if (m.type === 'transferencia_salida' && m.transfer?.issuedAt && m.transfer.issuedAt < asOf) {
-        transactions.push({ date: m.transfer.issuedAt, type: 'salida', quantity: Math.abs(Number(m.quantity)), unitValue: Number(m.unitValue) })
-      }
-      if (m.type === 'anulacion') {
-        const originalType = m.reversesMovementId ? movementTypeById.get(m.reversesMovementId) : undefined
-        if (originalType === 'entrada') {
-          // Fecha de la entrada que revierte, igual que el motor FIFO. Con
-          // `created_at` la entrada anulada seguía viva en cualquier corte
-          // anterior a la anulación.
-          const date = voidEffectiveDate(
-            m,
-            m.reversesMovementId != null ? movementById.get(m.reversesMovementId) : undefined
-          )
-          if (date < asOf) {
-            transactions.push({ date, type: 'salida', quantity: Math.abs(Number(m.quantity)), unitValue: Number(m.unitValue) })
-          }
-        }
-      }
-      if (m.type === 'ajuste') {
-        const date = effectiveMovementDate(m)
-        if (date < asOf) {
-          const qty = Number(m.quantity)
-          if (qty > 0) transactions.push({ date, type: 'entrada', quantity: qty, unitValue: Number(m.unitValue) })
-          else if (qty < 0) transactions.push({ date, type: 'salida', quantity: Math.abs(qty), unitValue: Number(m.unitValue) })
-        }
-      }
-    }
-
-    for (const s of productSales) {
-      if (s.issuedAt < asOf) transactions.push({ date: s.issuedAt, type: 'salida', quantity: s.quantity, unitValue: s.unitValue })
-    }
-
-    transactions.sort((a, b) => a.date.getTime() - b.date.getTime())
-
-    const layers: Array<{ qty: number; unitCost: number }> = []
-    let remainingQty = 0
-
-     for (const txn of transactions) {
-      if (txn.type === 'entrada') {
-        layers.push({ qty: txn.quantity, unitCost: txn.unitValue })
-        remainingQty += txn.quantity
-      } else {
-        let qtyToConsume = txn.quantity
-        let index = 0
-        while (qtyToConsume > EPSILON && index < layers.length) {
-          const layer = layers[index]
-          if (!layer) break
-          const consume = Math.min(layer.qty, qtyToConsume)
-          layer.qty -= consume
-          qtyToConsume -= consume
-          remainingQty -= consume
-          if (layer.qty <= EPSILON) index++
-        }
-        layers.splice(0, index)
-        if (qtyToConsume > EPSILON) remainingQty -= qtyToConsume
-      }
-    }
-
-    if (remainingQty === 0 && !layers.length) continue // sin existencia, no reportar
-
-    const endingUnits = Math.round(remainingQty * 1000) / 1000
-    const rawValue = layers.reduce((sum, l) => sum + l.qty * l.unitCost, 0)
+    const endingUnits = Math.round(fifo.endingUnits * 1000) / 1000
 
     // Candado: si la existencia redondeada da 0, el valor SIEMPRE es 0 —
-    // sin importar si quedó un residuo de punto flotante en `layers`.
-    const endingValue = endingUnits === 0 ? 0 : Math.round(rawValue * 100) / 100
+    // sin importar si quedó un residuo de punto flotante en las capas.
+    const endingValue = endingUnits === 0 ? 0 : Math.round(fifo.endingValue * 100) / 100
 
     if (endingUnits === 0 && endingValue === 0) continue // sin existencia, no reportar
 
