@@ -14,7 +14,7 @@ useHead({ title: 'Historial de entradas · Inventario Kilker' })
 const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { movements, total, page, pageSize, pending, error, storeId, from, to, search, refresh } = useMovementsHistory()
+const { movements, total, totals, page, pageSize, pending, error, storeId, from, to, search, refresh } = useMovementsHistory()
 
 
 const { data: stores } = useStores()
@@ -38,6 +38,21 @@ const storeFilter = computed({
 
 const qtyFmt = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 3 })
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
+
+// ───────────────────────────────────────────────
+//  SUMATORIA DEL FILTRO (tarjeta)
+// ───────────────────────────────────────────────
+// ⚠️ La calcula el SERVIDOR sobre todo el filtro. Sumar `movements` daría el
+// total de la página visible y cambiaría al paginar. Las entradas anuladas no
+// suman (su mercancía se revirtió), pero se informan para que la tarjeta cuadre
+// con el listado, que sí las muestra.
+const totalHint = computed(() => {
+  const n = totals.value.activeCount
+  const base = `${n} entrada${n === 1 ? '' : 's'} · costo sin IVA`
+  if (!totals.value.voidedCount) return base
+  const v = totals.value.voidedCount
+  return `${base} · ${v} anulada${v === 1 ? '' : 's'} fuera (${currency.format(totals.value.voidedAmount)})`
+})
 
 // Folio, Fecha, Producto, Sucursal, Cantidad, Total, Factura prov., Fecha
 // factura, Registró y Pago; + Acciones para quien pueda escribir (admin anula
@@ -427,6 +442,16 @@ async function exportAll() {
       title="No se pudo cargar el historial"
       :description="error"
     />
+    <!-- Sumatoria del filtro completo (la calcula el servidor, no la página). -->
+    <div class="grid gap-3 sm:grid-cols-2">
+      <TarjetaTotal
+        label="Total de entradas"
+        icon="i-lucide-package-plus"
+        :amount="totals.activeAmount"
+        :hint="totalHint"
+        :loading="pending"
+      />
+    </div>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">
@@ -469,7 +494,7 @@ async function exportAll() {
         <span class="text-muted">{{ m.unit ?? '' }}</span>
       </td>
       <td class="px-4 py-3 text-right tabular-nums">
-        {{ qtyFmt.format(Number(m.totalValue)) }}
+        {{ currency.format(Number(m.totalValue)) }}
       </td>
       <td class="px-4 py-3 text-muted">{{ m.supplierInvoiceNumber ?? '—' }}</td>
       <td class="px-4 py-3 text-muted whitespace-nowrap">

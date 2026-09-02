@@ -588,6 +588,30 @@ export interface ApiSaleDetail
   items: ApiSaleItem[]
 }
 
+/**
+ * Sumatoria de `GET /api/sales?page=…`, sobre TODO el filtro (no la página).
+ *
+ * ⚠️ La venta del negocio es `issuedAmount`: las anuladas van aparte porque no
+ * son ingreso (devolvieron la mercancía y perdieron sus abonos), pero se
+ * informan para que la pantalla pueda decir cuánto quedó fuera.
+ * Va sin IVA — el 16% de las ventas es informativo y lo pone el cliente
+ * (`ivaOf`), no la base.
+ */
+export interface ApiSalesTotals {
+  issuedCount: number
+  issuedAmount: number
+  voidedCount: number
+  voidedAmount: number
+}
+
+export interface ApiSalesPage {
+  data: ApiSale[]
+  total: number
+  page: number
+  pageSize: number
+  totals: ApiSalesTotals
+}
+
 /** Entrada de stock tal como la lista `GET /api/movements`. Los numeric → string. */
 export interface ApiMovement {
   id: number
@@ -615,6 +639,29 @@ export interface ApiMovement {
   balance: number
   /** Derivado en el servidor, no vive en la BD. `anulada` gana sobre el resto. */
   paymentStatus: EntryPaymentStatus
+}
+
+/**
+ * Sumatoria de `GET /api/movements?page=…`, sobre TODO el filtro (no la
+ * página). `activeAmount` es el costo capturado (`total_value`), sin IVA.
+ *
+ * ⚠️ "Anulada" no es una columna: el servidor la deriva de que exista una
+ * `anulacion` que revierte la entrada (kardex append-only). Las anuladas no
+ * suman al total y se informan aparte.
+ */
+export interface ApiMovementsTotals {
+  activeCount: number
+  activeAmount: number
+  voidedCount: number
+  voidedAmount: number
+}
+
+export interface ApiMovementsPage {
+  data: ApiMovement[]
+  total: number
+  page: number
+  pageSize: number
+  totals: ApiMovementsTotals
 }
 
 export type EntryPaymentStatus = 'pendiente' | 'parcial' | 'pagado' | 'anulada'
@@ -883,11 +930,31 @@ export interface ApiExpense {
   createdAt: string
 }
 
+/**
+ * Sumatoria de `GET /api/expenses?page=…`, sobre TODO el filtro (no la página).
+ *
+ * ⚠️ A diferencia de las ventas, aquí el IVA NO es informativo: sale de las
+ * columnas generadas de la base (`iva`, `total_to_pay`), así que `subtotal +
+ * iva − retenciones = totalToPay`. Los gastos ANULADOS quedan fuera (igual que
+ * en el dashboard) y se informan aparte.
+ */
+export interface ApiExpensesTotals {
+  issuedCount: number
+  /** Suma de `amount`: el subtotal, sin IVA ni retenciones. */
+  subtotal: number
+  iva: number
+  /** Lo que realmente se paga: subtotal + IVA − retenciones. */
+  totalToPay: number
+  voidedCount: number
+  voidedSubtotal: number
+}
+
 export interface ApiExpensesPage {
   data: ApiExpense[]
   total: number
   page: number
   pageSize: number
+  totals: ApiExpensesTotals
 }
 
 /** Línea de concepto para alta/edición (`POST` / `PATCH`). */

@@ -310,11 +310,31 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   mande `?all=true`, y lo hace en silencio (devuelve un arreglo que parece completo). Por
   eso las exportaciones de `/ventas` salían truncadas. Usar siempre `useAllSales()`
   (`useInventoryApi.ts`), que manda el flag, en vez de pegarle al endpoint a mano.
+- ⚠️ **Sumatorias de los listados: las calcula el SERVIDOR, no la página.**
+  `GET /api/sales`, `/api/movements` y `/api/expenses` devuelven, junto a la página,
+  un `totals` agregado sobre **todo el filtro** (`count(*) filter (…)` en la misma
+  pasada que el `count()` de paginación). Las pantallas lo pintan con
+  `app/components/TarjetaTotal.vue`. **No sumes el arreglo que llega**: son listados
+  paginados de 100 filas, así que eso daría el total de la página y cambiaría al pasar
+  a la siguiente — es justo el `totalsSummary` muerto que se borró de `/gastos`.
+  Tres reglas del agregado:
+  - **Lo anulado no suma** (venta anulada, entrada revertida, gasto anulado) pero **se
+    informa aparte** (`voided*`): la tarjeta dice cuánto quedó fuera, porque el listado
+    de abajo sí muestra esas filas y si no cuadran a ojo parece un error.
+  - En **entradas** "anulada" no es una columna: se deriva con un `not exists` sobre la
+    `anulacion` que la revierte (kardex append-only), sobre todo el filtro y no solo
+    sobre los ids de la página.
+  - En **gastos** el IVA sale de las columnas GENERADAS (`iva`, `total_to_pay`), nunca
+    recalculado; en **ventas** es informativo y lo pone el cliente con `ivaOf`
+    (`app/utils/iva.ts`, tasa única — estaba copiada en tres pantallas).
 - **Filtros compartidos:** `app/components/FiltroPeriodo.vue` y `FiltroCortePeriodo.vue`
   (Todo/Día/Semana/Mes sobre el periodo concreto elegido + búsqueda `?q`).
 - **Exportación a Excel** (SheetJS, en el cliente) desde catálogo (valor de inventario),
   historial de entradas e historial de ventas (hoja resumen + hoja de líneas), con dos
-  variantes: "Exportar todo" y "Exportar con filtro".
+  variantes: "Exportar todo" y "Exportar con filtro". El de ventas lleva **IVA (16%) y
+  Total con IVA** en la hoja `Resumen` (por bucket) y en la hoja `Ventas` (por factura);
+  el IVA del bucket se saca del total del bucket, **no** sumando el IVA factura por
+  factura (redondear y luego sumar deja centavos contra "Total con IVA").
   ⚠️ **Exportar es una LECTURA: la ven todos los roles**, incluido el observador. El botón
   del catálogo vivía dentro del `v-if="canManageCatalog"` de "Nuevo producto" y por eso el
   empleado no podía bajar el Excel aunque el endpoint sí se lo permitía; son permisos
@@ -450,6 +470,15 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   reconstruyéndolo.
 - **IVA (16%) es informativo y se calcula en la app**, no se guarda en la BD: en el detalle
   de venta y en gastos. Las ventas se registran sin desglose fiscal (no hay CFDI/SAT).
+- ⚠️ **`stock_movements.unit_value` lleva SEIS decimales (`numeric(18,6)`), no dos.**
+  No es un precio: es un costo **calculado**, casi siempre un promedio ponderado de
+  varias capas FIFO (`getFifoUnitCost` = costo total / unidades). Con dos decimales ese
+  promedio se redondeaba al guardarlo y, como el motor valúa cada capa haciendo
+  `quantity * unit_value`, la capa que nacía en la sucursal destino no valía lo mismo
+  que el costo que salió del origen: la transferencia **creaba o destruía centavos de
+  inventario** que no venían de ninguna compra. `total_value` sube con él para que
+  `unit_value * quantity = total_value` siga siendo exacto — si no, la suma nominal de
+  los reportes se vuelve a separar de la valuación FIFO por el otro lado.
 - **Transferencias en dos fases.** Al crearlas descuentan el origen y quedan
   `en_transito`; el destino (o un admin) confirma la recepción y ahí se suma el inventario
   destino; cancelar repone el origen. Un empleado solo despacha desde su tienda y solo

@@ -12,9 +12,9 @@ import type { PdfContent, PdfDocDefinition } from 'pdfmake/build/pdfmake'
 import type { ApiSaleDetail } from '~/types/inventario'
 import { PAYMENT_LABELS } from '~/types/inventario'
 import { groupSaleItemsByKit } from './ticket'
-
-/** El IVA es informativo y se calcula en la app; no vive en la BD. */
-const IVA_RATE = 0.16
+// El IVA es informativo y se calcula en la app; no vive en la BD. La tasa vive
+// en un solo lugar (`utils/iva.ts`), no una copia por pantalla.
+import { ivaOf } from './iva'
 
 /** Equivalentes de los tokens de Nuxt UI que usa el modal. */
 const MUTED = '#6b7280'
@@ -100,7 +100,7 @@ export function buildSaleTicketDoc(
    *  todas las líneas, así que un kit se descuenta completo. */
   const discountFactor = 1 - Number(sale.discountPct ?? 0) / 100
   const hasDiscount = Number(sale.discountAmount) > 0
-  const iva = Number(sale.totalAmount) * IVA_RATE
+  const iva = ivaOf(Number(sale.totalAmount))
   const isVoided = sale.status === 'anulada'
 
   // Tabla de líneas: el kit va como renglón sombreado con su nombre y SKU, y
