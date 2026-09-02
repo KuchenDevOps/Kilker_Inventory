@@ -1,6 +1,10 @@
 import type {
   ApiMovement,
+  ApiMovementsPage,
+  ApiMovementsTotals,
   ApiSale,
+  ApiSalesPage,
+  ApiSalesTotals,
   ApiTransfer,
   ApiUser,
   ApiTicket,
@@ -8,10 +12,31 @@ import type {
   TicketTarget
 } from '~/types/inventario'
 
+/**
+ * Sumatorias en cero. Se usan como estado inicial y como reset: mientras la
+ * petición está en vuelo (o falló) la tarjeta muestra $0, no la cifra del
+ * filtro anterior, que es peor que no mostrar nada.
+ */
+const ZERO_MOVEMENT_TOTALS: ApiMovementsTotals = {
+  activeCount: 0,
+  activeAmount: 0,
+  voidedCount: 0,
+  voidedAmount: 0
+}
+
+const ZERO_SALES_TOTALS: ApiSalesTotals = {
+  issuedCount: 0,
+  issuedAmount: 0,
+  voidedCount: 0,
+  voidedAmount: 0
+}
 
 export function useMovementsHistory() {
   const movements = useState<ApiMovement[]>('movements-history', () => [])
   const total = useState('movements-history-total', () => 0)
+  const totals = useState<ApiMovementsTotals>('movements-history-totals', () => ({
+    ...ZERO_MOVEMENT_TOTALS
+  }))
   const page = useState('movements-history-page', () => 1)
   const pageSize = useState('movements-history-pagesize', () => 100)
   const pending = useState('movements-history-pending', () => false)
@@ -27,6 +52,7 @@ export function useMovementsHistory() {
     if (!user.value) {
       movements.value = []
       total.value = 0
+      totals.value = { ...ZERO_MOVEMENT_TOTALS }
       return
     }
     pending.value = true
@@ -36,6 +62,7 @@ export function useMovementsHistory() {
       const token = data.session?.access_token
       if (!token) {
         movements.value = []
+        totals.value = { ...ZERO_MOVEMENT_TOTALS }
         return
       }
       const q = new URLSearchParams()
@@ -46,15 +73,17 @@ export function useMovementsHistory() {
       q.set('page', String(page.value))
       q.set('pageSize', String(pageSize.value))
 
-      const res = await $fetch<{ data: ApiMovement[]; total: number; page: number; pageSize: number }>(
+      const res = await $fetch<ApiMovementsPage>(
         `/api/movements?${q.toString()}`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       movements.value = res.data
       total.value = res.total
+      totals.value = res.totals ?? { ...ZERO_MOVEMENT_TOTALS }
     } catch (e) {
       error.value = apiErrorMessage(e)
       movements.value = []
+      totals.value = { ...ZERO_MOVEMENT_TOTALS }
     } finally {
       pending.value = false
     }
@@ -67,12 +96,13 @@ export function useMovementsHistory() {
     watch(page, () => void refresh())
   })
 
-  return { movements, total, page, pageSize, pending, error, storeId, from, to, search, refresh }
+  return { movements, total, totals, page, pageSize, pending, error, storeId, from, to, search, refresh }
 }
 
 export function useSalesHistory() {
   const sales = useState<ApiSale[]>('sales-history', () => [])
   const total = useState('sales-history-total', () => 0)
+  const totals = useState<ApiSalesTotals>('sales-history-totals', () => ({ ...ZERO_SALES_TOTALS }))
   const page = useState('sales-history-page', () => 1)
   const pageSize = useState('sales-history-pagesize', () => 100)
   const pending = useState('sales-history-pending', () => false)
@@ -90,6 +120,7 @@ export function useSalesHistory() {
     if (!user.value) {
       sales.value = []
       total.value = 0
+      totals.value = { ...ZERO_SALES_TOTALS }
       return
     }
     pending.value = true
@@ -99,6 +130,7 @@ export function useSalesHistory() {
       const token = data.session?.access_token
       if (!token) {
         sales.value = []
+        totals.value = { ...ZERO_SALES_TOTALS }
         return
       }
       const q = new URLSearchParams()
@@ -111,23 +143,27 @@ export function useSalesHistory() {
       q.set('page', String(page.value))
       q.set('pageSize', String(pageSize.value))
 
-      const res = await $fetch<{ data: ApiSale[]; total: number; page: number; pageSize: number } | ApiSale[]>(
+      const res = await $fetch<ApiSalesPage | ApiSale[]>(
   `/api/sales?${q.toString()}`,
   { headers: { Authorization: `Bearer ${token}` } }
 )
 
 if (Array.isArray(res)) {
-  // Respuesta sin envolver (no debería pasar con ?page, pero por si acaso)
+  // Respuesta sin envolver (no debería pasar con ?page, pero por si acaso).
+  // Sin sumatoria del servidor no se inventa una con la página: cero.
   sales.value = res
   total.value = res.length
+  totals.value = { ...ZERO_SALES_TOTALS }
 } else {
   sales.value = res?.data ?? []
   total.value = res?.total ?? 0
+  totals.value = res?.totals ?? { ...ZERO_SALES_TOTALS }
 }
 
     } catch (e) {
       error.value = apiErrorMessage(e)
       sales.value = []
+      totals.value = { ...ZERO_SALES_TOTALS }
     } finally {
       pending.value = false
     }
@@ -138,7 +174,7 @@ if (Array.isArray(res)) {
     watch(page, () => void refresh())
   })
 
-  return { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
+  return { sales, total, totals, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
 }
 
 export function useTransferHistory() {

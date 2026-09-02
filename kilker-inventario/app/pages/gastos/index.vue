@@ -9,7 +9,7 @@ import {
   EXPENSE_PAYMENT_STATUS_COLORS,
   type ExpenseType
 } from '~/types/inventario'
-const { expenses, total, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh } = useExpenses()
+const { expenses, total, totals, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -51,7 +51,33 @@ function fmtDate(s: string | null | undefined) {
   return dateFmt.format(d)
 }
 
-const IVA_RATE = 0.16
+// ───────────────────────────────────────────────
+//  SUMATORIA DEL FILTRO (tarjetas)
+// ───────────────────────────────────────────────
+// ⚠️ La calcula el SERVIDOR sobre todo el filtro; sumar `expenses` daría el
+// total de la página visible. Aquí el IVA NO es informativo como en ventas:
+// sale de las columnas generadas de la base, y `subtotal + iva − retenciones`
+// es lo que de verdad se paga (`totalToPay`).
+const totalHint = computed(() => {
+  const n = totals.value.issuedCount
+  const base = `${n} gasto${n === 1 ? '' : 's'} · sin IVA ni retenciones`
+  if (!totals.value.voidedCount) return base
+  const v = totals.value.voidedCount
+  return `${base} · ${v} anulado${v === 1 ? '' : 's'} fuera (${currency.format(totals.value.voidedSubtotal)})`
+})
+
+/** Diferencia entre subtotal + IVA y lo pagable: son las retenciones. */
+const retentionsTotal = computed(() =>
+  Math.round((totals.value.subtotal + totals.value.iva - totals.value.totalToPay) * 100) / 100
+)
+
+const ivaHint = computed(() => {
+  const pagable = `A pagar ${currency.format(totals.value.totalToPay)}`
+  if (retentionsTotal.value <= 0) return pagable
+  // Con retenciones, subtotal + IVA ya no es lo que se paga: decirlo evita que
+  // la resta "no cuadre" a ojo contra la tarjeta de al lado.
+  return `${pagable} · ${currency.format(retentionsTotal.value)} de retenciones`
+})
 
 // ───────────────────────────────────────────────
 //  ALTA / EDICIÓN DE GASTO (con líneas de concepto)
@@ -134,33 +160,22 @@ function openEdit(e: ApiExpense) {
   showModal.value = true
 }
 
-// ───────────────────────────────────────────────
-//  TOTALES: subtotal (a pagar) vs. con IVA, por tipo
-// ───────────────────────────────────────────────
-const totalsSummary = computed(() => {
-  const base = {
-    Fijo: { subtotal: 0, total: 0 },
-    Operativo: { subtotal: 0, total: 0 }
-  }
-  for (const e of expenses.value) {
-    // Un gasto anulado ya no costó nada: sus pagos se borraron y el dinero
-    // volvió a la cuenta. Sumarlo aquí inflaría el total del periodo.
-    if (e.status === 'anulado') continue
-    base[e.type].subtotal += e.subtotal
-    base[e.type].total += Number(e.amount)
-  }
-  const subtotalAll = base.Fijo.subtotal + base.Operativo.subtotal
-  const totalAll = base.Fijo.total + base.Operativo.total
-  return { ...base, all: { subtotal: subtotalAll, total: totalAll } }
-})
+// Aquí vivía `totalsSummary`, un agregado por tipo que sumaba `expenses.value`
+// —o sea, la PÁGINA visible— y que nadie llegó a usar. La sumatoria ahora la
+// calcula el servidor sobre todo el filtro (ver `totals`); dejar la otra sería
+// una segunda cifra que se contradice con la tarjeta al pasar de página.
 
 const validItems = computed(() =>
   form.items.filter((it) => it.reason.trim().length > 0 && (it.amount ?? 0) > 0)
 )
 
-// Lo que se debe pagar es el subtotal. IVA y retenciones son informativos.
+// El subtotal es la suma de conceptos; el IVA y las retenciones NO son
+// informativos (a diferencia de las ventas): lo que se paga es
+// `subtotal + IVA − retenciones`, y eso lo calcula la base en `total_to_pay`.
 const formSubtotal = computed(() => validItems.value.reduce((sum, it) => sum + (it.amount ?? 0), 0))
-const formIva = computed(() => formSubtotal.value * IVA_RATE)
+// `ivaOf` redondea a centavos igual que la columna generada de la base, así que
+// el preview del formulario no difiere del gasto ya guardado.
+const formIva = computed(() => ivaOf(formSubtotal.value))
 const formTotalWithTaxes = computed(
   () => formSubtotal.value + formIva.value - (form.retentionIVA || 0) - (form.retentionISR || 0)
 )
@@ -489,6 +504,25 @@ onMounted(() => {
         <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
         <USelect v-model="type" :items="expenseTypeFilterItems" placeholder="Tipo de gasto" class="w-48" />
       </div>
+    </div>
+
+    <!-- Sumatoria del filtro completo (la calcula el servidor, no la página). -->
+    <div class="grid gap-3 sm:grid-cols-2">
+      <TarjetaTotal
+        label="Total de gastos"
+        icon="i-lucide-wallet"
+        tone="error"
+        :amount="totals.subtotal"
+        :hint="totalHint"
+        :loading="pending"
+      />
+      <TarjetaTotal
+        label="IVA (16%)"
+        icon="i-lucide-percent"
+        :amount="totals.iva"
+        :hint="ivaHint"
+        :loading="pending"
+      />
     </div>
 
     <UAlert

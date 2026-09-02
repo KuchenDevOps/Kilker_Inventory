@@ -32,7 +32,8 @@ const {
 const currency = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
-  maximumFractionDigits: 0
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
 })
 const number = new Intl.NumberFormat('es-MX')
 
