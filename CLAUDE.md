@@ -310,11 +310,31 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   mande `?all=true`, y lo hace en silencio (devuelve un arreglo que parece completo). Por
   eso las exportaciones de `/ventas` salían truncadas. Usar siempre `useAllSales()`
   (`useInventoryApi.ts`), que manda el flag, en vez de pegarle al endpoint a mano.
+- ⚠️ **Sumatorias de los listados: las calcula el SERVIDOR, no la página.**
+  `GET /api/sales`, `/api/movements` y `/api/expenses` devuelven, junto a la página,
+  un `totals` agregado sobre **todo el filtro** (`count(*) filter (…)` en la misma
+  pasada que el `count()` de paginación). Las pantallas lo pintan con
+  `app/components/TarjetaTotal.vue`. **No sumes el arreglo que llega**: son listados
+  paginados de 100 filas, así que eso daría el total de la página y cambiaría al pasar
+  a la siguiente — es justo el `totalsSummary` muerto que se borró de `/gastos`.
+  Tres reglas del agregado:
+  - **Lo anulado no suma** (venta anulada, entrada revertida, gasto anulado) pero **se
+    informa aparte** (`voided*`): la tarjeta dice cuánto quedó fuera, porque el listado
+    de abajo sí muestra esas filas y si no cuadran a ojo parece un error.
+  - En **entradas** "anulada" no es una columna: se deriva con un `not exists` sobre la
+    `anulacion` que la revierte (kardex append-only), sobre todo el filtro y no solo
+    sobre los ids de la página.
+  - En **gastos** el IVA sale de las columnas GENERADAS (`iva`, `total_to_pay`), nunca
+    recalculado; en **ventas** es informativo y lo pone el cliente con `ivaOf`
+    (`app/utils/iva.ts`, tasa única — estaba copiada en tres pantallas).
 - **Filtros compartidos:** `app/components/FiltroPeriodo.vue` y `FiltroCortePeriodo.vue`
   (Todo/Día/Semana/Mes sobre el periodo concreto elegido + búsqueda `?q`).
 - **Exportación a Excel** (SheetJS, en el cliente) desde catálogo (valor de inventario),
   historial de entradas e historial de ventas (hoja resumen + hoja de líneas), con dos
-  variantes: "Exportar todo" y "Exportar con filtro".
+  variantes: "Exportar todo" y "Exportar con filtro". El de ventas lleva **IVA (16%) y
+  Total con IVA** en la hoja `Resumen` (por bucket) y en la hoja `Ventas` (por factura);
+  el IVA del bucket se saca del total del bucket, **no** sumando el IVA factura por
+  factura (redondear y luego sumar deja centavos contra "Total con IVA").
   ⚠️ **Exportar es una LECTURA: la ven todos los roles**, incluido el observador. El botón
   del catálogo vivía dentro del `v-if="canManageCatalog"` de "Nuevo producto" y por eso el
   empleado no podía bajar el Excel aunque el endpoint sí se lo permitía; son permisos

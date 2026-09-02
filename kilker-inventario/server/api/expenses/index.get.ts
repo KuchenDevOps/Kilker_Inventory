@@ -1,7 +1,7 @@
 // ───────────────────────────────────────────────
 //  GET /api/expenses — historial de gastos con líneas y estado de pago
 // ───────────────────────────────────────────────
-import { and, count, desc, eq, gte, ilike, inArray, lt, or } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { expenses, expenseItems, expensePayments, tickets } from '../../db/schema'
 
@@ -21,7 +21,16 @@ export default defineEventHandler(async (event) => {
   const paginate = query.page != null
   const page = Math.max(1, Number(query.page) || 1)
   const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
-  const emptyResult = () => (paginate ? { data: [], total: 0, page, pageSize } : [])
+  const emptyTotals = {
+    issuedCount: 0,
+    subtotal: 0,
+    iva: 0,
+    totalToPay: 0,
+    voidedCount: 0,
+    voidedSubtotal: 0
+  }
+  const emptyResult = () =>
+    paginate ? { data: [], total: 0, page, pageSize, totals: emptyTotals } : []
 
   const filters = []
   if (isStoreScopedRole(profile.role)) {
@@ -170,8 +179,48 @@ export default defineEventHandler(async (event) => {
 
   if (!paginate) return mapped
 
-  const totalCount =
-    (await db.select({ value: count() }).from(expenses).where(whereClause))[0]?.value ?? 0
+  // ─── Agregados del filtro COMPLETO, no de la página ───
+  // Las tarjetas de /gastos suman todo lo que cumple el filtro; sumar `mapped`
+  // daría solo la página visible y cambiaría al paginar.
+  //
+  // ⚠️ `iva` y `total_to_pay` se SUMAN de las columnas generadas, no se
+  // recalculan aquí: es la misma regla que el mapeo de arriba (una sola
+  // definición de la tasa, y vive en la base). Los gastos ANULADOS quedan
+  // fuera —igual que en el dashboard— y se devuelven aparte para poder decir
+  // cuánto quedó excluido.
+  const issued = sql`${expenses.status} = 'emitido'`
 
-  return { data: mapped, total: totalCount, page, pageSize }
+  const agg = (
+    await db
+      .select({
+        total: count(),
+        issuedCount: sql<number>`count(*) filter (where ${issued})::int`,
+        subtotal: sql<string>`coalesce(sum(${expenses.amount}) filter (where ${issued}), 0)`,
+        iva: sql<string>`coalesce(sum(${expenses.iva}) filter (where ${issued}), 0)`,
+        totalToPay: sql<string>`coalesce(sum(${expenses.totalToPay}) filter (where ${issued}), 0)`,
+        voidedCount: sql<number>`count(*) filter (where not ${issued})::int`,
+        voidedSubtotal: sql<string>`coalesce(sum(${expenses.amount}) filter (where not ${issued}), 0)`
+      })
+      .from(expenses)
+      .where(whereClause)
+  )[0]
+
+  const money = (v: unknown) => Math.round(Number(v ?? 0) * 100) / 100
+
+  return {
+    data: mapped,
+    total: agg?.total ?? 0,
+    page,
+    pageSize,
+    totals: {
+      issuedCount: Number(agg?.issuedCount ?? 0),
+      /** Suma de `amount`: el subtotal, sin IVA ni retenciones. */
+      subtotal: money(agg?.subtotal),
+      iva: money(agg?.iva),
+      /** Lo que realmente se paga: subtotal + IVA − retenciones. */
+      totalToPay: money(agg?.totalToPay),
+      voidedCount: Number(agg?.voidedCount ?? 0),
+      voidedSubtotal: money(agg?.voidedSubtotal)
+    }
+  }
 })

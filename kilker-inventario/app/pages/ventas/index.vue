@@ -15,7 +15,7 @@ import { buildSaleTicketDoc } from '~/utils/ticketPdf'
 import * as XLSX from 'xlsx'
 import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
 
-const { sales, total, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
+const { sales, total, totals, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
 
 useHead({ title: 'Historial de ventas · Inventario Kilker' })
 
@@ -396,12 +396,21 @@ function itemsGroupedByKit(items: ApiSaleItem[]): ApiSaleItem[] {
 
 
 function totalsToSheet(sales: ApiSale[]): SheetRow[] {
-  const bucket = (rows: ApiSale[]) => ({
-    Facturas: rows.length,
-    Subtotal: round2(rows.reduce((acc, s) => acc + Number(s.subtotalAmount), 0)),
-    Descuento: round2(rows.reduce((acc, s) => acc + Number(s.discountAmount), 0)),
-    Total: round2(rows.reduce((acc, s) => acc + Number(s.totalAmount), 0))
-  })
+  const bucket = (rows: ApiSale[]) => {
+    const total = round2(rows.reduce((acc, s) => acc + Number(s.totalAmount), 0))
+    // IVA del bucket: 16% del total del bucket, NO la suma de los IVA por
+    // factura (redondear factura por factura y luego sumar deja centavos de
+    // diferencia contra "Total con IVA").
+    const iva = ivaOf(total)
+    return {
+      Facturas: rows.length,
+      Subtotal: round2(rows.reduce((acc, s) => acc + Number(s.subtotalAmount), 0)),
+      Descuento: round2(rows.reduce((acc, s) => acc + Number(s.discountAmount), 0)),
+      Total: total,
+      'IVA (16%)': iva,
+      'Total con IVA': round2(total + iva)
+    }
+  }
 
   return [
     { Concepto: 'Ventas emitidas', ...bucket(sales.filter((s) => s.status !== 'anulada')) },
@@ -423,11 +432,15 @@ function salesToSheet(rows: ApiSale[]) {
     'Descuento %': Number(s.discountPct),
     Descuento: round2(Number(s.discountAmount)),
     Total: round2(Number(s.totalAmount)),
+    // El IVA no vive en la BD: es el 16% informativo que la app calcula sobre
+    // el total (que ya trae el descuento aplicado).
+    'IVA (16%)': ivaOf(Number(s.totalAmount)),
+    'Total con IVA': round2(Number(s.totalAmount) + ivaOf(Number(s.totalAmount))),
     Canal: s.channel === 'en_linea' ? 'En línea' : 'Mostrador',
     Estado: s.status === 'anulada' ? 'Anulada' : 'Emitida',
-    Pagado: round2(s.totalPaid ?? 0),
-    Saldo: round2(s.balance ?? 0),
-    'Estado de pago': SALE_PAYMENT_STATUS_LABELS[s.paymentStatus] ?? '',
+    // Pagado: round2(s.totalPaid ?? 0),
+    // Saldo: round2(s.balance ?? 0),
+    // 'Estado de pago': SALE_PAYMENT_STATUS_LABELS[s.paymentStatus] ?? '',
     Creó: s.createdByName ?? ''
   }))
 }
@@ -491,13 +504,18 @@ function downloadSalesWorkbook(sales: ApiSale[], filenamePrefix: string) {
 
   // Hoja 0: va primera porque es la que responde "¿cuánto vendí?" sin filtrar.
   const totalsSheet = XLSX.utils.json_to_sheet(totalsToSheet(sales))
-  totalsSheet['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }]
+  // Concepto, Facturas, Subtotal, Descuento, Total, IVA (16%), Total con IVA
+  totalsSheet['!cols'] = [
+    { wch: 18 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 },
+    { wch: 14 }, { wch: 16 }
+  ]
   XLSX.utils.sheet_add_aoa(
     totalsSheet,
     [
       [],
       ['La venta del negocio es el renglón "Ventas emitidas".'],
-      ['Las anuladas salen en las demás hojas (columna Estado) pero no son venta.']
+      ['Las anuladas salen en las demás hojas (columna Estado) pero no son venta.'],
+      ['El IVA es informativo: se calcula al 16% y no está guardado en el sistema.']
     ],
     { origin: -1 }
   )
@@ -505,12 +523,13 @@ function downloadSalesWorkbook(sales: ApiSale[], filenamePrefix: string) {
 
   const summarySheet = XLSX.utils.json_to_sheet(salesToSheet(sales))
   // Folio, Fecha, Sucursal, Cliente, Kits, Líneas, Subtotal, Desc. %,
-  // Descuento, Total, Canal, Estado, Pagado, Saldo, Estado de pago, Creó
+  // Descuento, Total, IVA (16%), Total con IVA, Canal, Estado, Pagado, Saldo,
+  // Estado de pago, Creó
   summarySheet['!cols'] = [
     { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 22 }, { wch: 7 },
     { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 },
-    { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 },
-    { wch: 18 }
+    { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 12 },
+    { wch: 12 }, { wch: 14 }, { wch: 18 }
   ]
   addAutofilter(summarySheet)
   XLSX.utils.book_append_sheet(workbook, summarySheet, 'Ventas')
@@ -588,9 +607,26 @@ async function exportAll() {
   }
 }
 
-const IVA_RATE = 0.16
+// La tasa vive en `utils/iva.ts`; esta pantalla tenía su propia copia.
+const detailIva = computed(() => (detail.value ? ivaOf(Number(detail.value.totalAmount)) : 0))
 
-const detailIva = computed(() => (detail.value ? Number(detail.value.totalAmount) * IVA_RATE : 0))
+// ───────────────────────────────────────────────
+//  SUMATORIA DEL FILTRO (tarjetas)
+// ───────────────────────────────────────────────
+// ⚠️ `totals` lo calcula el SERVIDOR sobre todo el filtro. Sumar `sales` daría
+// el total de la página visible (100 filas) y cambiaría al paginar.
+const ivaTotal = computed(() => ivaOf(totals.value.issuedAmount))
+const totalWithIva = computed(() => totals.value.issuedAmount + ivaTotal.value)
+
+const totalHint = computed(() => {
+  const n = totals.value.issuedCount
+  const base = `${n} venta${n === 1 ? '' : 's'} emitida${n === 1 ? '' : 's'} · sin IVA`
+  if (!totals.value.voidedCount) return base
+  // Las anuladas no son venta, pero esconderlas haría que la tarjeta no
+  // cuadrara con el listado (que sí las muestra).
+  const v = totals.value.voidedCount
+  return `${base} · ${v} anulada${v === 1 ? '' : 's'} fuera (${currency.format(totals.value.voidedAmount)})`
+})
 
 // ───────────────────────────────────────────────
 //  TICKET: agrupar las líneas por kit
@@ -681,6 +717,25 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
       </div>
     </div>
 
+    <!-- Sumatoria del filtro completo (la calcula el servidor, no la página). -->
+    <div class="grid gap-3 sm:grid-cols-2">
+      <TarjetaTotal
+        label="Total vendido"
+        icon="i-lucide-receipt"
+        tone="success"
+        :amount="totals.issuedAmount"
+        :hint="totalHint"
+        :loading="pending"
+      />
+      <TarjetaTotal
+        label="IVA (16%) · informativo"
+        icon="i-lucide-percent"
+        :amount="ivaTotal"
+        :hint="`Total con IVA ${currency.format(totalWithIva)}`"
+        :loading="pending"
+      />
+    </div>
+
     <UAlert
       v-if="error"
       color="error"
@@ -729,7 +784,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                   {{ currency.format(Number(s.totalAmount)) }}
                 </td>
                 <td class="px-4 py-3 text-right tabular-nums">
-                  {{ currency.format(Number(s.totalAmount) * (1 + IVA_RATE)) }}
+                  {{ currency.format(Number(s.totalAmount) + ivaOf(Number(s.totalAmount))) }}
                 </td>
                 <td class="px-4 py-3 text-center">
                   <UBadge

@@ -210,7 +210,40 @@ export default defineEventHandler(async (event) => {
   })
   if (!paginate) return mapped
 
-  const total =
-    (await db.select({ value: count() }).from(invoices).where(whereClause))[0]?.value ?? 0
-  return { data: mapped, total, page, pageSize }
+  // ─── Agregados del filtro COMPLETO, no de la página ───
+  // La tarjeta de totales de /ventas tiene que sumar todo lo que cumple el
+  // filtro; sumar `mapped` daría el total de las 100 filas visibles y cambiaría
+  // al pasar de página. Va en la misma pasada que el `count()` de paginación.
+  //
+  // ⚠️ El agregado que cuenta como venta es SOLO el de las emitidas: una
+  // factura anulada devolvió la mercancía al inventario y perdió sus abonos, no
+  // es ingreso. Las anuladas se devuelven aparte para que la pantalla pueda
+  // decir cuánto quedó fuera en vez de esconderlo.
+  const agg = (
+    await db
+      .select({
+        total: count(),
+        issuedCount: sql<number>`count(*) filter (where ${invoices.status} = 'emitida')::int`,
+        issuedAmount: sql<string>`coalesce(sum(${invoices.totalAmount}) filter (where ${invoices.status} = 'emitida'), 0)`,
+        voidedCount: sql<number>`count(*) filter (where ${invoices.status} = 'anulada')::int`,
+        voidedAmount: sql<string>`coalesce(sum(${invoices.totalAmount}) filter (where ${invoices.status} = 'anulada'), 0)`
+      })
+      .from(invoices)
+      .where(whereClause)
+  )[0]
+
+  return {
+    data: mapped,
+    total: agg?.total ?? 0,
+    page,
+    pageSize,
+    totals: {
+      issuedCount: Number(agg?.issuedCount ?? 0),
+      // Cobrable: ya trae el descuento aplicado y va SIN IVA (el 16% de la app
+      // es informativo y lo agrega el cliente; ver `ivaOf`).
+      issuedAmount: Math.round(Number(agg?.issuedAmount ?? 0) * 100) / 100,
+      voidedCount: Number(agg?.voidedCount ?? 0),
+      voidedAmount: Math.round(Number(agg?.voidedAmount ?? 0) * 100) / 100
+    }
+  }
 })

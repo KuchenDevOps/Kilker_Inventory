@@ -1,4 +1,4 @@
-import { and, count, desc, eq, ilike, inArray, or } from 'drizzle-orm'
+import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { products, profiles, stockMovements, stores, tickets } from '../../db/schema'
 import { effectiveMovementDateBetween, effectiveMovementDateSql } from '../../utils/movementDates'
@@ -135,10 +135,42 @@ export default defineEventHandler(async (event) => {
 
   if (!paginate) return mapped // ← comportamiento original, usa el dashboard
 
-    // Después de traer `rows`, antes del return:
+  // ─── Agregados del filtro COMPLETO, no de la página ───
+  // La tarjeta de totales suma todo lo que cumple el filtro; sumar `mapped`
+  // daría solo la página visible. Va junto al `count()` de paginación.
+  //
+  // ⚠️ Anulada no es una columna: una entrada lo está si existe una `anulacion`
+  // que la revierte (kardex append-only, ver §10.2). El mismo criterio que usa
+  // `voided` arriba, pero aplicado a TODO el filtro, no a los ids de la página.
+  const notVoided = sql`not exists (
+    select 1 from stock_movements rev
+    where rev.type = 'anulacion' and rev.reverses_movement_id = stock_movements.id
+  )`
 
+  const agg = (
+    await db
+      .select({
+        total: count(),
+        activeCount: sql<number>`count(*) filter (where ${notVoided})::int`,
+        // Costo limpio de la entrada (`total_value`): sin IVA ni retenciones.
+        activeAmount: sql<string>`coalesce(sum(${stockMovements.totalValue}) filter (where ${notVoided}), 0)`,
+        voidedCount: sql<number>`count(*) filter (where not ${notVoided})::int`,
+        voidedAmount: sql<string>`coalesce(sum(${stockMovements.totalValue}) filter (where not ${notVoided}), 0)`
+      })
+      .from(stockMovements)
+      .where(whereClause)
+  )[0]
 
-  const total =
-    (await db.select({ value: count() }).from(stockMovements).where(whereClause))[0]?.value ?? 0
-  return { data: mapped, total, page, pageSize }
+  return {
+    data: mapped,
+    total: agg?.total ?? 0,
+    page,
+    pageSize,
+    totals: {
+      activeCount: Number(agg?.activeCount ?? 0),
+      activeAmount: Math.round(Number(agg?.activeAmount ?? 0) * 100) / 100,
+      voidedCount: Number(agg?.voidedCount ?? 0),
+      voidedAmount: Math.round(Number(agg?.voidedAmount ?? 0) * 100) / 100
+    }
+  }
 })
