@@ -630,15 +630,7 @@ const filteredTopCustomers = computed(() => {
     <div class="flex flex-wrap items-center gap-3">
       <FiltroCortePeriodo v-model:from="periodFrom" v-model:to="periodTo" />
       <!-- Solo cambia la vista: no recarga nada, el IVA se calcula aquí. -->
-      <UButton
-        :icon="withIva ? 'i-lucide-percent' : 'i-lucide-percent-circle'"
-        :color="withIva ? 'primary' : 'neutral'"
-        :variant="withIva ? 'solid' : 'subtle'"
-       
-        @click="withIva = !withIva"
-      >
-        {{ withIva ? 'Con IVA' : 'Sin IVA' }}
-      </UButton>
+      <BotonIva v-model="withIva" />
       <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       <span class="text-xs text-muted ml-auto">
         Última actualización: {{ new Date(lastRefreshTime).toLocaleTimeString() }}
