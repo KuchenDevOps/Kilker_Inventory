@@ -77,14 +77,26 @@ export async function deleteDocumentPaymentTx(
   // está borrando, y la venta termina cobrada de menos sin que nada falle. De
   // paso serializa dos borrados del mismo pago (doble clic): el segundo espera
   // y ya no lo encuentra.
+  //
+  // El SELECT del candado trae de paso el identificador HUMANO del documento
+  // (ver `docRef`): es la misma ida a la base y ya viene bajo el candado.
+  let docRef: string | null
   if (kind === 'sale') {
-    await tx.execute(sql`SELECT id FROM ${invoices} WHERE id = ${documentId} FOR UPDATE`)
-  } else if (kind === 'entry') {
-    await tx.execute(
-      sql`SELECT id FROM ${stockMovements} WHERE id = ${documentId} FOR UPDATE`
+    const [row] = await tx.execute<{ ref: string | null }>(
+      sql`SELECT folio AS ref FROM ${invoices} WHERE id = ${documentId} FOR UPDATE`
     )
+    docRef = row?.ref ?? null
+  } else if (kind === 'entry') {
+    const [row] = await tx.execute<{ ref: string | null }>(
+      sql`SELECT "Folio" AS ref FROM ${stockMovements} WHERE id = ${documentId} FOR UPDATE`
+    )
+    docRef = row?.ref ?? null
   } else {
-    await tx.execute(sql`SELECT id FROM ${expenses} WHERE id = ${documentId} FOR UPDATE`)
+    const [row] = await tx.execute<{ ref: string | null }>(
+      sql`SELECT supplier || coalesce(' ' || supplier_invoice_number, '') AS ref
+            FROM ${expenses} WHERE id = ${documentId} FOR UPDATE`
+    )
+    docRef = row?.ref ?? null
   }
 
   // El abono se busca ligado a SU documento, no sólo por id: sin el `and`, un
@@ -123,7 +135,17 @@ export async function deleteDocumentPaymentTx(
   // borra primero, el movimiento de dinero queda huérfano y ya no hay por dónde
   // encontrarlo — ese peso se quedaría sumado (o restado) a la cuenta para
   // siempre.
-  const note = `Borrado de un pago de ${label.def} #${documentId}`
+  // ⚠️ El FOLIO, no el id. Son números distintos y parecidos: el folio es
+  // correlativo POR TIENDA y el id es global, así que la venta MTZ-0239 es la
+  // #243 en la tabla… y MTZ-0243 existe y es otra venta. La nota decía
+  // "de la venta #243" y se leía como ese otro folio. Además es el único rastro
+  // que queda —al borrar el abono, `banks_movements.sale_payment_id` se pone en
+  // NULL— y tiene que nombrar el documento como lo nombra la pantalla.
+  //
+  // El id queda de respaldo por si el documento no tiene folio: una entrada
+  // puede no traerlo capturado (`"Folio"` es nullable), y ahí "#12" es peor que
+  // nada solo si se confunde con un folio, cosa que el `#` evita.
+  const note = `Borrado de un pago de ${label.def} ${docRef ?? `#${documentId}`}`
   const cashFlowReversals = await reversePaymentCashFlowTx(tx, {
     source:
       kind === 'sale'

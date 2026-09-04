@@ -194,6 +194,34 @@ export default defineEventHandler(async (event) => {
     }
   })
 
+  // ───────────────────────────────────────────────
+  //  ¿ESTE MOVIMIENTO YA FUE REVERTIDO?
+  // ───────────────────────────────────────────────
+  // ⚠️ Sin esto, un movimiento ANULADO se ve idéntico a uno vivo. El caso real:
+  // se borra un pago de una venta, la reversa se asienta (append-only, la fila
+  // original nunca se toca) y en la lista sigue apareciendo "Cobro venta
+  // MTZ-0239" — así que la venta dice "pendiente" y la bolsa parece decir que sí
+  // cobró. Las dos cosas eran ciertas y el saldo estaba bien; lo que faltaba era
+  // el aviso.
+  //
+  // La reversa vive en OTRA fila, y casi nunca a la vista: puede caer en otra
+  // página, o quedar filtrada por periodo. Por eso se resuelve aquí y no
+  // buscándola entre las filas que se pintan.
+  //
+  // Una sola consulta para toda la página (`inArray` sobre sus ids), no una por
+  // fila: `banks_movements_reverses_uniq` garantiza que cada original tiene a lo
+  // más una.
+  const reversedBy = new Map<number, number>()
+  if (rows.length) {
+    const reversals = await db
+      .select({ id: banksMovements.id, reversesId: banksMovements.reversesId })
+      .from(banksMovements)
+      .where(inArray(banksMovements.reversesId, rows.map((r) => r.id)))
+    for (const r of reversals) {
+      if (r.reversesId != null) reversedBy.set(r.reversesId, r.id)
+    }
+  }
+
   const data = rows.map((m) => ({
     id: m.id,
     type: m.type,
@@ -215,6 +243,8 @@ export default defineEventHandler(async (event) => {
     note: m.note,
     source: sourceOf(m.type),
     reversesId: m.reversesId,
+    /** Id de la `anulacion` que lo revirtió. No null = este importe ya no cuenta. */
+    reversedById: reversedBy.get(m.id) ?? null,
     createdByName: m.createdBy?.fullName ?? null,
     createdAt: m.createdAt
   }))

@@ -180,6 +180,17 @@ export async function voidMovementTx(
     throw createError({ statusCode: 409, statusMessage: 'Esta entrada ya fue anulada' })
   }
 
+  // ⚠️ El FOLIO de la entrada, no su id. Este texto viaja a dos rastros que la
+  // gente lee sin acceso a la base —`stock_movements.reason` y la nota del
+  // movimiento de banco— y ahí un id interno no identifica nada: es correlativo
+  // global, mientras que el folio es por tienda, así que ni siquiera coinciden.
+  // El `#` del respaldo es para que un id no se confunda con un folio cuando la
+  // entrada no trae folio capturado (la columna es nullable).
+  const entryLabel = movement.inventoryEntryInvoiceNumber
+    ? `la entrada ${movement.inventoryEntryInvoiceNumber}`
+    : `la entrada #${movement.id}`
+  const defaultReason = `Anulación de ${entryLabel}`
+
   const quantity = Number(movement.quantity) // positivo: es una entrada
 
   const inv = await tx.query.inventory.findFirst({
@@ -206,7 +217,7 @@ export async function voidMovementTx(
     unitValue: movement.unitValue,
     totalValue: String(-Number(movement.totalValue)),
     reversesMovementId: movement.id,
-    reason: opts.reason || 'Anulación de entrada',
+    reason: opts.reason || defaultReason,
     createdBy: opts.profileId
   })
 
@@ -230,7 +241,7 @@ export async function voidMovementTx(
   const cashFlowReversals = await reversePaymentCashFlowTx(tx, {
     source: { entryPaymentIds: paymentsToDelete.map((p) => p.id) },
     profileId: opts.profileId,
-    reason: opts.reason || 'Anulación de entrada'
+    reason: opts.reason || defaultReason
   })
 
   const deletedPayments = await tx
