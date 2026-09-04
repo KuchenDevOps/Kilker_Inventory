@@ -349,6 +349,19 @@ async function submitPayment() {
   }
 }
 
+/**
+ * Tras borrar un cobro (solo admin) hay que recargar el listado, no sólo los
+ * abonos: el saldo y el estado de pago los deriva el servidor por factura, así
+ * que la fila de la tabla —y el resumen del modal, que apunta a ella— seguirían
+ * mostrando la venta como pagada.
+ */
+async function onPaymentDeleted() {
+  await refreshPayments()
+  await refresh()
+  const updated = sales.value.find((x) => x.id === viewingSale.value?.id)
+  if (updated) viewingSale.value = updated
+}
+
 const downloadingTicket = ref(false)
 
 /**
@@ -759,7 +772,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
         label="IVA (16%)"
         icon="i-lucide-percent"
         :amount="ivaTotal"
-        :hint="`Cobrado al cliente ${currency.format(totalWithIva)}`"
+        :hint="`Total con IVA: ${currency.format(totalWithIva)}`"
         :loading="pending"
       />
     </div>
@@ -1269,17 +1282,27 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                 Sin pagos registrados todavía.
               </p>
               <ul v-else class="divide-y divide-default text-sm">
-                <li v-for="p in payments" :key="p.id" class="py-2">
-                  <p class="font-medium tabular-nums">{{ currency.format(Number(p.amount)) }}</p>
-                  <p class="text-xs text-muted">
-                    {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
-                    <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
-                    <span v-if="p.accountLabel"> · {{ p.accountLabel }}</span>
-                    <span v-else-if="p.method !== 'efectivo'" class="text-warning">
-                      · sin cuenta
-                    </span>
-                  </p>
-                  <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+                <li v-for="p in payments" :key="p.id" class="flex items-start justify-between gap-3 py-2">
+                  <div class="min-w-0">
+                    <p class="font-medium tabular-nums">{{ currency.format(Number(p.amount)) }}</p>
+                    <p class="text-xs text-muted">
+                      {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
+                      <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
+                      <span v-if="p.accountLabel"> · {{ p.accountLabel }}</span>
+                      <span v-else-if="p.method !== 'efectivo'" class="text-warning">
+                        · sin cuenta
+                      </span>
+                    </p>
+                    <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+                  </div>
+                  <!-- Solo admin (el propio componente se esconde). Borra el cobro
+                       y revierte su movimiento de banco, sin tocar la venta. -->
+                  <BorrarPago
+                    :endpoint="`/api/sales/${viewingSale.id}`"
+                    :payment-id="p.id"
+                    :amount="Number(p.amount)"
+                    @done="onPaymentDeleted"
+                  />
                 </li>
               </ul>
             </div>

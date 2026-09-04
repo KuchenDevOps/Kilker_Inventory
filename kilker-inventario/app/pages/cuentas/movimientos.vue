@@ -26,8 +26,13 @@ import {
 definePageMeta({ requiresRole: ['admin', 'observador'] })
 useHead({ title: 'Movimientos de banco · Inventario Kilker' })
 
-// `balances` y `globalBalance` siguen viniendo del endpoint, pero esta pantalla
-// ya no pinta las tarjetas de saldo: ahora viven en el dashboard de banco.
+// `balances` y `globalBalance` siguen viniendo del endpoint, pero las tarjetas
+// de saldo viven en el dashboard de banco: aquí no se destructuran.
+//
+// ⚠️ Lo único que esta pantalla muestra en cifras es `filteredNet`, y NO es un
+// saldo: es el neto de lo que quedó dentro del filtro. Por eso se rotula "neto
+// del filtro" y no "saldo" — un saldo recalculado sobre "agosto" no es el saldo
+// de nada (ver el encabezado del endpoint).
 const {
   movements,
   concepts,
@@ -272,13 +277,7 @@ async function onSubmit() {
       <div>
         <h1 class="text-2xl font-semibold">Movimientos de banco</h1>
         <p class="text-sm text-muted">
-          <!-- `movements.length` es lo que hay EN PANTALLA (una página) y
-               `total` lo que cumple el filtro completo: con 100 por página la
-               diferencia importa. -->
-          Mostrando {{ movements.length }} de {{ total }} movimiento(s)<template
-            v-if="hasFilters"
-          > con ese filtro</template>
-          · el efectivo va como bolsa aparte
+          Todo el dinero que entra y sale · el efectivo va como bolsa aparte
         </p>
       </div>
       <UButton v-if="canEdit" icon="i-lucide-plus" color="primary" @click="openNew">
@@ -295,7 +294,7 @@ async function onSubmit() {
       :description="error"
     />
 
-      <!-- <UCard :ui="{ body: 'p-4 sm:p-4' }" class="bg-elevated/50">
+     <!-- <UCard :ui="{ body: 'p-4 sm:p-4' }" class="bg-elevated/50">
         <p class="text-sm font-medium">Saldo global</p>
         <p class="text-xs text-muted">Todas las bolsas juntas</p>
         <p
@@ -304,35 +303,33 @@ async function onSubmit() {
         >
           {{ currency.format(globalBalance) }}
         </p>
-      </UCard> -->
+      </UCard>  -->
 
     <!-- Filtros -->
-    <UCard :ui="{ body: 'p-4 sm:p-4' }">
-      <!-- Mismo periodo + búsqueda que ventas, entradas y transferencias. -->
       <FiltroPeriodo
         v-model:search="search"
         v-model:from="from"
         v-model:to="to"
-        search-placeholder="Buscar por concepto o nota…"
+        search-placeholder="Buscar por concepto, nota o bolsa (banco, titular, ····1234, efectivo)…"
       />
       <div class="mt-3 flex flex-wrap items-center gap-3">
-
-        <USelect v-model="type" :items="typeFilterItems" class="w-56" />
-        <!-- Mismo botón que el resto de los listados (antes era uno propio). -->
-        <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
+        <USelect v-model="type" :items="typeFilterItems" class="w-56" placeholder="Tipo de movimiento" />
+        <!-- Siempre visible y deshabilitado cuando no hay nada que limpiar: los
+             filtros de esta pantalla viven en `useState`, o sea que sobreviven a
+             la navegación, y un periodo puesto hace dos días sigue aplicado al
+             volver. Escondiendo el botón, eso solo se ve cuando ya se sospecha. -->
+        <BotonLimpiarFiltros class="ml-auto" :active="hasFilters" @clear="clearFilters" />
       </div>
-      <div v-if="hasFilters" class="mt-3 flex flex-wrap items-center gap-2">
+      <div v-if="hasFilters" class="mt-3">
         <p class="text-sm text-muted">
-          <!-- El conteo se movió al encabezado; aquí queda solo el neto, que es
-               lo propio del filtro. Neto del filtro, NO un saldo: por eso se
-               nombra distinto. -->
-          Neto del filtro
+          {{ total }} movimiento(s) ·
+          <!-- Neto del filtro, NO un saldo: por eso se nombra distinto. -->
+          neto del filtro
           <span class="font-medium tabular-nums" :class="filteredNet < 0 ? 'text-error' : ''">
             {{ currency.format(filteredNet) }}
           </span>
         </p>
       </div>
-    </UCard>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
       <div class="overflow-x-auto">
@@ -405,14 +402,14 @@ async function onSubmit() {
           </template>
 
           <form class="space-y-4" @submit.prevent="onSubmit">
-            <UAlert
+            <!-- <UAlert
               color="neutral"
               variant="subtle"
               icon="i-lucide-info"
               description="Los cobros de ventas y los pagos de entradas y gastos se asientan solos
                 al registrar el pago del documento. Aquí solo va el dinero que no tiene
                 documento detrás."
-            />
+            /> -->
 
             <UFormField
               label="Concepto"
