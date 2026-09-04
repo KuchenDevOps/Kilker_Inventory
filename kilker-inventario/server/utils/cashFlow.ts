@@ -25,7 +25,6 @@
 import { eq, sql } from 'drizzle-orm'
 import type { Db } from '../db'
 import { banksMovements } from '../db/schema'
-import { businessDateOnly } from './businessTime'
 import type { BanksMovement } from '../db/schema'
 
 /** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
@@ -158,7 +157,6 @@ export async function reversePaymentCashFlowTx(
   if (ids.length === 0) return []
 
   const reversals: BanksMovement[] = []
-  const today = businessDateOnly(new Date())
 
   for (const id of ids) {
     const original = await tx.query.banksMovements.findFirst({ where: eq(column, id) })
@@ -184,10 +182,17 @@ export async function reversePaymentCashFlowTx(
       .values({
         type: 'anulacion',
         amount: String(-Number(original.amount)),
-        // La reversa ocurre HOY, no en la fecha del abono anulado: el dinero se
-        // devuelve ahora. Fecharla en el original cambiaría saldos de periodos
-        // ya cerrados y cortados.
-        occurredAt: today,
+        // ⚠️ La reversa se fecha EL MISMO DÍA que el movimiento que anula, no
+        // hoy. El par suma cero dentro de su propio periodo, que es lo que hace
+        // que un mes ya reportado se corrija solo; fechándola hoy, el mes viejo
+        // seguía informando para siempre un cobro que ya no existe y el mes
+        // actual arrastraba una salida de dinero que nunca ocurrió ahí.
+        // Es coherente con lo que se está deshaciendo: el abono se BORRA (no
+        // queda un pago devuelto), así que esto no es un reembolso con fecha
+        // propia, es la huella de un asiento que se retira. El saldo total de
+        // la cuenta no cambia por esto —da igual la fecha, la reversa siempre
+        // neteaba—; lo que cambia es en qué periodo se ve.
+        occurredAt: original.occurredAt,
         accountId: original.accountId,
         storeId: original.storeId,
         reversesId: original.id,

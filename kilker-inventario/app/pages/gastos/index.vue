@@ -98,7 +98,7 @@ const retentionsTotal = computed(() =>
 )
 
 const ivaHint = computed(() => {
-  const pagable = `A pagar ${currency.format(totals.value.totalToPay)}`
+  const pagable = `Total con IVA ${currency.format(totals.value.totalToPay)}`
   if (retentionsTotal.value <= 0) return pagable
   // Con retenciones, subtotal + IVA ya no es lo que se paga: decirlo evita que
   // la resta "no cuadre" a ojo contra la tarjeta de al lado.

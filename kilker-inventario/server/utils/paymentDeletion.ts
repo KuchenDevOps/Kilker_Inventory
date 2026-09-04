@@ -35,10 +35,19 @@ import type { PaymentKind } from './bankAccounts'
 /** Transacción Drizzle (el `tx` que entrega `db.transaction(...)`). */
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
-const DOC_NOUN: Record<PaymentKind, string> = {
-  sale: 'venta',
-  entry: 'entrada',
-  expense: 'gasto'
+/**
+ * Cómo se nombra cada documento en los mensajes, CON artículo.
+ *
+ * ⚠️ El artículo va aquí y no en la plantilla porque `gasto` es masculino y los
+ * otros dos femeninos: con un `de la ${noun}` fijo, la nota del movimiento de
+ * banco salía "Borrado de un pago de la gasto #332". Y esa nota no es un texto
+ * de pantalla que se pueda corregir después — es el rastro que queda en
+ * `banks_movements.note` cuando el abono se borra y la liga se pone en NULL.
+ */
+const DOC_LABEL: Record<PaymentKind, { def: string; dem: string }> = {
+  sale: { def: 'la venta', dem: 'esta venta' },
+  entry: { def: 'la entrada', dem: 'esta entrada' },
+  expense: { def: 'el gasto', dem: 'este gasto' }
 }
 
 /**
@@ -60,7 +69,7 @@ export async function deleteDocumentPaymentTx(
   }
 ) {
   const { kind, documentId, paymentId, profileId } = opts
-  const noun = DOC_NOUN[kind]
+  const label = DOC_LABEL[kind]
 
   // ⚠️ Candado del DOCUMENTO, no del abono, y antes de leer nada. Es el mismo
   // que toma `POST .../payments` para decidir el saldo pendiente: sin él, un
@@ -105,7 +114,7 @@ export async function deleteDocumentPaymentTx(
   if (!payment) {
     throw createError({
       statusCode: 404,
-      statusMessage: `El pago no existe en esta ${noun}`
+      statusMessage: `El pago no existe en ${label.dem}`
     })
   }
 
@@ -114,7 +123,7 @@ export async function deleteDocumentPaymentTx(
   // borra primero, el movimiento de dinero queda huérfano y ya no hay por dónde
   // encontrarlo — ese peso se quedaría sumado (o restado) a la cuenta para
   // siempre.
-  const label = `Borrado de un pago de la ${noun} #${documentId}`
+  const note = `Borrado de un pago de ${label.def} #${documentId}`
   const cashFlowReversals = await reversePaymentCashFlowTx(tx, {
     source:
       kind === 'sale'
@@ -123,7 +132,7 @@ export async function deleteDocumentPaymentTx(
           ? { entryPaymentIds: [paymentId] }
           : { expensePaymentIds: [paymentId] },
     profileId,
-    reason: opts.reason ? `${label}: ${opts.reason}` : label
+    reason: opts.reason ? `${note}: ${opts.reason}` : note
   })
 
   if (kind === 'sale') {
