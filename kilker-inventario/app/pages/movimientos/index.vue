@@ -265,6 +265,19 @@ async function refreshPayments() {
   }
 }
 
+/**
+ * Tras borrar un pago (solo admin) hay que recargar el listado, no sólo los
+ * abonos: el saldo y el estado de pago los deriva el servidor por entrada, así
+ * que la fila —y el resumen del modal, que apunta a ella— seguirían mostrándola
+ * como pagada.
+ */
+async function onPaymentDeleted() {
+  await refreshPayments()
+  await refresh()
+  const updated = movements.value.find((x) => x.id === viewingMovement.value?.id)
+  if (updated) viewingMovement.value = updated
+}
+
 const canSubmitPayment = computed(
   () =>
     canWrite.value &&
@@ -740,17 +753,27 @@ async function exportAll() {
                 Sin pagos registrados todavía.
               </p>
               <ul v-else class="divide-y divide-default text-sm">
-                <li v-for="p in payments" :key="p.id" class="py-2">
-                  <p class="font-medium tabular-nums">{{ currency.format(Number(p.amount)) }}</p>
-                  <p class="text-xs text-muted">
-                    {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
-                    <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
-                    <span v-if="p.accountLabel"> · {{ p.accountLabel }}</span>
-                    <span v-else-if="p.method !== 'efectivo'" class="text-warning">
-                      · sin cuenta
-                    </span>
-                  </p>
-                  <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+                <li v-for="p in payments" :key="p.id" class="flex items-start justify-between gap-3 py-2">
+                  <div class="min-w-0">
+                    <p class="font-medium tabular-nums">{{ currency.format(Number(p.amount)) }}</p>
+                    <p class="text-xs text-muted">
+                      {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
+                      <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
+                      <span v-if="p.accountLabel"> · {{ p.accountLabel }}</span>
+                      <span v-else-if="p.method !== 'efectivo'" class="text-warning">
+                        · sin cuenta
+                      </span>
+                    </p>
+                    <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
+                  </div>
+                  <!-- Solo admin (el propio componente se esconde). Borra el pago
+                       y revierte su movimiento de banco, sin tocar la entrada. -->
+                  <BorrarPago
+                    :endpoint="`/api/movements/${viewingMovement.id}`"
+                    :payment-id="p.id"
+                    :amount="Number(p.amount)"
+                    @done="onPaymentDeleted"
+                  />
                 </li>
               </ul>
             </div>

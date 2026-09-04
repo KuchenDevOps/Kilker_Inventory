@@ -30,39 +30,59 @@
 // distinto para que nadie los confunda.
 import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { banksMovements, cashFlowType } from '../../db/schema'
+import { bankAccounts, banksMovements, cashFlowType } from '../../db/schema'
 
 function toDateOnly(v: unknown): string | null {
   const match = String(v ?? '').match(/^\d{4}-\d{2}-\d{2}/)
   return match ? match[0] : null
 }
 
-/** De qué viene el movimiento, ya resuelto para la UI. */
-function sourceOf(row: {
-  salePaymentId: number | null
-  entryPaymentId: number | null
-  expensePaymentId: number | null
-  reversesId: number | null
-}): 'venta' | 'entrada' | 'gasto' | 'anulacion' | 'manual' {
-  if (row.salePaymentId != null) return 'venta'
-  if (row.entryPaymentId != null) return 'entrada'
-  if (row.expensePaymentId != null) return 'gasto'
-  if (row.reversesId != null) return 'anulacion'
-  // ⚠️ Sin liga y sin reversa NO siempre es manual: anular una venta borra sus
-  // abonos y la FK queda en `set null` (ver schema.ts), así que el movimiento
-  // original se queda huérfano. Por eso el `type` manda sobre la ausencia de
-  // ligas; el folio del documento sobrevive en `note`.
-  return 'manual'
-}
+type CashFlowTypeValue = (typeof cashFlowType.enumValues)[number]
+
+/** Etiqueta de origen por `type`. Lo que no esté aquí es captura manual. */
+const SOURCE_BY_TYPE = {
+  cobro_venta: 'venta',
+  pago_entrada: 'entrada',
+  pago_gasto: 'gasto',
+  anulacion: 'anulacion'
+} as const
 
 /**
- * Clasificaciones que solo nacen de una captura manual.
+ * De qué viene el movimiento, ya resuelto para la UI.
  *
- * ⚠️ `movimiento` es la del concepto libre, y es la que más se va a usar: si se
- * olvida aquí, el filtro "solo capturados a mano" esconde justo lo que el
- * usuario acaba de escribir.
+ * ⚠️ Se deriva del `type`, NUNCA de las ligas al abono, y ésa es toda la razón
+ * de ser de esta función. `sale_payment_id` y sus hermanas son
+ * `ON DELETE SET NULL` (ver schema.ts): borrar un abono —al anular el documento,
+ * o con `DELETE .../payments/:paymentId`— deja el movimiento de dinero huérfano
+ * pero vivo, a propósito. Clasificando por ligas, ese cobro de venta pasaba a
+ * rotularse "Manual" y parecía capturado a mano. El `type` es un snapshot que se
+ * escribe al asentar y no cambia nunca; el folio del documento sobrevive en
+ * `note`.
+ *
+ * De paso, así el badge y el filtro `?source` dicen lo mismo: el filtro ya
+ * separaba manual de documento por `type`, así que "solo capturados a mano"
+ * podía dejar fuera filas que la tabla rotulaba "Manual", y al revés.
  */
-const MANUAL_TYPES = new Set(['saldo_inicial', 'prestamo', 'retiro', 'ajuste', 'movimiento'])
+function sourceOf(
+  type: CashFlowTypeValue
+): 'venta' | 'entrada' | 'gasto' | 'anulacion' | 'manual' {
+  return SOURCE_BY_TYPE[type as keyof typeof SOURCE_BY_TYPE] ?? 'manual'
+}
+
+/** Los que nacen de un documento. `?source=documento` filtra por éstos. */
+const DOCUMENT_TYPES: CashFlowTypeValue[] = ['cobro_venta', 'pago_entrada', 'pago_gasto']
+
+/**
+ * Clasificaciones que solo nacen de una captura manual: todo lo que `sourceOf`
+ * no sabe atribuir a un documento ni a una reversa.
+ *
+ * ⚠️ Derivada del enum, no escrita a mano. Cuando entró `movimiento` —la del
+ * concepto libre, la que más se usa— la lista a mano se quedó vieja y el filtro
+ * "solo capturados a mano" escondía justo lo que el usuario acababa de escribir.
+ */
+const MANUAL_TYPES: CashFlowTypeValue[] = cashFlowType.enumValues.filter(
+  (t) => !(t in SOURCE_BY_TYPE)
+)
 
 export default defineEventHandler(async (event) => {
   await requireProfile(event, { role: ['admin', 'observador', 'admin_tienda'] })
@@ -97,11 +117,9 @@ export default defineEventHandler(async (event) => {
   // también se queda sin ligas (FK `set null`) y no es manual.
   const sourceParam = String(query.source ?? '').trim()
   if (sourceParam === 'manual') {
-    filters.push(inArray(banksMovements.type, [...MANUAL_TYPES] as never[]))
+    filters.push(inArray(banksMovements.type, MANUAL_TYPES))
   } else if (sourceParam === 'documento') {
-    filters.push(
-      inArray(banksMovements.type, ['cobro_venta', 'pago_entrada', 'pago_gasto'] as never[])
-    )
+    filters.push(inArray(banksMovements.type, DOCUMENT_TYPES))
   }
 
   const storeParam = Number(query.storeId ?? 0)
@@ -122,12 +140,42 @@ export default defineEventHandler(async (event) => {
     filters.push(sql`lower(${banksMovements.concept}) = lower(${conceptParam})`)
   }
 
-  // Busca en los DOS textos: el concepto que escribió el usuario y la nota
-  // (que en los movimientos de un pago es donde vive el folio del documento).
+  // Busca en el concepto que escribió el usuario, en la nota (que en los
+  // movimientos de un pago es donde vive el folio del documento) y en la BOLSA.
   const q = String(query.q ?? '').trim()
   if (q) {
     const like = `%${q}%`
-    filters.push(or(ilike(banksMovements.note, like), ilike(banksMovements.concept, like))!)
+    const textMatch = [
+      ilike(banksMovements.note, like),
+      ilike(banksMovements.concept, like),
+      // La bolsa no es una columna de esta tabla: es la cuenta ligada. Se busca
+      // por banco, titular y últimos 4 —los tres pedazos con los que se arma la
+      // etiqueta que se ve en la columna "Cuenta"—, para que buscar lo que está
+      // en pantalla ("BBVA", "1234") encuentre algo. Con la subconsulta y no con
+      // un join: `findMany` ya trae la cuenta por relación, y meter un join aquí
+      // obligaría a reescribir la consulta entera y el `count()` de paginación.
+      inArray(
+        banksMovements.accountId,
+        db
+          .select({ id: bankAccounts.id })
+          .from(bankAccounts)
+          .where(
+            or(
+              ilike(bankAccounts.bank, like),
+              ilike(bankAccounts.owner, like),
+              ilike(bankAccounts.cardLast4, like)
+            )
+          )
+      )
+    ]
+    // ⚠️ El efectivo NO tiene fila en `bank_accounts`: es `account_id IS NULL`
+    // (ver el encabezado de `bank_accounts` en schema.ts). Sin esta rama, buscar
+    // "efectivo" —la etiqueta que la propia pantalla pinta en esa columna— no
+    // devolvería un solo movimiento en efectivo.
+    if ('efectivo'.includes(q.toLowerCase())) {
+      textMatch.push(isNull(banksMovements.accountId))
+    }
+    filters.push(or(...textMatch)!)
   }
 
   const whereClause = filters.length ? and(...filters) : undefined
@@ -165,7 +213,7 @@ export default defineEventHandler(async (event) => {
     storeName: m.store?.name ?? null,
     method: m.method,
     note: m.note,
-    source: sourceOf(m),
+    source: sourceOf(m.type),
     reversesId: m.reversesId,
     createdByName: m.createdBy?.fullName ?? null,
     createdAt: m.createdAt

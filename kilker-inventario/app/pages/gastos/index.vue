@@ -406,6 +406,23 @@ async function refreshPayments() {
 }
 
 /**
+ * Tras borrar un pago (solo admin) hay que recargar el listado, no sólo los
+ * abonos: el saldo y el estado de pago los deriva el servidor por gasto, así que
+ * la fila —y el resumen del modal, que apunta a ella— seguirían mostrándolo como
+ * pagado.
+ *
+ * Nota: borrar el ÚLTIMO abono vuelve a permitir editar la cabecera del gasto
+ * (`PATCH /api/expenses/:id` la congela mientras haya pagos). Es intencional: es
+ * justo el camino que faltaba para corregir una captura sin anular el gasto.
+ */
+async function onPaymentDeleted() {
+  await refreshPayments()
+  await refresh()
+  const updated = expenses.value.find((x) => x.id === viewingExpense.value?.id)
+  if (updated) viewingExpense.value = updated
+}
+
+/**
  * Un gasto anulado no admite abonos: anularlo borró los que tenía y devolvió el
  * dinero. Sin esta guarda el modal seguiría ofreciendo el alta —el saldo vuelve
  * a ser el total al borrarse los pagos— y el servidor lo rechazaría con un 409.
@@ -1072,12 +1089,12 @@ onMounted(() => {
                 <li
                   v-for="p in payments"
                   :key="p.id"
-                  class="flex items-center justify-between gap-3 py-2"
+                  class="flex items-start justify-between gap-3 py-2"
                 >
-                  <div>
+                  <div class="min-w-0">
                     <p class="font-medium">{{ currency.format(Number(p.amount)) }} pagado por {{ p.paidBy }}</p>
                     <p class="text-xs text-muted">
-                      {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }} 
+                      {{ fmtDay(p.paidAt) }} · {{ PAYMENT_LABELS[p.method] }}
                       <span v-if="p.createdByName"> · {{ p.createdByName }}</span>
                       <span v-if="p.accountLabel"> · {{ p.accountLabel }}</span>
                       <span v-else-if="p.method !== 'efectivo'" class="text-warning">
@@ -1086,6 +1103,14 @@ onMounted(() => {
                     </p>
                     <p v-if="p.note" class="text-xs text-muted italic">"{{ p.note }}"</p>
                   </div>
+                  <!-- Solo admin (el propio componente se esconde). Borra el pago
+                       y revierte su movimiento de banco, sin anular el gasto. -->
+                  <BorrarPago
+                    :endpoint="`/api/expenses/${viewingExpense.id}`"
+                    :payment-id="p.id"
+                    :amount="Number(p.amount)"
+                    @done="onPaymentDeleted"
+                  />
                 </li>
               </ul>
             </div>
