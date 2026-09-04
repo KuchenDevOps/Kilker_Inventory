@@ -143,9 +143,10 @@ export default defineEventHandler(async (event) => {
 
   const mapped = rows.map((inv) => {
     // ─── Estado de cobro (derivado, no vive en la BD) ───
-    // El pagable es el total de la factura: ya trae el descuento aplicado y va
-    // sin IVA (el 16% de la app es informativo). Mismo criterio que entradas.
-    const totalToPay = Math.round(Number(inv.totalAmount) * 100) / 100
+    // ⚠️ El cobrable es la columna GENERADA `total_to_pay` = subtotal (ya con
+    // descuento) + IVA. No se recalcula aquí: el 16% de las ventas dejó de ser
+    // informativo y su única definición es la del DDL.
+    const totalToPay = Math.round(Number(inv.totalToPay) * 100) / 100
     const totalPaid =
       Math.round(inv.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
     const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
@@ -172,9 +173,11 @@ export default defineEventHandler(async (event) => {
       paymentMethod: inv.paymentMethod,
       discountPct: inv.discountPct,
       discountAmount: inv.discountAmount,
-      // No hay columna de subtotal: se deriva (el descuento es un % del subtotal).
+      // Subtotal ANTES del descuento: se deriva (el descuento es un % de él).
       subtotalAmount: String(Number(inv.totalAmount) + Number(inv.discountAmount)),
       totalAmount: inv.totalAmount,
+      /** IVA cobrado (columna generada). Ya NO es informativo. */
+      iva: inv.iva,
       note: inv.note,
       itemCount: inv.items.length,
       createdByName: inv.createdBy?.fullName ?? null,
@@ -225,8 +228,15 @@ export default defineEventHandler(async (event) => {
         total: count(),
         issuedCount: sql<number>`count(*) filter (where ${invoices.status} = 'emitida')::int`,
         issuedAmount: sql<string>`coalesce(sum(${invoices.totalAmount}) filter (where ${invoices.status} = 'emitida'), 0)`,
+        // ⚠️ El IVA del agregado sale de la SUMA de las columnas generadas, no
+        // del 16% del total sumado: redondear cada factura y luego sumar no da
+        // lo mismo que sumar y luego redondear, y la tarjeta tiene que cuadrar
+        // contra los renglones del listado, que llevan el IVA de cada una.
+        issuedIva: sql<string>`coalesce(sum(${invoices.iva}) filter (where ${invoices.status} = 'emitida'), 0)`,
+        issuedTotalToPay: sql<string>`coalesce(sum(${invoices.totalToPay}) filter (where ${invoices.status} = 'emitida'), 0)`,
         voidedCount: sql<number>`count(*) filter (where ${invoices.status} = 'anulada')::int`,
-        voidedAmount: sql<string>`coalesce(sum(${invoices.totalAmount}) filter (where ${invoices.status} = 'anulada'), 0)`
+        voidedAmount: sql<string>`coalesce(sum(${invoices.totalAmount}) filter (where ${invoices.status} = 'anulada'), 0)`,
+        voidedTotalToPay: sql<string>`coalesce(sum(${invoices.totalToPay}) filter (where ${invoices.status} = 'anulada'), 0)`
       })
       .from(invoices)
       .where(whereClause)
@@ -239,11 +249,14 @@ export default defineEventHandler(async (event) => {
     pageSize,
     totals: {
       issuedCount: Number(agg?.issuedCount ?? 0),
-      // Cobrable: ya trae el descuento aplicado y va SIN IVA (el 16% de la app
-      // es informativo y lo agrega el cliente; ver `ivaOf`).
+      /** Subtotal: con el descuento aplicado y SIN IVA. Es el ingreso del negocio. */
       issuedAmount: Math.round(Number(agg?.issuedAmount ?? 0) * 100) / 100,
+      issuedIva: Math.round(Number(agg?.issuedIva ?? 0) * 100) / 100,
+      /** Lo que se le cobra al cliente: subtotal + IVA. */
+      issuedTotalToPay: Math.round(Number(agg?.issuedTotalToPay ?? 0) * 100) / 100,
       voidedCount: Number(agg?.voidedCount ?? 0),
-      voidedAmount: Math.round(Number(agg?.voidedAmount ?? 0) * 100) / 100
+      voidedAmount: Math.round(Number(agg?.voidedAmount ?? 0) * 100) / 100,
+      voidedTotalToPay: Math.round(Number(agg?.voidedTotalToPay ?? 0) * 100) / 100
     }
   }
 })

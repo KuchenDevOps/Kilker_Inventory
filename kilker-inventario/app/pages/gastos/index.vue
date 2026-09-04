@@ -81,9 +81,9 @@ function clearFilters() {
 //  SUMATORIA DEL FILTRO (tarjetas)
 // ───────────────────────────────────────────────
 // ⚠️ La calcula el SERVIDOR sobre todo el filtro; sumar `expenses` daría el
-// total de la página visible. Aquí el IVA NO es informativo como en ventas:
-// sale de las columnas generadas de la base, y `subtotal + iva − retenciones`
-// es lo que de verdad se paga (`totalToPay`).
+// total de la página visible. El IVA sale de las columnas generadas de la base
+// (igual que en ventas), y `subtotal + iva − retenciones` es lo que de verdad se
+// paga (`totalToPay`); las retenciones son lo único que no tiene una venta.
 const totalHint = computed(() => {
   const n = totals.value.issuedCount
   const base = `${n} gasto${n === 1 ? '' : 's'} · sin IVA ni retenciones`
@@ -196,8 +196,8 @@ const validItems = computed(() =>
 )
 
 // El subtotal es la suma de conceptos; el IVA y las retenciones NO son
-// informativos (a diferencia de las ventas): lo que se paga es
-// `subtotal + IVA − retenciones`, y eso lo calcula la base en `total_to_pay`.
+// informativos: lo que se paga es `subtotal + IVA − retenciones`, y eso lo
+// calcula la base en `total_to_pay`.
 const formSubtotal = computed(() => validItems.value.reduce((sum, it) => sum + (it.amount ?? 0), 0))
 // `ivaOf` redondea a centavos igual que la columna generada de la base, así que
 // el preview del formulario no difiere del gasto ya guardado.

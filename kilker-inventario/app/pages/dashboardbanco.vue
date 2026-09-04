@@ -8,7 +8,9 @@
 // tarjetas ya no están y eran dos peticiones caras que nadie leía.
 //
 // ⚠️ Las tarjetas de arriba responden al periodo y a la sucursal; las de banco
-// son el histórico completo. Ver el comentario de esa sección en el template.
+// responden al periodo pero NO a la sucursal, porque el saldo vive por cuenta
+// bancaria y una cuenta no es de ninguna tienda. Ver el comentario de esa
+// sección más abajo.
 
 // El flujo de dinero no es de la operación diaria de mostrador: lo ven quienes
 // administran (empresa o sucursal) y el observador, en modo consulta.
@@ -45,7 +47,11 @@ const number = new Intl.NumberFormat('es-MX')
 // "Ventas cobradas" del periodo NO tiene por qué coincidir con los cobros
 // asentados en el libro de dinero: un abono de hoy puede estar pagando una
 // factura de hace tres meses.
+// ⚠️ `salesValue` es el SUBTOTAL (el ingreso; el IVA se entera al SAT), pero lo
+// cobrado y lo pendiente se miden contra `salesTotalToPay` = subtotal + IVA, que
+// es lo que se le factura al cliente. No es un descuadre: son dos preguntas.
 const netSalesValue = computed(() => summary.value?.salesValue ?? 0)
+const salesTotalToPay = computed(() => summary.value?.salesTotalToPay ?? 0)
 const salesPaid = computed(() => summary.value?.salesPaid ?? 0)
 const salesBalance = computed(() => summary.value?.salesBalance ?? 0)
 
@@ -62,7 +68,18 @@ const entriesBalance = computed(() => summary.value?.entriesBalance ?? 0)
 // ───────────────────────────────────────────────
 // Vienen desglosados por tipo (Fijo/Operativo); esta pantalla los muestra
 // sumados. El desglose por tipo está en el dashboard de inventario.
-const EMPTY_BUCKET = { subtotal: 0, totalPaid: 0, balance: 0 }
+// El bucket vacío replica la forma completa del que manda el servidor (no solo
+// los campos que se pintaban): sin `totalToPay` aquí, el modo "Con IVA" no
+// podría leerlo del fallback y TypeScript lo marcaría.
+const EMPTY_BUCKET = {
+  subtotal: 0,
+  iva: 0,
+  totalToPay: 0,
+  totalPaid: 0,
+  balance: 0,
+  retentionIva: 0,
+  retentionIsr: 0
+}
 
 const expensesByType = computed(
   () => summary.value?.expenses ?? { Fijo: EMPTY_BUCKET, Operativo: EMPTY_BUCKET }
@@ -79,13 +96,69 @@ const totalExpensesPending = computed(
 )
 
 // ───────────────────────────────────────────────
-//  MOVIMIENTOS DE BANCO (histórico completo, sin periodo)
+//  BOTÓN "CON IVA / SIN IVA"
 // ───────────────────────────────────────────────
+// Igual que en /dashboardresultados: solo cambia la VISTA. No recarga nada ni
+// toca la base — los importes que manda el servidor son los mismos en los dos
+// modos.
+//
+// Mueve DOS tarjetas y nada más: "Ventas totales" y "Total Gastos". Todo lo
+// demás se queda quieto porque ya es dinero real: lo cobrado y lo pendiente de
+// ventas (ver abajo), lo pagado y lo pendiente de gastos (que ya se miden contra
+// `total_to_pay`, o sea que YA llevan IVA), las compras (se costean sin IVA) y
+// el libro de banco (dinero asentado, no una simulación).
+//
+// En los DOS documentos el IVA es dinero real y lo calcula Postgres en columnas
+// generadas; el botón solo elige QUÉ columna se pinta, nunca multiplica:
+// - **Ventas:** `invoices.total_to_pay` (subtotal + IVA) es lo que se le cobra
+//   al cliente; `total_amount` es el subtotal, que es el ingreso del negocio.
+// - **Gastos:** `expenses.total_to_pay` (subtotal + IVA − retenciones) es lo que
+//   se le paga al proveedor. Ahí "con IVA" NO es `subtotal × 1.16`: con
+//   retenciones no coinciden.
+//
+// ⚠️ En los dos casos el subtotal es el número del NEGOCIO —el ingreso y el
+// gasto—, porque el IVA se entera al SAT. Por eso el modo "Sin IVA" no es una
+// vista simplificada: es la contable.
+const withIva = ref(false)
+
+// ⚠️ El botón solo mueve lo EMITIDO/DEVENGADO. Cobrado y pendiente no se tocan
+// porque ya vienen medidos contra `total_to_pay`: un abono es dinero que de
+// verdad entró y el saldo es lo que el cliente de verdad debe, IVA incluido.
+// Cambiarlos según el botón sería reescribir un hecho, no cambiar una vista.
+const displaySalesValue = computed(() =>
+  withIva.value ? salesTotalToPay.value : netSalesValue.value
+)
+const salesIvaHint = computed(() =>
+  withIva.value ? 'facturado con IVA (16%)' : 'subtotal, sin IVA'
+)
+
+// ⚠️ En gastos solo cambia el TOTAL: `totalPaid` y `balance` ya se miden contra
+// `total_to_pay`, o sea que siempre llevan IVA (ver el endpoint del summary).
+// De ahí que "pagados + pendientes" solo cuadre contra el total en modo Con IVA;
+// el hint lo dice para que la diferencia no se lea como un descuadre.
+const displayTotalExpenses = computed(() =>
+  withIva.value
+    ? expensesByType.value.Fijo.totalToPay + expensesByType.value.Operativo.totalToPay
+    : totalExpenses.value
+)
+const expensesTotalHint = computed(() =>
+  withIva.value ? 'en el periodo · con IVA − retenciones' : 'en el periodo · sin IVA'
+)
+
+// ───────────────────────────────────────────────
+//  MOVIMIENTOS DE BANCO
+// ───────────────────────────────────────────────
+// ⚠️ Responden al PERIODO pero no a la sucursal, y esto último no es un
+// descuido: el saldo vive por CUENTA BANCARIA y una cuenta no pertenece a
+// ninguna tienda (ver el encabezado de `GET /api/banks-movements`). Acotarlo por
+// sucursal daría un número que no es el saldo de nada.
 const {
-  globalBalance: bankGlobalBalance,
-  conceptTotal: bankInitialBalance,
+  periodNet: bankPeriodNet,
+  openingBalance: bankInitialBalance,
+  openingIsConcept: bankOpeningIsConcept,
   pending: loadingBankTotals,
-  error: bankTotalsError
+  error: bankTotalsError,
+  refresh: refreshBankTotals
 } = useCashFlowTotals()
 
 // ───────────────────────────────────────────────
@@ -143,6 +216,44 @@ watch(
 const activeStores = computed(() => stores.value.filter((s) => s.isActive).length)
 
 // ───────────────────────────────────────────────
+//  RÓTULOS DE LAS TARJETAS DE BANCO
+// ───────────────────────────────────────────────
+const dateLabel = new Intl.DateTimeFormat('es-MX', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric'
+})
+
+/**
+ * Corte del "Saldos iniciales", igual que el "Inventario inicial" del dashboard
+ * de resultados: `from` es el instante en que ARRANCA la ventana, así que el
+ * saldo de apertura queda al día ANTERIOR. Elegir agosto muestra el saldo al 31
+ * de julio, no al 1 de agosto.
+ */
+const bankOpeningCutoffLabel = computed(() => {
+  if (!periodFrom.value) return null
+  const prevDay = new Date(periodFrom.value)
+  prevDay.setDate(prevDay.getDate() - 1)
+  return dateLabel.format(prevDay)
+})
+
+/**
+ * Saldo al cierre = con qué dinero se termina el periodo: apertura + lo que se
+ * movió dentro.
+ *
+ * ⚠️ Sin periodo NO se suma la apertura. Ahí "apertura" son los movimientos del
+ * concepto «Saldo inicial», que ya vienen contados dentro del neto de todo el
+ * libro, y sumarlos los contaría dos veces. Sin periodo el neto de todo el libro
+ * YA ES el saldo de todas las bolsas (es la misma suma que hace `globalBalance`
+ * en el endpoint), así que el cierre es él mismo.
+ */
+const bankClosingBalance = computed(() =>
+  bankOpeningIsConcept.value
+    ? bankPeriodNet.value
+    : Math.round((bankInitialBalance.value + bankPeriodNet.value) * 100) / 100
+)
+
+// ───────────────────────────────────────────────
 //  RECARGA
 // ───────────────────────────────────────────────
 // Una sola función y un solo disparador. Antes había tres caminos que llamaban
@@ -152,12 +263,17 @@ const activeStores = computed(() => stores.value.filter((s) => s.isActive).lengt
 const lastRefreshTime = ref(Date.now())
 
 async function refreshAllData() {
-  await refreshSummary({
-    storeId: selectedStoreId.value || undefined,
-    from: periodFrom.value,
-    to: periodTo.value,
-    month: derivedMonth.value
-  })
+  // Las dos en paralelo: son la misma pantalla y no dependen una de la otra.
+  // ⚠️ Los totales de banco NO reciben `storeId` a propósito (ver su sección).
+  await Promise.all([
+    refreshSummary({
+      storeId: selectedStoreId.value || undefined,
+      from: periodFrom.value,
+      to: periodTo.value,
+      month: derivedMonth.value
+    }),
+    refreshBankTotals({ from: periodFrom.value, to: periodTo.value })
+  ])
 
   lastRefreshTime.value = Date.now()
 }
@@ -214,8 +330,8 @@ const metricsSection2 = computed(() => {
   const all = [
     {
       label: 'Ventas totales',
-      value: currency.format(netSalesValue.value),
-      hint: 'emitidas en el periodo',
+      value: currency.format(displaySalesValue.value),
+      hint: `emitidas en el periodo · ${salesIvaHint.value}`,
       icon: 'i-lucide-receipt',
       color: 'text-primary',
       loading: loadingSummary.value,
@@ -224,7 +340,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Ventas cobradas',
       value: currency.format(salesPaid.value),
-      hint: 'abonado a las ventas del periodo',
+      hint: 'abonado a las ventas del periodo · con IVA, es lo que se factura',
       icon: 'i-lucide-circle-check',
       color: 'text-success',
       loading: loadingSummary.value,
@@ -233,7 +349,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Ventas por cobrar',
       value: currency.format(salesBalance.value),
-      hint: 'saldo pendiente de los clientes',
+      hint: 'saldo pendiente de los clientes · con IVA',
       icon: 'i-lucide-clock',
       color: 'text-warning',
       loading: loadingSummary.value,
@@ -267,9 +383,9 @@ const metricsSection2 = computed(() => {
       globalOnly: false
     },
     {
-      label: 'Total Gastos',
-      value: currency.format(totalExpenses.value),
-      hint: 'en el periodo',
+      label: withIva.value ? 'Total Gastos a pagar' : 'Total Gastos',
+      value: currency.format(displayTotalExpenses.value),
+      hint: expensesTotalHint.value,
       icon: 'i-lucide-wrench',
       color: 'text-warning',
       loading: loadingSummary.value,
@@ -278,7 +394,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Total gastos Pagados',
       value: currency.format(totalExpensesPaid.value),
-      hint: 'en el periodo',
+      hint: 'en el periodo · abonado sobre lo pagable (con IVA)',
       icon: 'i-lucide-circle-check',
       color: 'text-success',
       loading: loadingSummary.value,
@@ -287,7 +403,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Total gastos pendientes',
       value: currency.format(totalExpensesPending.value),
-      hint: 'en el periodo',
+      hint: 'en el periodo · saldo sobre lo pagable (con IVA)',
       icon: 'i-lucide-clock',
       color: 'text-warning',
       loading: loadingSummary.value,
@@ -315,6 +431,11 @@ const metricsSection2 = computed(() => {
 
     <div class="flex flex-wrap items-center gap-3">
       <FiltroCortePeriodo v-model:from="periodFrom" v-model:to="periodTo" />
+      <!-- Solo cambia la vista de ventas y gastos: no recarga nada. -->
+      <BotonIva
+        v-model="withIva"
+        title="Cambia entre el subtotal (el ingreso y el gasto del negocio) y lo que se factura y se paga con IVA (16%)."
+      />
       <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       <span class="text-xs text-muted ml-auto">
         Última actualización: {{ new Date(lastRefreshTime).toLocaleTimeString() }}
@@ -406,8 +527,15 @@ const metricsSection2 = computed(() => {
                 >
                   {{ currency.format(bankInitialBalance) }}
                 </p>
+                <!-- Con periodo es el saldo de apertura (todo lo asentado antes
+                     de arrancar); sin periodo no hay "antes", así que son los
+                     movimientos del concepto «Saldo inicial». -->
                 <p class="text-xs text-muted mt-1">
-                  movimientos con concepto «Saldo inicial»
+                  {{
+                    bankOpeningIsConcept
+                      ? 'movimientos con concepto «Saldo inicial»'
+                      : `saldo acumulado al ${bankOpeningCutoffLabel}`
+                  }}
                 </p>
               </template>
             </div>
@@ -417,17 +545,23 @@ const metricsSection2 = computed(() => {
         <UCard>
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <p class="text-sm text-muted">Total de movimientos</p>
+              <p class="text-sm text-muted">Saldo al cierre</p>
               <template v-if="loadingBankTotals">
                 <USkeleton class="h-8 w-24 mt-1" />
                 <USkeleton class="h-3 w-16 mt-2" />
               </template>
               <template v-else>
+                <!-- Con qué dinero se termina el periodo: apertura + lo movido
+                     dentro. Sin periodo, el neto de todo el libro ya es el saldo. -->
                 <p
                   class="mt-1 text-2xl font-semibold"
-                  :class="bankGlobalBalance < 0 ? 'text-error' : ''"
+                  :class="bankClosingBalance < 0 ? 'text-error' : ''"
                 >
-                  {{ currency.format(bankGlobalBalance) }}
+                  {{ currency.format(bankClosingBalance) }}
+                </p>
+                <p class="text-xs text-muted mt-1">
+                  {{ bankOpeningIsConcept ? 'movimientos del histórico' : 'movimientos del periodo' }}
+                  <span class="tabular-nums">{{ currency.format(bankPeriodNet) }}</span>
                 </p>
                 <p class="text-xs text-muted mt-1">
                   cobros, pagos y capturas manuales · todas las bolsas

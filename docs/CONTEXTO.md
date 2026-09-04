@@ -153,7 +153,9 @@ Vercel.**
 - [x] **Reportes y exportación:** **sí**, hay reportes de valuación, costo promedio y
       utilidad por producto, con **exportación a Excel**. PDF sigue sin hacerse.
 - [x] **Facturación:** el comprobante es **interno** (folio propio por sucursal), **sin
-      CFDI/SAT**. El IVA (16%) se muestra como dato informativo calculado en la app.
+      CFDI/SAT**. El IVA (16%) **sí se cobra**: `invoices.total_to_pay` = subtotal + IVA,
+      columna generada por Postgres (igual que en gastos). Dejó de ser informativo; lo que
+      sigue siendo el ingreso del negocio es el subtotal, porque el IVA se entera al SAT.
 - [x] **Costeo:** **FIFO calculado sobre el kardex** para valuación y utilidad; la captura
       de entradas usa el **costo estándar** del producto (`products.cost`), sin costeo por
       lote.

@@ -29,8 +29,11 @@ const ZERO_MOVEMENT_TOTALS: ApiMovementsTotals = {
 const ZERO_SALES_TOTALS: ApiSalesTotals = {
   issuedCount: 0,
   issuedAmount: 0,
+  issuedIva: 0,
+  issuedTotalToPay: 0,
   voidedCount: 0,
-  voidedAmount: 0
+  voidedAmount: 0,
+  voidedTotalToPay: 0
 }
 
 export function useMovementsHistory() {

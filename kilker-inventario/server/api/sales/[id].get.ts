@@ -55,9 +55,13 @@ export default defineEventHandler(async (event) => {
     paymentMethod: invoice.paymentMethod,
     discountPct: invoice.discountPct,
     discountAmount: invoice.discountAmount,
-    // No hay columna de subtotal: se deriva (el descuento es un % del subtotal).
+    // Subtotal ANTES del descuento: se deriva (el descuento es un % de él).
     subtotalAmount: String(Number(invoice.totalAmount) + Number(invoice.discountAmount)),
     totalAmount: invoice.totalAmount,
+    /** Columnas GENERADAS: el IVA cobrado y el total que paga el cliente. */
+    iva: invoice.iva,
+    // Número, como en el listado: el cobrable se opera, no se muestra crudo.
+    totalToPay: Math.round(Number(invoice.totalToPay) * 100) / 100,
     note: invoice.note,
     itemCount: invoice.items.length,
     createdByName: invoice.createdBy?.fullName ?? null,

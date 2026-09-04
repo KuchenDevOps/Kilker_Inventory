@@ -1,0 +1,2 @@
+ALTER TABLE "invoices" ADD COLUMN "iva" numeric(14, 2) GENERATED ALWAYS AS (round("total_amount" * 0.16, 2)) STORED NOT NULL;--> statement-breakpoint
+ALTER TABLE "invoices" ADD COLUMN "total_to_pay" numeric(14, 2) GENERATED ALWAYS AS ("total_amount" + round("total_amount" * 0.16, 2)) STORED NOT NULL;

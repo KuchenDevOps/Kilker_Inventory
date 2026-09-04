@@ -3,8 +3,9 @@ import { PAYMENT_LABELS, UNIT_LABELS, type PaymentMethod } from '~/types/inventa
 import { CHANNEL_LABELS, type SaleChannel } from '~/types/inventario'
 
 // Forma mínima de la respuesta de /api/sales que consume la UI.
+// `totalToPay` es columna generada (subtotal + IVA): lo que se le cobra.
 interface SaleResult {
-  invoice: { folio: string; totalAmount: string }
+  invoice: { folio: string; totalAmount: string; totalToPay: string }
 }
 
 useHead({ title: 'Nueva venta · Inventario Kilker' })
@@ -170,8 +171,6 @@ const validKitLines = computed(() =>
   kitLines.filter((l) => l.kitId != null && (l.quantity ?? 0) > 0)
 )
 
-const IVA_RATE = 0.16
-
 // El subtotal incluye productos sueltos y kits; el descuento es un % sobre ese
 // subtotal, así que aplica por igual a todo — incluidos los kits completos.
 const subtotal = computed(
@@ -182,7 +181,13 @@ const subtotal = computed(
 const grandTotal = computed(() => subtotal.value * (1 - discount.value / 100))
 const discountTotal = computed(() => subtotal.value - grandTotal.value)
 
-const saleIva = computed(() => grandTotal.value * IVA_RATE)
+// ⚠️ Esto es un PREVIEW del cobro, no el cobro. Quien manda es la base:
+// `invoices.iva` y `total_to_pay` son columnas generadas y se calculan al
+// guardar. `ivaOf` redondea a centavos igual que ellas para que el número del
+// carrito no difiera del de la factura; la tasa vive en `utils/iva.ts`, no en
+// una copia local (esta pantalla tenía la suya).
+const saleIva = computed(() => ivaOf(grandTotal.value))
+const saleTotalToPay = computed(() => grandTotal.value + saleIva.value)
 
 function addLine() {
   lines.push({ productId: undefined, quantity: undefined, unitPrice: undefined })
@@ -245,8 +250,10 @@ async function onSubmit() {
     await refreshProducts()
     toast.add({
       title: 'Venta registrada',
+      // El importe del aviso es el COBRADO (con IVA), que es el que el cajero
+      // acaba de pedirle al cliente.
       description: `Folio ${result.invoice.folio} · ${currency.format(
-        Number(result.invoice.totalAmount)
+        Number(result.invoice.totalToPay)
       )}`,
       color: 'success',
       icon: 'i-lucide-circle-check',
@@ -677,18 +684,20 @@ async function quickCreateCustomer() {
               <span>Descuento</span>
               <p>-{{ currency.format(discountTotal) }}</p>
             </div>
-            <div class="flex justify-between gap-20 text-xl font-semibold tabular-nums">
-              <span v-if="!discount">Total</span>
-              <span v-else="discount">Total Final</span>
+            <!-- El importe grande es lo que se le COBRA al cliente; arriba, cómo
+                 se llega a él. El IVA ya no es una nota al pie: se cobra. -->
+            <div class="flex justify-between gap-20 text-sm text-muted tabular-nums">
+              <span v-if="!discount">Subtotal</span>
+              <span v-else>Subtotal con descuento</span>
               <p>{{ currency.format(grandTotal) }}</p>
             </div>
-            <div v-if="grandTotal > 0" class="flex justify-between gap-20 text-xs text-muted mt-1">
-              <span>IVA (16%) · informativo</span>
+            <div class="flex justify-between gap-20 text-sm text-muted tabular-nums">
+              <span>IVA (16%)</span>
               <p>{{ currency.format(saleIva) }}</p>
             </div>
-            <div class="flex justify-between gap-20 text-lg font-semibold tabular-nums">
-                <span>Total con IVA: </span>
-                <p>{{ currency.format(saleIva + grandTotal) }}</p>
+            <div class="flex justify-between gap-20 text-xl font-semibold tabular-nums mt-1">
+              <span>Total a cobrar</span>
+              <p>{{ currency.format(saleTotalToPay) }}</p>
             </div>
 
             
