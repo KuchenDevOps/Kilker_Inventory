@@ -63,6 +63,12 @@ export default defineEventHandler(async (event) => {
     const conds = [eq(invoices.storeId, storeId), lt(invoices.issuedAt, periodTo)]
     if (periodFrom) conds.push(gte(invoices.issuedAt, periodFrom))
     const rows = await tx
+      // ⚠️ El corte va SIN IVA: cuenta `total_amount` (el subtotal, ya con el
+      // descuento), no `total_to_pay`. Es una decisión del negocio, no un
+      // descuido: el corte se usa como reporte de VENTA NETA, no como arqueo del
+      // cajón. Consecuencia que hay que conocer antes de "corregirlo": el corte
+      // reporta ~16% menos que el efectivo y las terminales que hay físicamente,
+      // porque al cliente sí se le cobra el IVA (`total_to_pay`).
       .select({
         status: invoices.status,
         paymentMethod: invoices.paymentMethod,

@@ -44,10 +44,19 @@ export interface DashboardSummary {
   /** Abonado y saldo de esas mismas compras: suman `entriesValue`. */
   entriesPaid: number
   entriesBalance: number
-  /** Ventas emitidas del periodo. */
-  salesValue: number
   /**
-   * Cobrado y por cobrar de esas mismas ventas: suman `salesValue`.
+   * Ventas emitidas del periodo, en SUBTOTAL (sin IVA): el ingreso del negocio.
+   * El IVA cobrado se entera al SAT, así que no entra aquí.
+   */
+  salesValue: number
+  /** IVA de esas ventas (`invoices.iva`, columna generada). */
+  salesIva: number
+  /** Lo facturado al cliente: `salesValue + salesIva`. Es lo que se cobra. */
+  salesTotalToPay: number
+  /**
+   * Cobrado y por cobrar de esas mismas ventas: suman `salesTotalToPay`, NO
+   * `salesValue` — desde que el IVA de ventas dejó de ser informativo, el
+   * cobrable es `invoices.total_to_pay`.
    *
    * ⚠️ Es dinero de la CARTERA, no del banco. Lo que mueve el saldo bancario es
    * el abono cuando entra, y una venta a crédito no mueve un peso hasta que se
