@@ -47,10 +47,12 @@ const number = new Intl.NumberFormat('es-MX')
 // "Ventas cobradas" del periodo NO tiene por qué coincidir con los cobros
 // asentados en el libro de dinero: un abono de hoy puede estar pagando una
 // factura de hace tres meses.
-// ⚠️ `salesValue` es el SUBTOTAL (el ingreso; el IVA se entera al SAT), pero lo
-// cobrado y lo pendiente se miden contra `salesTotalToPay` = subtotal + IVA, que
-// es lo que se le factura al cliente. No es un descuadre: son dos preguntas.
-const netSalesValue = computed(() => summary.value?.salesValue ?? 0)
+// ⚠️ Esta pantalla trabaja SIEMPRE con IVA: emitido, cobrado y pendiente salen
+// los tres de `total_to_pay` (subtotal + IVA), que es lo que se le factura y se
+// le cobra al cliente. Por eso no lee `salesValue` (el subtotal, que es el
+// ingreso contable del negocio): esa lectura es la de /dashboardresultados, y
+// mezclarlas aquí era justo lo que confundía —dos tarjetas contiguas midiendo
+// contra bases distintas.
 const salesTotalToPay = computed(() => summary.value?.salesTotalToPay ?? 0)
 const salesPaid = computed(() => summary.value?.salesPaid ?? 0)
 const salesBalance = computed(() => summary.value?.salesBalance ?? 0)
@@ -69,8 +71,8 @@ const entriesBalance = computed(() => summary.value?.entriesBalance ?? 0)
 // Vienen desglosados por tipo (Fijo/Operativo); esta pantalla los muestra
 // sumados. El desglose por tipo está en el dashboard de inventario.
 // El bucket vacío replica la forma completa del que manda el servidor (no solo
-// los campos que se pintaban): sin `totalToPay` aquí, el modo "Con IVA" no
-// podría leerlo del fallback y TypeScript lo marcaría.
+// los campos que se pintan): `totalToPay` tiene que estar aquí porque es el que
+// se muestra, y sin él el fallback no lo tendría y TypeScript lo marcaría.
 const EMPTY_BUCKET = {
   subtotal: 0,
   iva: 0,
@@ -85,9 +87,6 @@ const expensesByType = computed(
   () => summary.value?.expenses ?? { Fijo: EMPTY_BUCKET, Operativo: EMPTY_BUCKET }
 )
 
-const totalExpenses = computed(
-  () => expensesByType.value.Fijo.subtotal + expensesByType.value.Operativo.subtotal
-)
 const totalExpensesPaid = computed(
   () => expensesByType.value.Fijo.totalPaid + expensesByType.value.Operativo.totalPaid
 )
@@ -96,53 +95,30 @@ const totalExpensesPending = computed(
 )
 
 // ───────────────────────────────────────────────
-//  BOTÓN "CON IVA / SIN IVA"
+//  TODO CON IVA (16%) — sin interruptor
 // ───────────────────────────────────────────────
-// Igual que en /dashboardresultados: solo cambia la VISTA. No recarga nada ni
-// toca la base — los importes que manda el servidor son los mismos en los dos
-// modos.
+// Aquí NO hay botón "Con IVA / Sin IVA", a diferencia de /dashboardresultados.
+// Es a propósito: esta pantalla mide DINERO —lo que se factura, lo que se cobra
+// y lo que se paga—, y en esa lectura el IVA es dinero real que entra y sale. La
+// vista sin IVA es la contable (el ingreso y el gasto del negocio, porque el IVA
+// se entera al SAT) y vive en /dashboardresultados, que es donde tiene sentido.
 //
-// Mueve DOS tarjetas y nada más: "Ventas totales" y "Total Gastos". Todo lo
-// demás se queda quieto porque ya es dinero real: lo cobrado y lo pendiente de
-// ventas (ver abajo), lo pagado y lo pendiente de gastos (que ya se miden contra
-// `total_to_pay`, o sea que YA llevan IVA), las compras (se costean sin IVA) y
-// el libro de banco (dinero asentado, no una simulación).
+// ⚠️ Con el botón, las tarjetas de una misma fila NO medían todas contra la
+// misma base: cobrado y pendiente siempre salen de `total_to_pay`, así que en
+// modo "Sin IVA" "pagados + pendientes" no cuadraba contra el total y parecía un
+// descuadre. Fijando el modo, las tres tarjetas de ventas —y las tres de
+// gastos— hablan por fin del mismo número.
 //
-// En los DOS documentos el IVA es dinero real y lo calcula Postgres en columnas
-// generadas; el botón solo elige QUÉ columna se pinta, nunca multiplica:
-// - **Ventas:** `invoices.total_to_pay` (subtotal + IVA) es lo que se le cobra
-//   al cliente; `total_amount` es el subtotal, que es el ingreso del negocio.
-// - **Gastos:** `expenses.total_to_pay` (subtotal + IVA − retenciones) es lo que
-//   se le paga al proveedor. Ahí "con IVA" NO es `subtotal × 1.16`: con
-//   retenciones no coinciden.
+// ⚠️ Nada de esto se multiplica en la app: el IVA lo calcula Postgres en
+// columnas GENERADAS y aquí solo se elige qué columna se pinta.
+// - **Ventas:** `invoices.total_to_pay` = subtotal + IVA.
+// - **Gastos:** `expenses.total_to_pay` = subtotal + IVA − retenciones. Ahí "con
+//   IVA" NO es `subtotal × 1.16`: con retenciones no coinciden.
 //
-// ⚠️ En los dos casos el subtotal es el número del NEGOCIO —el ingreso y el
-// gasto—, porque el IVA se entera al SAT. Por eso el modo "Sin IVA" no es una
-// vista simplificada: es la contable.
-const withIva = ref(false)
-
-// ⚠️ El botón solo mueve lo EMITIDO/DEVENGADO. Cobrado y pendiente no se tocan
-// porque ya vienen medidos contra `total_to_pay`: un abono es dinero que de
-// verdad entró y el saldo es lo que el cliente de verdad debe, IVA incluido.
-// Cambiarlos según el botón sería reescribir un hecho, no cambiar una vista.
-const displaySalesValue = computed(() =>
-  withIva.value ? salesTotalToPay.value : netSalesValue.value
-)
-const salesIvaHint = computed(() =>
-  withIva.value ? 'facturado con IVA (16%)' : 'subtotal, sin IVA'
-)
-
-// ⚠️ En gastos solo cambia el TOTAL: `totalPaid` y `balance` ya se miden contra
-// `total_to_pay`, o sea que siempre llevan IVA (ver el endpoint del summary).
-// De ahí que "pagados + pendientes" solo cuadre contra el total en modo Con IVA;
-// el hint lo dice para que la diferencia no se lea como un descuadre.
-const displayTotalExpenses = computed(() =>
-  withIva.value
-    ? expensesByType.value.Fijo.totalToPay + expensesByType.value.Operativo.totalToPay
-    : totalExpenses.value
-)
-const expensesTotalHint = computed(() =>
-  withIva.value ? 'en el periodo · con IVA − retenciones' : 'en el periodo · sin IVA'
+// Las COMPRAS se quedan como están: se costean sin IVA y el botón nunca las
+// movió. Y el libro de banco tampoco: es dinero ya asentado, no una vista.
+const displayTotalExpenses = computed(
+  () => expensesByType.value.Fijo.totalToPay + expensesByType.value.Operativo.totalToPay
 )
 
 // ───────────────────────────────────────────────
@@ -330,8 +306,8 @@ const metricsSection2 = computed(() => {
   const all = [
     {
       label: 'Ventas totales',
-      value: currency.format(displaySalesValue.value),
-      hint: `emitidas en el periodo · ${salesIvaHint.value}`,
+      value: currency.format(salesTotalToPay.value),
+      hint: 'emitidas en el periodo · facturado con IVA (16%)',
       icon: 'i-lucide-receipt',
       color: 'text-primary',
       loading: loadingSummary.value,
@@ -383,9 +359,9 @@ const metricsSection2 = computed(() => {
       globalOnly: false
     },
     {
-      label: withIva.value ? 'Total Gastos a pagar' : 'Total Gastos',
+      label: 'Total Gastos a pagar',
       value: currency.format(displayTotalExpenses.value),
-      hint: expensesTotalHint.value,
+      hint: 'en el periodo · con IVA − retenciones',
       icon: 'i-lucide-wrench',
       color: 'text-warning',
       loading: loadingSummary.value,
@@ -431,11 +407,6 @@ const metricsSection2 = computed(() => {
 
     <div class="flex flex-wrap items-center gap-3">
       <FiltroCortePeriodo v-model:from="periodFrom" v-model:to="periodTo" />
-      <!-- Solo cambia la vista de ventas y gastos: no recarga nada. -->
-      <BotonIva
-        v-model="withIva"
-        title="Cambia entre el subtotal (el ingreso y el gasto del negocio) y lo que se factura y se paga con IVA (16%)."
-      />
       <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       <span class="text-xs text-muted ml-auto">
         Última actualización: {{ new Date(lastRefreshTime).toLocaleTimeString() }}
