@@ -516,7 +516,10 @@ export interface ApiSale {
   subtotalAmount: string
   discountPct: string
   discountAmount: string
-  totalAmount: string  
+  /** SUBTOTAL con el descuento aplicado, SIN IVA. Es el ingreso del negocio. */
+  totalAmount: string
+  /** IVA cobrado (columna generada de la BD). Ya no es informativo. */
+  iva: string
   note: string | null
   itemCount: number
   createdByName: string | null
@@ -525,7 +528,7 @@ export interface ApiSale {
   voidReason: string | null
   /** true si hay un ticket de corrección ABIERTO para esta venta. */
   pendingCorrection?: boolean
-  /** Importe cobrable (= totalAmount, ya con descuento y sin IVA). */
+  /** Lo que se le cobra al cliente: subtotal + IVA (`invoices.total_to_pay`). */
   totalToPay: number
   totalPaid: number
   balance: number
@@ -598,24 +601,30 @@ export interface ApiSaleItem {
 }
 
 export interface ApiSaleDetail
-  extends Omit<ApiSale, 'totalToPay' | 'totalPaid' | 'balance' | 'paymentStatus'> {
+  extends Omit<ApiSale, 'totalPaid' | 'balance' | 'paymentStatus'> {
   items: ApiSaleItem[]
 }
 
 /**
  * Sumatoria de `GET /api/sales?page=…`, sobre TODO el filtro (no la página).
  *
- * ⚠️ La venta del negocio es `issuedAmount`: las anuladas van aparte porque no
- * son ingreso (devolvieron la mercancía y perdieron sus abonos), pero se
- * informan para que la pantalla pueda decir cuánto quedó fuera.
- * Va sin IVA — el 16% de las ventas es informativo y lo pone el cliente
- * (`ivaOf`), no la base.
+ * ⚠️ La venta del negocio es `issuedAmount` —el SUBTOTAL, sin IVA—: el IVA se
+ * entera al SAT, no es ingreso. Lo que se le cobra al cliente es
+ * `issuedTotalToPay` (subtotal + IVA), y las dos cifras vienen de la base, no de
+ * multiplicar aquí.
+ *
+ * Las anuladas van aparte porque no son ingreso (devolvieron la mercancía y
+ * perdieron sus abonos), pero se informan para que la pantalla pueda decir
+ * cuánto quedó fuera en vez de esconderlo.
  */
 export interface ApiSalesTotals {
   issuedCount: number
   issuedAmount: number
+  issuedIva: number
+  issuedTotalToPay: number
   voidedCount: number
   voidedAmount: number
+  voidedTotalToPay: number
 }
 
 export interface ApiSalesPage {
@@ -947,10 +956,10 @@ export interface ApiExpense {
 /**
  * Sumatoria de `GET /api/expenses?page=…`, sobre TODO el filtro (no la página).
  *
- * ⚠️ A diferencia de las ventas, aquí el IVA NO es informativo: sale de las
- * columnas generadas de la base (`iva`, `total_to_pay`), así que `subtotal +
- * iva − retenciones = totalToPay`. Los gastos ANULADOS quedan fuera (igual que
- * en el dashboard) y se informan aparte.
+ * ⚠️ El IVA sale de las columnas generadas de la base (`iva`, `total_to_pay`),
+ * igual que en ventas, así que `subtotal + iva − retenciones = totalToPay` (las
+ * retenciones son lo único que una venta no tiene). Los gastos ANULADOS quedan
+ * fuera (igual que en el dashboard) y se informan aparte.
  */
 export interface ApiExpensesTotals {
   issuedCount: number

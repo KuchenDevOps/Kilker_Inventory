@@ -5,17 +5,18 @@
  * ⚠️ **Solo cambia la vista.** No recarga nada ni toca la base: los importes que
  * manda el servidor son siempre los mismos y el cambio se pinta en el cliente.
  *
- * El componente **no calcula el IVA a propósito**, porque "con IVA" no significa
- * lo mismo en todas las pantallas y un cálculo aquí dentro escondería esa
- * diferencia (ver `~/utils/iva.ts`):
- * - **Ventas:** el IVA es INFORMATIVO. No está en la BD; lo aplica la pantalla
- *   con `ivaOf` sobre `invoices.total_amount`, que es el cobrable real.
- * - **Gastos:** el IVA es parte de lo que de verdad se paga y lo calcula
- *   Postgres en columnas generadas (`iva`, `total_to_pay`), ya con las
- *   retenciones descontadas. Ahí "con IVA" es `totalToPay`, no `subtotal × 1.16`.
+ * El componente **no calcula el IVA a propósito**: en los dos documentos el 16%
+ * es dinero real y lo calcula Postgres en columnas generadas, así que la página
+ * elige QUÉ columna pinta y nunca multiplica (ver `~/utils/iva.ts`):
+ * - **Ventas:** `invoices.total_to_pay` = subtotal + IVA. Es lo que se le cobra
+ *   al cliente.
+ * - **Gastos:** `expenses.total_to_pay` = subtotal + IVA − retenciones. Es lo
+ *   que se le paga al proveedor, y **no** es `subtotal × 1.16`: con retenciones
+ *   esas dos cifras no coinciden.
  *
- * Cada página decide entonces qué importe pinta en cada modo; esto solo unifica
- * cómo se ve el interruptor.
+ * ⚠️ El modo "Sin IVA" no es una vista simplificada, es la CONTABLE: el subtotal
+ * es el ingreso y el gasto del negocio, porque el IVA se entera al SAT y no es
+ * ninguno de los dos. Por eso utilidad, márgenes y costo nunca lo llevan.
  */
 const model = defineModel<boolean>({ required: true })
 

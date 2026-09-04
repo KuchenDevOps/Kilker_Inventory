@@ -238,9 +238,9 @@ async function openDetail(sale: ApiSale) {
 // ───────────────────────────────────────────────
 //  MODAL DE PAGOS DE LA VENTA
 // ───────────────────────────────────────────────
-// El cobrable es el total de la factura: ya trae el descuento aplicado y va sin
-// IVA (el 16% que muestra el detalle es informativo y no se guarda). No se
-// captura "quién pagó" como en gastos: quien paga es el cliente de la factura.
+// El cobrable es `invoices.total_to_pay`: el total con el descuento ya aplicado
+// MÁS el IVA (16%), que lo calcula la base. No se captura "quién pagó" como en
+// gastos: quien paga es el cliente de la factura.
 const viewingSale = ref<ApiSale | null>(null)
 const showPaymentsModal = ref(false)
 const payments = ref<ApiSalePayment[]>([])
@@ -424,18 +424,18 @@ function itemsGroupedByKit(items: ApiSaleItem[]): ApiSaleItem[] {
 
 function totalsToSheet(sales: ApiSale[]): SheetRow[] {
   const bucket = (rows: ApiSale[]) => {
-    const total = round2(rows.reduce((acc, s) => acc + Number(s.totalAmount), 0))
-    // IVA del bucket: 16% del total del bucket, NO la suma de los IVA por
-    // factura (redondear factura por factura y luego sumar deja centavos de
-    // diferencia contra "Total con IVA").
-    const iva = ivaOf(total)
+    // ⚠️ El IVA del bucket es la SUMA de los IVA por factura, no el 16% del
+    // total. Desde que dejó de ser informativo, el de cada factura es un dato de
+    // la base (`invoices.iva`) y es el que se cobró: recalcularlo sobre el total
+    // daría un bucket que no cuadra con sus propios renglones de la hoja
+    // "Ventas". La diferencia son centavos, y salen todos del redondeo.
     return {
       Facturas: rows.length,
       Subtotal: round2(rows.reduce((acc, s) => acc + Number(s.subtotalAmount), 0)),
       Descuento: round2(rows.reduce((acc, s) => acc + Number(s.discountAmount), 0)),
-      Total: total,
-      'IVA (16%)': iva,
-      'Total con IVA': round2(total + iva)
+      Total: round2(rows.reduce((acc, s) => acc + Number(s.totalAmount), 0)),
+      'IVA (16%)': round2(rows.reduce((acc, s) => acc + Number(s.iva), 0)),
+      'Total con IVA': round2(rows.reduce((acc, s) => acc + Number(s.totalToPay), 0))
     }
   }
 
@@ -459,10 +459,9 @@ function salesToSheet(rows: ApiSale[]) {
     'Descuento %': Number(s.discountPct),
     Descuento: round2(Number(s.discountAmount)),
     Total: round2(Number(s.totalAmount)),
-    // El IVA no vive en la BD: es el 16% informativo que la app calcula sobre
-    // el total (que ya trae el descuento aplicado).
-    'IVA (16%)': ivaOf(Number(s.totalAmount)),
-    'Total con IVA': round2(Number(s.totalAmount) + ivaOf(Number(s.totalAmount))),
+    // IVA y total cobrado: columnas GENERADAS de la base, no un cálculo de aquí.
+    'IVA (16%)': round2(Number(s.iva)),
+    'Total con IVA': round2(s.totalToPay),
     Canal: s.channel === 'en_linea' ? 'En línea' : 'Mostrador',
     Estado: s.status === 'anulada' ? 'Anulada' : 'Emitida',
     // Pagado: round2(s.totalPaid ?? 0),
@@ -542,7 +541,7 @@ function downloadSalesWorkbook(sales: ApiSale[], filenamePrefix: string) {
       [],
       ['La venta del negocio es el renglón "Ventas emitidas".'],
       ['Las anuladas salen en las demás hojas (columna Estado) pero no son venta.'],
-      ['El IVA es informativo: se calcula al 16% y no está guardado en el sistema.']
+      ['"Total" es el subtotal sin IVA: es el ingreso. "Total con IVA" es lo que se le cobra al cliente.']
     ],
     { origin: -1 }
   )
@@ -634,20 +633,21 @@ async function exportAll() {
   }
 }
 
-// La tasa vive en `utils/iva.ts`; esta pantalla tenía su propia copia.
-const detailIva = computed(() => (detail.value ? ivaOf(Number(detail.value.totalAmount)) : 0))
+// ⚠️ El IVA de la venta ya NO se calcula aquí: viene de la base (columna
+// generada `invoices.iva`) porque es dinero que se cobra, no un adorno.
+const detailIva = computed(() => (detail.value ? Number(detail.value.iva) : 0))
 
 // ───────────────────────────────────────────────
 //  SUMATORIA DEL FILTRO (tarjetas)
 // ───────────────────────────────────────────────
 // ⚠️ `totals` lo calcula el SERVIDOR sobre todo el filtro. Sumar `sales` daría
 // el total de la página visible (100 filas) y cambiaría al paginar.
-const ivaTotal = computed(() => ivaOf(totals.value.issuedAmount))
-const totalWithIva = computed(() => totals.value.issuedAmount + ivaTotal.value)
+const ivaTotal = computed(() => totals.value.issuedIva)
+const totalWithIva = computed(() => totals.value.issuedTotalToPay)
 
 const totalHint = computed(() => {
   const n = totals.value.issuedCount
-  const base = `${n} venta${n === 1 ? '' : 's'} emitida${n === 1 ? '' : 's'} · sin IVA`
+  const base = `${n} venta${n === 1 ? '' : 's'} emitida${n === 1 ? '' : 's'} · subtotal sin IVA`
   if (!totals.value.voidedCount) return base
   // Las anuladas no son venta, pero esconderlas haría que la tarjeta no
   // cuadrara con el listado (que sí las muestra).
@@ -756,10 +756,10 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
         :loading="pending"
       />
       <TarjetaTotal
-        label="IVA (16%) · informativo"
+        label="IVA (16%)"
         icon="i-lucide-percent"
         :amount="ivaTotal"
-        :hint="`Total con IVA ${currency.format(totalWithIva)}`"
+        :hint="`Cobrado al cliente ${currency.format(totalWithIva)}`"
         :loading="pending"
       />
     </div>
@@ -812,7 +812,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                   {{ currency.format(Number(s.totalAmount)) }}
                 </td>
                 <td class="px-4 py-3 text-right tabular-nums">
-                  {{ currency.format(Number(s.totalAmount) + ivaOf(Number(s.totalAmount))) }}
+                  {{ currency.format(s.totalToPay) }}
                 </td>
                 <td class="px-4 py-3 text-center">
                   <UBadge
@@ -1128,18 +1128,8 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
 
             <USeparator />
 
-            <div class="flex justify-between text-lg font-semibold">
-              <span>Total</span>
-              <span class="tabular-nums">{{ currency.format(Number(detail.totalAmount)) }}</span>
-            </div>
-            <div class="flex justify-between text-xs text-muted">
-              <span>IVA (16%) · informativo</span>
-              <span class="tabular-nums">{{ currency.format(detailIva) }}</span>
-            </div>
-            <div class="flex justify-between text-xs text-muted">
-              <span>Total con IVA</span>
-              <span class="tabular-nums">{{ currency.format(detailIva + Number(detail.totalAmount)) }}</span>
-            </div>
+            <!-- El importe grande es el que se COBRA (subtotal + IVA); los
+                 renglones chicos son cómo se llegó a él. -->
             <div class="space-y-1 text-sm">
               <div v-if="Number(detail.discountAmount) > 0" class="flex justify-between text-muted">
                 <span>Subtotal</span>
@@ -1149,6 +1139,19 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
                 <span>Descuento ({{ Number(detail.discountPct) }}%)</span>
                 <span class="tabular-nums">-{{ currency.format(Number(detail.discountAmount)) }}</span>
               </div>
+              <div class="flex justify-between text-muted">
+                <span>{{ Number(detail.discountAmount) > 0 ? 'Subtotal con descuento' : 'Subtotal' }}</span>
+                <span class="tabular-nums">{{ currency.format(Number(detail.totalAmount)) }}</span>
+              </div>
+              <div class="flex justify-between text-muted">
+                <span>IVA (16%)</span>
+                <span class="tabular-nums">{{ currency.format(detailIva) }}</span>
+              </div>
+            </div>
+
+            <div class="flex justify-between text-lg font-semibold">
+              <span>Total a cobrar</span>
+              <span class="tabular-nums">{{ currency.format(detail.totalToPay) }}</span>
             </div>
 
             <UAlert
@@ -1247,7 +1250,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
               </div>
             </div>
             <p class="text-xs text-muted">
-              El total es el de la venta, con el descuento ya aplicado y sin IVA.
+              El total es el de la venta con el descuento ya aplicado, más el IVA (16%).
             </p>
 
             <AsignarCuentaPagos

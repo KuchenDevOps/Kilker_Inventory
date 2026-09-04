@@ -266,7 +266,12 @@ export const inventory = pgTable(
 export const saleChannel = pgEnum('sale_channel', ['mostrador', 'en_linea'])
 
 
-/** Cabecera de venta (comprobante interno; sin CFDI/SAT en v1). */
+/**
+ * Cabecera de venta (comprobante interno; sin CFDI/SAT en v1).
+ *
+ * ⚠️ `total_amount` es el SUBTOTAL (con el descuento ya aplicado); lo que se
+ * cobra es `total_to_pay` = subtotal + IVA. Ver esas columnas más abajo.
+ */
 export const invoices = pgTable(
   'invoices',
   {
@@ -295,9 +300,35 @@ export const invoices = pgTable(
     note: text('note'),
     discountPct: numeric('discount_pct', { precision: 5, scale: 2 }).notNull().default('0'),
     discountAmount: numeric('discount_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    /** SUBTOTAL de la venta: suma de líneas con el descuento ya aplicado, sin IVA. */
     totalAmount: numeric('total_amount', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),
+    // ─── IVA y cobrable: columnas GENERADAS, calculadas por Postgres ───
+    // Mismo patrón (y mismos motivos) que `expenses.iva` / `expenses.total_to_pay`:
+    // no son snapshots que la app deba recordar actualizar, se recalculan solas
+    // cuando cambia `total_amount`, y hay UNA sola definición de "cuánto se debe"
+    // —la de la base—. El endpoint de cobros y los reportes la LEEN.
+    //
+    // ⚠️ La tasa está escrita en el DDL: cambiarla es una migración, no un deploy.
+    // `app/utils/iva.ts` tiene la misma tasa para previsualizar el formulario,
+    // pero el número que vale es este.
+    iva: numeric('iva', { precision: 14, scale: 2 })
+      .notNull()
+      .generatedAlwaysAs(sql`round("total_amount" * 0.16, 2)`),
+    /**
+     * Lo que de verdad se le cobra al cliente: subtotal + IVA.
+     *
+     * ⚠️ El IVA de ventas dejó de ser informativo (antes el cobrable era
+     * `total_amount` a secas y el 16% se pintaba en la app). Los abonos, el
+     * saldo, el estado de cobro y el corte de caja se miden contra ESTA columna.
+     * Lo que NO cambió es el INGRESO del negocio, que sigue siendo
+     * `total_amount`: el IVA cobrado se entera al SAT, no es venta —igual que en
+     * gastos, donde el gasto del negocio es el subtotal y no lo pagado.
+     */
+    totalToPay: numeric('total_to_pay', { precision: 14, scale: 2 })
+      .notNull()
+      .generatedAlwaysAs(sql`"total_amount" + round("total_amount" * 0.16, 2)`),
     issuedAt: timestamp('issued_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -611,7 +642,11 @@ export const expenseType = pgEnum('expense_type', ['Fijo', 'Operativo'])
 export const expenseStatus = pgEnum('expense_status', ['emitido', 'anulado'])
 
 
-/** IVA vigente. Vive aquí porque la BD lo usa en las columnas generadas de `expenses`. */
+/**
+ * IVA vigente. Vive aquí porque la BD lo usa en las columnas generadas de
+ * `expenses` **y de `invoices`**: en los dos documentos el 16% es dinero que se
+ * paga o se cobra, no un adorno de la pantalla.
+ */
 export const IVA_RATE = 0.16
 
 /**
@@ -620,8 +655,9 @@ export const IVA_RATE = 0.16
  * ⚠️ El IVA y las retenciones YA NO SON INFORMATIVOS: lo que se paga es
  * `subtotal + IVA − retenciones`, y eso vive en `total_to_pay`. Antes el
  * pagable era el subtotal pelón y el 16% se calculaba en la app sólo para
- * mostrarlo (a diferencia de las ventas, donde el IVA sigue siendo informativo
- * y `invoices.total_amount` sigue siendo el cobrable).
+ * mostrarlo. Las ventas siguieron un rato más por el camino viejo y hoy van
+ * igual: `invoices.total_to_pay` es el cobrable (la diferencia es que una venta
+ * no tiene retenciones).
  */
 export const expenses = pgTable(
   'expenses',

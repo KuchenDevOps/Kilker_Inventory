@@ -12,9 +12,9 @@ import type { PdfContent, PdfDocDefinition } from 'pdfmake/build/pdfmake'
 import type { ApiSaleDetail } from '~/types/inventario'
 import { PAYMENT_LABELS } from '~/types/inventario'
 import { groupSaleItemsByKit } from './ticket'
-// El IVA es informativo y se calcula en la app; no vive en la BD. La tasa vive
-// en un solo lugar (`utils/iva.ts`), no una copia por pantalla.
-import { ivaOf } from './iva'
+// ⚠️ El IVA de la venta ya no se calcula aquí: viene en `sale.iva` /
+// `sale.totalToPay`, columnas generadas de la BD, porque es dinero que se cobra
+// (ver `utils/iva.ts`).
 
 /** Equivalentes de los tokens de Nuxt UI que usa el modal. */
 const MUTED = '#6b7280'
@@ -100,7 +100,10 @@ export function buildSaleTicketDoc(
    *  todas las líneas, así que un kit se descuenta completo. */
   const discountFactor = 1 - Number(sale.discountPct ?? 0) / 100
   const hasDiscount = Number(sale.discountAmount) > 0
-  const iva = ivaOf(Number(sale.totalAmount))
+  // ⚠️ El IVA lo trae la venta (columna generada de la BD): es lo que se cobra,
+  // así que el ticket no puede calcularlo por su cuenta y arriesgarse a diferir
+  // del importe que el cliente va a pagar.
+  const iva = Number(sale.iva)
   const isVoided = sale.status === 'anulada'
 
   // Tabla de líneas: el kit va como renglón sombreado con su nombre y SKU, y
@@ -272,13 +275,12 @@ export function buildSaleTicketDoc(
           { text: '', width: '*' },
           {
             width: 230,
+            // El renglón grande es lo que el cliente PAGA. El desglose va
+            // arriba, en el orden en que se llega a él: subtotal, descuento,
+            // IVA. Antes el importe grande era el subtotal y el IVA una nota al
+            // pie; ahora el IVA se cobra, así que ese orden mentía sobre el
+            // total del ticket.
             stack: [
-              sumRow('Total', money(Number(sale.totalAmount)), { fontSize: 14, bold: true }),
-              sumRow('IVA (16%) · informativo', money(iva), { fontSize: 8, color: MUTED }),
-              sumRow('Total con IVA', money(Number(sale.totalAmount) + iva), {
-                fontSize: 8,
-                color: MUTED
-              }),
               ...(hasDiscount
                 ? [
                     sumRow('Subtotal', money(Number(sale.subtotalAmount)), {
@@ -291,7 +293,14 @@ export function buildSaleTicketDoc(
                       { fontSize: 9, color: MUTED }
                     )
                   ]
-                : [])
+                : []),
+              sumRow(
+                hasDiscount ? 'Subtotal con descuento' : 'Subtotal',
+                money(Number(sale.totalAmount)),
+                { fontSize: 9, color: MUTED }
+              ),
+              sumRow('IVA (16%)', money(iva), { fontSize: 9, color: MUTED }),
+              sumRow('Total', money(sale.totalToPay), { fontSize: 14, bold: true })
             ]
           }
         ]

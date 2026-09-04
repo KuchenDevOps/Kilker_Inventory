@@ -55,7 +55,14 @@ export default defineEventHandler(async (event) => {
 
     const invoice = await tx.query.invoices.findFirst({
       where: eq(invoices.id, invoiceId),
-      columns: { id: true, folio: true, storeId: true, status: true, totalAmount: true },
+      columns: {
+        id: true,
+        folio: true,
+        storeId: true,
+        status: true,
+        totalAmount: true,
+        totalToPay: true
+      },
       with: { payments: { columns: { amount: true } } }
     })
     if (!invoice) throw createError({ statusCode: 404, statusMessage: 'Venta no existe' })
@@ -76,11 +83,11 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    // ⚠️ El cobrable de una VENTA sigue siendo `total_amount` a secas: ya trae
-    // el descuento y va sin IVA (en ventas el 16% sigue siendo informativo).
-    // Esto NO cambió con los gastos, donde el IVA y las retenciones ahora sí se
-    // pagan — ver `expenses.total_to_pay`.
-    const totalToPay = Number(invoice.totalAmount)
+    // ⚠️ El cobrable es `invoices.total_to_pay` = subtotal (ya con descuento) +
+    // IVA, una columna GENERADA por Postgres. Se LEE, no se recalcula: cobrar
+    // `total_amount * 1.16` aquí sería una segunda definición del importe, y esa
+    // es exactamente la divergencia que en gastos dejó entrar pagos inflados.
+    const totalToPay = Number(invoice.totalToPay)
 
     // Venta de $0 —una entrega de muestras, o un 100% de descuento—: no hay nada
     // que cobrar, y el listado ya la reporta como pagada.

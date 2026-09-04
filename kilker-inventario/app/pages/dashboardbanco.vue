@@ -47,7 +47,11 @@ const number = new Intl.NumberFormat('es-MX')
 // "Ventas cobradas" del periodo NO tiene por qué coincidir con los cobros
 // asentados en el libro de dinero: un abono de hoy puede estar pagando una
 // factura de hace tres meses.
+// ⚠️ `salesValue` es el SUBTOTAL (el ingreso; el IVA se entera al SAT), pero lo
+// cobrado y lo pendiente se miden contra `salesTotalToPay` = subtotal + IVA, que
+// es lo que se le factura al cliente. No es un descuadre: son dos preguntas.
 const netSalesValue = computed(() => summary.value?.salesValue ?? 0)
+const salesTotalToPay = computed(() => summary.value?.salesTotalToPay ?? 0)
 const salesPaid = computed(() => summary.value?.salesPaid ?? 0)
 const salesBalance = computed(() => summary.value?.salesBalance ?? 0)
 
@@ -104,31 +108,29 @@ const totalExpensesPending = computed(
 // `total_to_pay`, o sea que YA llevan IVA), las compras (se costean sin IVA) y
 // el libro de banco (dinero asentado, no una simulación).
 //
-// ⚠️ "Con IVA" NO significa lo mismo en las dos familias de tarjetas:
-// - **Ventas:** es INFORMATIVO. El 16% no está en la BD (no hay CFDI) y
-//   `invoices.total_amount` —lo cobrable— va sin él, así que aquí se suma con
-//   `ivaOf`, que redondea a centavos igual que el resto de la app.
-// - **Gastos:** es REAL. Lo que se paga es `totalToPay` (subtotal + IVA −
-//   retenciones), columna GENERADA por Postgres, y por eso el modo con IVA
-//   muestra ESE número y no `subtotal × 1.16`: con retenciones no coinciden, y
-//   multiplicar aquí inventaría una cifra que no cuadra con los abonos.
+// En los DOS documentos el IVA es dinero real y lo calcula Postgres en columnas
+// generadas; el botón solo elige QUÉ columna se pinta, nunca multiplica:
+// - **Ventas:** `invoices.total_to_pay` (subtotal + IVA) es lo que se le cobra
+//   al cliente; `total_amount` es el subtotal, que es el ingreso del negocio.
+// - **Gastos:** `expenses.total_to_pay` (subtotal + IVA − retenciones) es lo que
+//   se le paga al proveedor. Ahí "con IVA" NO es `subtotal × 1.16`: con
+//   retenciones no coinciden.
+//
+// ⚠️ En los dos casos el subtotal es el número del NEGOCIO —el ingreso y el
+// gasto—, porque el IVA se entera al SAT. Por eso el modo "Sin IVA" no es una
+// vista simplificada: es la contable.
 const withIva = ref(false)
 
-// ⚠️ El IVA solo toca "Ventas totales", que es lo emitido. **Cobrado y pendiente
-// se quedan siempre sin IVA**: no se cobra con IVA ni se debe con IVA — un abono
-// de `sale_payments` es dinero que de verdad entró contra
-// `invoices.total_amount`, que va sin el 16%, y el saldo es lo que el cliente
-// debe de verdad. Inflarlos aquí afirmaría que entró (o que falta) dinero que no
-// existe, y este es el dashboard del dinero.
-//
-// Consecuencia buscada: en modo Con IVA, "cobrado + por cobrar" YA NO cuadra
-// contra "Ventas totales" — la diferencia es justo el IVA informativo. Los hints
-// de las tres tarjetas dicen en qué está cada una para que no se lea como un
-// descuadre.
+// ⚠️ El botón solo mueve lo EMITIDO/DEVENGADO. Cobrado y pendiente no se tocan
+// porque ya vienen medidos contra `total_to_pay`: un abono es dinero que de
+// verdad entró y el saldo es lo que el cliente de verdad debe, IVA incluido.
+// Cambiarlos según el botón sería reescribir un hecho, no cambiar una vista.
 const displaySalesValue = computed(() =>
-  withIva.value ? netSalesValue.value + ivaOf(netSalesValue.value) : netSalesValue.value
+  withIva.value ? salesTotalToPay.value : netSalesValue.value
 )
-const salesIvaHint = computed(() => (withIva.value ? 'con IVA (16%) · informativo' : 'sin IVA'))
+const salesIvaHint = computed(() =>
+  withIva.value ? 'facturado con IVA (16%)' : 'subtotal, sin IVA'
+)
 
 // ⚠️ En gastos solo cambia el TOTAL: `totalPaid` y `balance` ya se miden contra
 // `total_to_pay`, o sea que siempre llevan IVA (ver el endpoint del summary).
@@ -338,7 +340,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Ventas cobradas',
       value: currency.format(salesPaid.value),
-      hint: 'abonado a las ventas del periodo · dinero real, sin IVA',
+      hint: 'abonado a las ventas del periodo · con IVA, es lo que se factura',
       icon: 'i-lucide-circle-check',
       color: 'text-success',
       loading: loadingSummary.value,
@@ -347,7 +349,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Ventas por cobrar',
       value: currency.format(salesBalance.value),
-      hint: 'saldo pendiente de los clientes · sin IVA',
+      hint: 'saldo pendiente de los clientes · con IVA',
       icon: 'i-lucide-clock',
       color: 'text-warning',
       loading: loadingSummary.value,
@@ -432,7 +434,7 @@ const metricsSection2 = computed(() => {
       <!-- Solo cambia la vista de ventas y gastos: no recarga nada. -->
       <BotonIva
         v-model="withIva"
-        title="Ventas y gastos con IVA (16%). En ventas es informativo; en gastos es lo que se paga (IVA − retenciones)."
+        title="Cambia entre el subtotal (el ingreso y el gasto del negocio) y lo que se factura y se paga con IVA (16%)."
       />
       <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       <span class="text-xs text-muted ml-auto">

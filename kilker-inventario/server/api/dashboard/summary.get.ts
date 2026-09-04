@@ -40,8 +40,11 @@ function toExpenseDate(v: unknown): string | null {
 // cambió el pagable: un gasto liquidado por completo reportaba como pagado sólo
 // su subtotal y su pendiente salía en CERO aunque todavía debiera el 16%.
 //
-// ⚠️ Esto vale sólo para gastos. En VENTAS el IVA sigue siendo informativo y el
-// cobrable sigue siendo `invoices.total_amount` a secas.
+// ⚠️ Las VENTAS siguieron el mismo camino después: el cobrable es
+// `invoices.total_to_pay` (subtotal + IVA, sin retenciones porque una venta no
+// las tiene). Lo que en los DOS documentos se quedó en el subtotal es el número
+// del NEGOCIO —el gasto y el ingreso—: el IVA se entera al SAT, no es ninguno de
+// los dos.
 const EMPTY_EXPENSE_BUCKET = {
   subtotal: 0,
   iva: 0,
@@ -194,25 +197,31 @@ export default defineEventHandler(async (event) => {
       .leftJoin(entryPaymentsAgg, eq(entryPaymentsAgg.movementId, stockMovements.id))
       .where(and(...entryFilters)),
 
+    // ⚠️ La VENTA del negocio es el subtotal (`total_amount`), no lo cobrado: el
+    // IVA se entera al SAT, no es ingreso. Es la misma asimetría que en gastos,
+    // donde el gasto es el subtotal aunque se pague `total_to_pay`.
     db
-      .select({ value: sql<string>`coalesce(sum(${invoices.totalAmount}), 0)` })
+      .select({
+        value: sql<string>`coalesce(sum(${invoices.totalAmount}), 0)`,
+        iva: sql<string>`coalesce(sum(${invoices.iva}), 0)`,
+        totalToPay: sql<string>`coalesce(sum(${invoices.totalToPay}), 0)`
+      })
       .from(invoices)
       .where(and(...saleFilters)),
 
     // Cobrado y por cobrar de esas mismas ventas.
     //
-    // ⚠️ El cobrable es `invoices.total_amount` a secas: ya trae el descuento y
-    // va SIN IVA (en ventas el 16% sigue siendo informativo y no vive en la BD).
-    // Es la misma regla que aplica `POST /api/sales/:id/payments` al topar cada
-    // abono; multiplicarlo por 1.16 aquí es exactamente el bug que dejó pagos
-    // inflados en gastos.
+    // ⚠️ El cobrable es `invoices.total_to_pay` = subtotal (con descuento) + IVA,
+    // una columna GENERADA. El IVA de ventas dejó de ser informativo, así que se
+    // LEE de la base igual que en gastos; recalcularlo aquí como × 1.16 sería la
+    // segunda definición del importe que allá dejó entrar pagos inflados.
     //
     // Una venta de $0 —entrega de muestras, o 100% de descuento— aporta 0 a los
     // tres números y no queda como pendiente eterna, igual que en el listado.
     db
       .select({
-        totalPaid: sql<string>`coalesce(sum(least(round(${invoices.totalAmount}, 2), round(coalesce(${salePaymentsAgg.paid}, 0), 2))), 0)`,
-        balance: sql<string>`coalesce(sum(greatest(0, round(${invoices.totalAmount}, 2) - round(coalesce(${salePaymentsAgg.paid}, 0), 2))), 0)`
+        totalPaid: sql<string>`coalesce(sum(least(round(${invoices.totalToPay}, 2), round(coalesce(${salePaymentsAgg.paid}, 0), 2))), 0)`,
+        balance: sql<string>`coalesce(sum(greatest(0, round(${invoices.totalToPay}, 2) - round(coalesce(${salePaymentsAgg.paid}, 0), 2))), 0)`
       })
       .from(invoices)
       .leftJoin(salePaymentsAgg, eq(salePaymentsAgg.invoiceId, invoices.id))
@@ -272,7 +281,11 @@ export default defineEventHandler(async (event) => {
     entriesValue: round2(Number(entryRows[0]?.value ?? 0)),
     entriesPaid: round2(Number(entryPaymentRows[0]?.totalPaid ?? 0)),
     entriesBalance: round2(Number(entryPaymentRows[0]?.balance ?? 0)),
+    /** Venta del negocio: subtotal, SIN IVA (el IVA no es ingreso). */
     salesValue: round2(Number(saleRows[0]?.value ?? 0)),
+    salesIva: round2(Number(saleRows[0]?.iva ?? 0)),
+    /** Lo facturado al cliente: subtotal + IVA. Es contra esto que se cobra. */
+    salesTotalToPay: round2(Number(saleRows[0]?.totalToPay ?? 0)),
     salesPaid: round2(Number(salePaymentRows[0]?.totalPaid ?? 0)),
     salesBalance: round2(Number(salePaymentRows[0]?.balance ?? 0)),
     expenses: expensesByType,

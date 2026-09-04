@@ -49,7 +49,9 @@ const rows = await db.query.tickets.findMany({
       store: { columns: { code: true, name: true } },
       raisedBy: { columns: { fullName: true } },
       resolvedBy: { columns: { fullName: true } },
-      invoice: { columns: { folio: true, status: true, totalAmount: true } },
+      // `totalToPay` (con IVA) y no el subtotal: el ticket identifica una venta
+      // concreta, y el importe por el que se reconoce es el que se le cobró.
+      invoice: { columns: { folio: true, status: true, totalToPay: true } },
       movement: {
         columns: {
           quantity: true,
@@ -81,7 +83,7 @@ const rows = await db.query.tickets.findMany({
     invoiceId: t.invoiceId,
     invoiceFolio: t.invoice?.folio ?? null,
     invoiceStatus: t.invoice?.status ?? null,
-    invoiceTotal: t.invoice?.totalAmount ?? null,
+    invoiceTotal: t.invoice?.totalToPay ?? null,
     // ─── Objetivo 'movimiento': entrada de stock ───
     movementId: t.movementId,
     movementFolio: t.movement?.inventoryEntryInvoiceNumber ?? null,

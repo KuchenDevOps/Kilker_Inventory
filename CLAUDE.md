@@ -332,9 +332,9 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   - En **entradas** "anulada" no es una columna: se deriva con un `not exists` sobre la
     `anulacion` que la revierte (kardex append-only), sobre todo el filtro y no solo
     sobre los ids de la página.
-  - En **gastos** el IVA sale de las columnas GENERADAS (`iva`, `total_to_pay`), nunca
-    recalculado; en **ventas** es informativo y lo pone el cliente con `ivaOf`
-    (`app/utils/iva.ts`, tasa única — estaba copiada en tres pantallas).
+  - En **gastos y en ventas** el IVA sale de las columnas GENERADAS (`iva`,
+    `total_to_pay`), nunca recalculado. `app/utils/iva.ts` (tasa única — estaba copiada
+    en tres pantallas) solo sirve para **previsualizar** un formulario antes de guardar.
 - **Filtros compartidos:** `app/components/FiltroPeriodo.vue` y `FiltroCortePeriodo.vue`
   (Todo/Día/Semana/Mes sobre el periodo concreto elegido + búsqueda `?q`).
 - **Limpiar filtros:** `app/components/BotonLimpiarFiltros.vue`, en todos los listados y
@@ -442,10 +442,23 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   (`entry_payments`) y los gastos (`expense_payments`): cada abono lleva monto, método,
   fecha y nota. **El estado no se guarda**: `GET /api/sales` deriva
   `totalToPay`/`totalPaid`/`balance`/`paymentStatus` por factura. Tres reglas no obvias:
-  - **El cobrable es `invoices.total_amount`**: ya trae el descuento aplicado y va **sin
-    IVA** (el 16% de la app es informativo y no vive en la BD). Cobrar el total × 1.16 es
-    exactamente el bug que dejó pagos inflados en gastos; el servidor topa cada abono al
-    saldo, no solo la UI.
+  - ⚠️ **El cobrable es `invoices.total_to_pay`** = `total_amount` (subtotal, ya con el
+    descuento) **+ IVA**, columna GENERADA por Postgres igual que en gastos. El 16% de
+    las ventas **dejó de ser informativo**: se cobra. Nadie lo recalcula —ni el endpoint
+    de abonos, ni el dashboard, ni el ticket—; multiplicar por 1.16 en la app sería la
+    segunda definición del importe que en gastos dejó entrar pagos inflados. El servidor
+    topa cada abono al saldo, no solo la UI.
+  - ⚠️ **El INGRESO del negocio sigue siendo `total_amount`, sin IVA**, igual que el
+    gasto es el subtotal en `expenses`: el IVA se entera al SAT, no es venta. Por eso
+    utilidad, márgenes, costo de lo vendido y los reportes (`topProducts`,
+    `topCustomers`, `monthlyInventory`) NO lo llevan, y `salesValue` del dashboard
+    tampoco — pero `salesPaid`/`salesBalance` sí, porque se miden contra lo facturado.
+  - ⚠️ **El corte de caja va SIN IVA** (`total_amount`), aunque al cliente se le cobre
+    con él. Es decisión del negocio: el corte se usa como reporte de **venta neta**, no
+    como arqueo del cajón. Consecuencia a conocer antes de "corregirlo": el corte reporta
+    ~16% menos que el efectivo y las terminales que hay físicamente. `POST /api/cortes` y
+    el detalle (`GET /api/cortes/:id`) tienen que leer **la misma** columna, o la lista de
+    ventas no cuadra contra los totales del corte.
   - ⚠️ **Una venta de $0 sale como `pagado`, no como `pendiente`.** Es el caso de las
     entregas de **muestras** (su precio es 0 por constraint) y el del 100% de descuento:
     no hay nada que cobrar, y sin esa rama se quedarían pendientes para siempre. El
@@ -490,8 +503,11 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   `soldTotals`) y `monthlyInventory` (`exitsValue`). Si algún día hay descuento por
   línea, lo correcto será guardar el neto en la BD (`line_total_net`) en vez de seguir
   reconstruyéndolo.
-- **IVA (16%) es informativo y se calcula en la app**, no se guarda en la BD: en el detalle
-  de venta y en gastos. Las ventas se registran sin desglose fiscal (no hay CFDI/SAT).
+- **IVA (16%): dinero real en los DOS documentos, y lo calcula POSTGRES** en columnas
+  generadas — `expenses.iva`/`total_to_pay` y `invoices.iva`/`total_to_pay`. La tasa
+  está escrita en el DDL: **cambiarla es una migración, no un deploy**. Las ventas se
+  siguen registrando sin desglose fiscal (no hay CFDI/SAT): el IVA se cobra, pero no se
+  emite comprobante fiscal.
 - ⚠️ **`stock_movements.unit_value` lleva SEIS decimales (`numeric(18,6)`), no dos.**
   No es un precio: es un costo **calculado**, casi siempre un promedio ponderado de
   varias capas FIFO (`getFifoUnitCost` = costo total / unidades). Con dos decimales ese

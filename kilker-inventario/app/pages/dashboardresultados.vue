@@ -101,16 +101,21 @@ const allProductsProfitPct = computed(() => {
 
 
 
-const IVA_RATE = 0.16
+// ⚠️ Ni ventas ni gastos multiplican por 1.16 aquí: en los dos, el IVA lo
+// calcula Postgres en columnas generadas y el botón solo elige qué columna se
+// pinta. En ventas era `netSalesValue * 1.16` mientras el 16% fue informativo;
+// desde que se cobra, ese cálculo era una segunda definición del importe que
+// podía diferir de la factura por redondeo.
 const withIva = ref(false)
-const ivaFactor = computed(() => (withIva.value ? 1 + IVA_RATE : 1))
 /** Coletilla para los `hint` de las tarjetas afectadas; que el rótulo no mienta. */
 const ivaHint = computed(() => (withIva.value ? 'con IVA (16%)' : 'sin IVA'))
 const expenseHint = computed(() =>
   withIva.value ? 'lo que se paga (IVA − retenciones)' : 'solo subtotal (gasto del negocio)'
 )
 
-const displaySalesValue = computed(() => netSalesValue.value * ivaFactor.value)
+const displaySalesValue = computed(() =>
+  withIva.value ? (summary.value?.salesTotalToPay ?? 0) : netSalesValue.value
+)
 
 
 function expenseWithTaxes(bucket: typeof EMPTY_BUCKET) {
@@ -643,7 +648,7 @@ const filteredTopCustomers = computed(() => {
       variant="soft"
       icon="i-lucide-info"
       title="Ventas y gastos mostrados con IVA (16%)"
-      description="El IVA es informativo y se calcula en la app: no está en la base de datos. La utilidad, las ganancias/pérdidas, el costo y las compras siguen sin IVA, porque el impuesto no es ingreso ni gasto del negocio."
+      description="Ventas y gastos mostrados con el IVA que se cobra y se paga (lo calcula la base, no la app). La utilidad, las ganancias/pérdidas, el costo y las compras siguen sin IVA, porque el impuesto no es ingreso ni gasto del negocio: se entera al SAT."
     /> -->
 
 <USelect

@@ -56,6 +56,10 @@ export default defineEventHandler(async (event) => {
     totalVoided: corte.totalVoided,
     note: corte.note,
     createdAt: corte.createdAt,
+    // ⚠️ El renglón por venta lleva `total_amount` (subtotal, sin IVA) porque el
+    // corte se totaliza así (ver `POST /api/cortes`). Los dos tienen que salir
+    // de la misma columna: si la lista de abajo llevara el IVA y los totales de
+    // arriba no, el corte parecería descuadrado.
     sales: sales.map((s) => ({
       id: s.id,
       folio: s.folio,
