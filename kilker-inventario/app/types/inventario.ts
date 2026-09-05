@@ -252,6 +252,16 @@ export interface ApiBanksMovement {
   concept: string | null
   /** numeric → string, CON signo: + entra, − sale. Nunca mirar `type` para el sentido. */
   amount: string
+  /**
+   * Saldo de la bolsa DESPUÉS de este movimiento: el acumulado de todo el libro
+   * en orden cronológico, no la suma de lo que se ve en pantalla.
+   *
+   * ⚠️ Sólo respeta el filtro de bolsa (`?account`), igual que `balances`. Con
+   * cualquier otro filtro puesto, dos filas seguidas NO se diferencian por su
+   * `amount`: entre ellas hay movimientos reales que el filtro escondió. Lo que
+   * suma exactamente lo visible es `filteredNet`.
+   */
+  balance: number
   occurredAt: string
   /** null = efectivo, que es su propia bolsa (el efectivo no es una cuenta). */
   accountId: number | null
