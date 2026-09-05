@@ -1,6 +1,7 @@
-import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, count, desc, eq, ilike, inArray, max, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
-import { products, profiles, stockMovements, stores, tickets } from '../../db/schema'
+import { products, profiles, stockMovementEdits, stockMovements, stores, tickets } from '../../db/schema'
+import { getEntriesRemainingUnits } from '../../utils/inventoryFifo'
 import { effectiveMovementDateBetween, effectiveMovementDateSql } from '../../utils/movementDates'
 
 
@@ -78,8 +79,9 @@ export default defineEventHandler(async (event) => {
   // Entradas con ticket de corrección abierto: la UI esconde el botón de
   // solicitar otro y muestra "pendiente" (mismo criterio que /api/sales).
   const pendingCorrection = new Set<number>()
+  const editsByMovement = new Map<number, { count: number; lastEditAt: Date | null }>()
   if (movementIds.length) {
-    const [reversals, openTickets] = await Promise.all([
+    const [reversals, openTickets, edits] = await Promise.all([
       db
         .select({ reversesMovementId: stockMovements.reversesMovementId })
         .from(stockMovements)
@@ -87,11 +89,32 @@ export default defineEventHandler(async (event) => {
       db
         .select({ movementId: tickets.movementId })
         .from(tickets)
-        .where(and(eq(tickets.status, 'abierto'), inArray(tickets.movementId, movementIds)))
+        .where(and(eq(tickets.status, 'abierto'), inArray(tickets.movementId, movementIds))),
+      db
+        .select({
+          movementId: stockMovementEdits.movementId,
+          count: count(),
+          lastEditAt: max(stockMovementEdits.editedAt)
+        })
+        .from(stockMovementEdits)
+        .where(inArray(stockMovementEdits.movementId, movementIds))
+        .groupBy(stockMovementEdits.movementId)
     ])
     for (const r of reversals) if (r.reversesMovementId != null) voided.add(r.reversesMovementId)
     for (const t of openTickets) if (t.movementId != null) pendingCorrection.add(t.movementId)
+    for (const e of edits) {
+      editsByMovement.set(e.movementId, { count: Number(e.count), lastEditAt: e.lastEditAt ?? null })
+    }
   }
+
+  const remainingUnits = paginate
+    ? await getEntriesRemainingUnits(
+        db,
+        rows
+          .filter((m) => !voided.has(m.id))
+          .map((m) => ({ id: m.id, productId: m.productId, storeId: m.storeId }))
+      )
+    : new Map<number, number>()
 
   const mapped = rows.map((m) => {
     
@@ -126,6 +149,9 @@ export default defineEventHandler(async (event) => {
       createdAt: m.createdAt,
       voided: isVoided,
       pendingCorrection: pendingCorrection.has(m.id),
+      editable: !isVoided && (remainingUnits.get(m.id) ?? 0) >= Number(m.quantity) - 0.0005,
+      editCount: editsByMovement.get(m.id)?.count ?? 0,
+      lastEditAt: editsByMovement.get(m.id)?.lastEditAt ?? null,
       totalToPay,
       totalPaid,
       balance,

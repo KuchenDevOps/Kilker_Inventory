@@ -78,6 +78,7 @@ export interface FifoResult {
 export interface FifoLayer {
   qty: number
   unitCost: number
+  movementId?: number | null
 }
 
 interface Layer {
@@ -326,7 +327,7 @@ export function runFifo(
   }
 
   return {
-    layers: final.layers.map((l) => ({ qty: l.qty, unitCost: l.unitCost })),
+    layers: final.layers.map((l) => ({ qty: l.qty, unitCost: l.unitCost, movementId: l.movementId ?? null })),
     openingValue: final.openingValue,
     openingUnits: final.openingUnits,
     endingValue,

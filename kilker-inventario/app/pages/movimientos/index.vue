@@ -5,6 +5,7 @@ import {
   PAYMENT_LABELS,
   type ApiEntryPayment,
   type ApiMovement,
+  type ApiMovementEdit,
   type EntryPaymentStatus,
   type PaymentMethod
 } from '~/types/inventario'
@@ -109,17 +110,28 @@ function fmtDay(s: string | null | undefined) {
 // append-only (trigger de la migración 0001) y editar la fila en sitio o
 // reventaba o rompía la trazabilidad.
 const requestingId = ref<number | null>(null)
+const showRequestModal = ref(false)
 const requestReason = ref('')
 const submittingRequest = ref(false)
 
+const requestingMovement = computed(
+  () => movements.value.find((m) => m.id === requestingId.value) ?? null
+)
+
 function openRequest(m: ApiMovement) {
   requestingId.value = m.id
+  showRequestModal.value = true
   requestReason.value = ''
 }
 function cancelRequest() {
+  showRequestModal.value = false
   requestingId.value = null
   requestReason.value = ''
 }
+
+watch(showRequestModal, (open) => {
+  if (!open) requestingId.value = null
+})
 
 async function confirmRequest(m: ApiMovement) {
   if (!requestReason.value.trim()) {
@@ -152,20 +164,154 @@ async function confirmRequest(m: ApiMovement) {
   }
 }
 
+const editingId = ref<number | null>(null)
+const showEditModal = ref(false)
+const submittingEdit = ref(false)
+const editForm = reactive({
+  unitValue: undefined as number | undefined,
+  supplierInvoiceNumber: '',
+  supplierInvoiceDate: '',
+  reason: ''
+})
+
+const editingMovement = computed(
+  () => movements.value.find((m) => m.id === editingId.value) ?? null
+)
+
+const editTotal = computed<number | undefined>({
+  get() {
+    const qty = Number(editingMovement.value?.quantity ?? 0)
+    if (editForm.unitValue == null || !qty) return undefined
+    return Math.round(editForm.unitValue * qty * 100) / 100
+  },
+  set(v) {
+    const qty = Number(editingMovement.value?.quantity ?? 0)
+    if (v == null || !qty) {
+      editForm.unitValue = undefined
+      return
+    }
+    editForm.unitValue = Math.round((v / qty) * 1e6) / 1e6
+  }
+})
+
+const editHasChanges = computed(() => {
+  const m = editingMovement.value
+  if (!m) return false
+  const unitChanged =
+    editForm.unitValue != null && editForm.unitValue !== Number(m.unitValue)
+  const numberChanged =
+    (editForm.supplierInvoiceNumber.trim() || null) !== (m.supplierInvoiceNumber ?? null)
+  const dateChanged = (editForm.supplierInvoiceDate || null) !== (m.supplierInvoiceDate ?? null)
+  return unitChanged || numberChanged || dateChanged
+})
+
+const canSubmitEdit = computed(
+  () => editHasChanges.value && (editForm.unitValue == null || editForm.unitValue >= 0)
+)
+
+function openEdit(m: ApiMovement) {
+  editingId.value = m.id
+  showEditModal.value = true
+  Object.assign(editForm, {
+    unitValue: Number(m.unitValue),
+    supplierInvoiceNumber: m.supplierInvoiceNumber ?? '',
+    supplierInvoiceDate: m.supplierInvoiceDate ?? '',
+    reason: ''
+  })
+}
+
+function cancelEdit() {
+  showEditModal.value = false
+  editingId.value = null
+}
+
+watch(showEditModal, (open) => {
+  if (!open) editingId.value = null
+})
+
+async function confirmEdit(m: ApiMovement) {
+  if (!canSubmitEdit.value) return
+  submittingEdit.value = true
+  try {
+    await apiFetch(`/api/movements/${m.id}`, {
+      method: 'PATCH',
+      body: {
+        unitValue: editForm.unitValue,
+        supplierInvoiceNumber: editForm.supplierInvoiceNumber.trim() || null,
+        supplierInvoiceDate: editForm.supplierInvoiceDate || null,
+        reason: editForm.reason.trim() || undefined
+      }
+    })
+    toast.add({
+      title: 'Entrada corregida',
+      description: `Se actualizó el costo y la factura de ${m.folio ?? 'la entrada'}.`,
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    cancelEdit()
+    await refresh()
+    await refreshNuxtData('products')
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo corregir',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    submittingEdit.value = false
+  }
+}
+
+const showEditsModal = ref(false)
+const editsMovement = ref<ApiMovement | null>(null)
+const edits = ref<ApiMovementEdit[]>([])
+const loadingEdits = ref(false)
+
+async function openEdits(m: ApiMovement) {
+  editsMovement.value = m
+  edits.value = []
+  showEditsModal.value = true
+  loadingEdits.value = true
+  try {
+    edits.value = await apiFetch<ApiMovementEdit[]>(`/api/movements/${m.id}/edits`)
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo cargar el historial de correcciones',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    loadingEdits.value = false
+  }
+}
+
 const voidingId = ref<number | null>(null)
+const showVoidModal = ref(false)
 const voidReason = ref('')
 const submittingVoid = ref(false)
 
-function openVoid(m: (typeof movements.value)[number]) {
+const voidingMovement = computed(
+  () => movements.value.find((m) => m.id === voidingId.value) ?? null
+)
+
+function openVoid(m: ApiMovement) {
   voidingId.value = m.id
+  showVoidModal.value = true
   voidReason.value = ''
 }
 function cancelVoidPanel() {
+  showVoidModal.value = false
   voidingId.value = null
   voidReason.value = ''
 }
 
-async function confirmVoid(m: (typeof movements.value)[number]) {
+watch(showVoidModal, (open) => {
+  if (!open) voidingId.value = null
+})
+
+async function confirmVoid(m: ApiMovement) {
   submittingVoid.value = true
   try {
     const res = await apiFetch<{ ok: boolean; deletedPayments: number }>(
@@ -515,7 +661,20 @@ async function exportAll() {
   </tr>
   <template v-for="m in movements" v-else :key="m.id">
     <tr class="hover:bg-elevated/50" :class="{ 'opacity-50': m.voided }">
-      <td class="px-4 py-3 font-mono text-xs">{{ m.folio ?? '-' }}</td>
+      <td class="px-4 py-3 font-mono text-xs">
+        <div class="flex items-center gap-1 whitespace-nowrap">
+          <span>{{ m.folio ?? '-' }}</span>
+          <UButton
+            v-if="m.editCount > 0"
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-history"
+            :title="`Corregida ${m.editCount} vez(ces) · ver historial`"
+            @click="openEdits(m)"
+          />
+        </div>
+      </td>
       <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(m.createdAt) }}</td>
       <td class="px-4 py-3">
         <div class="font-medium">{{ m.productName ?? '—' }}</div>
@@ -560,95 +719,45 @@ async function exportAll() {
         <div v-if="m.voided" class="flex justify-end">
           <UBadge label="Anulada" color="error" variant="subtle" size="xs" />
         </div>
-        <div v-else-if="m.pendingCorrection" class="flex justify-end">
-          <UBadge label="Corrección pendiente" color="warning" variant="subtle" size="xs" />
-        </div>
         <!-- El admin anula directo; el empleado solicita y el admin resuelve. -->
         <div v-else class="flex items-center justify-end gap-1">
-          <UButton
-            v-if="isAdmin && voidingId !== m.id"
-            size="xs"
-            color="error"
-            variant="ghost"
-            icon="i-lucide-ban"
-            title="Anular entrada"
-            @click="openVoid(m)"
-          />
-          <UButton
-            v-else-if="!isAdmin && requestingId !== m.id"
-            size="xs"
+          <UBadge
+            v-if="m.pendingCorrection"
+            label="Corrección pendiente"
             color="warning"
-            variant="ghost"
-            icon="i-lucide-message-square-warning"
-            title="Solicitar corrección"
-            @click="openRequest(m)"
+            variant="subtle"
+            size="xs"
           />
-        </div>
-      </td>
-    </tr>
-    <!-- Panel de solicitud de corrección (empleado) -->
-    <tr v-if="!isAdmin && requestingId === m.id" class="bg-elevated/40">
-      <td :colspan="colCount" class="px-4 py-3">
-        <div class="flex flex-wrap items-start gap-3">
-          <div class="flex-1">
-            <p class="text-xs text-muted mb-1">
-              Solicitar corrección de <strong>{{ m.productName }}</strong>
-              ({{ qtyFmt.format(Number(m.quantity)) }} {{ m.unit }}) · folio
-              <span class="font-mono">{{ m.folio ?? '—' }}</span>
-            </p>
-            <UInput
-              v-model="requestReason"
-              placeholder="Motivo (obligatorio): qué está mal en esta entrada…"
-              class="max-w-md"
-            />
-          </div>
-          <div class="flex items-center gap-2">
+          <UButton
+            v-if="m.editable"
+            size="xs"
+            color="primary"
+            variant="ghost"
+            icon="i-lucide-pencil"
+            title="Corregir costo y factura"
+            @click="openEdit(m)"
+          />
+          <template v-if="!m.pendingCorrection">
             <UButton
+              v-if="isAdmin"
               size="xs"
-              color="neutral"
+              color="error"
               variant="ghost"
-              :disabled="submittingRequest"
-              @click="cancelRequest"
-            >
-              Cancelar
-            </UButton>
-            <UButton size="xs" color="warning" :loading="submittingRequest" @click="confirmRequest(m)">
-              Enviar solicitud
-            </UButton>
-          </div>
+              icon="i-lucide-ban"
+              title="Anular entrada"
+              @click="openVoid(m)"
+            />
+            <UButton
+              v-else
+              size="xs"
+              color="warning"
+              variant="ghost"
+              icon="i-lucide-message-square-warning"
+              title="Solicitar corrección"
+              @click="openRequest(m)"
+            />
+          </template>
         </div>
-        <p class="mt-2 text-xs text-muted">
-          No anula nada todavía: abre un ticket para que un administrador lo revise. Si lo
-          aprueba, la entrada se anula y tendrás que volver a capturarla corregida.
-        </p>
-      </td>
-    </tr>
-    <!-- Panel de confirmación de anulación -->
-    <tr v-if="isAdmin && voidingId === m.id" class="bg-elevated/40">
-      <td :colspan="colCount" class="px-4 py-3">
-        <div class="flex flex-wrap items-start gap-3">
-          <div class="flex-1">
-            <p class="text-xs text-muted mb-1">
-              Anular entrada de <strong>{{ m.productName }}</strong> ({{ m.quantity }} {{ m.unit }})
-            </p>
-            <UInput v-model="voidReason" placeholder="Motivo (opcional)…" class="max-w-md" />
-          </div>
-          <div class="flex items-center gap-2">
-            <UButton size="xs" color="neutral" variant="ghost" :disabled="submittingVoid" @click="cancelVoidPanel">
-              Cancelar
-            </UButton>
-            <UButton size="xs" color="error" :loading="submittingVoid" @click="confirmVoid(m)">
-              Confirmar anulación
-            </UButton>
-          </div>
-        </div>
-        <p class="mt-2 text-xs text-muted">
-          Descuenta la cantidad del inventario. Solo es posible si aún no se ha vendido/transferido ese stock.
-        </p>
-        <p v-if="m.totalPaid > 0" class="mt-1 text-xs text-error">
-          Se borrarán los pagos registrados ({{ currency.format(m.totalPaid) }}): la mercancía se
-          devuelve, así que ese dinero deja de deberse.
-        </p>
       </td>
     </tr>
   </template>
@@ -662,6 +771,282 @@ async function exportAll() {
       <p class="text-xs text-muted">Mostrando {{ movements.length }} de {{ total }} entrada(s)</p>
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
+
+    <UModal v-model:open="showRequestModal">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-message-square-warning" class="size-5 text-warning" />
+              <div class="leading-tight">
+                <h2 class="font-semibold">Solicitar corrección</h2>
+                <p class="font-mono text-xs text-muted">{{ requestingMovement?.folio ?? '—' }}</p>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="requestingMovement" class="space-y-4">
+            <div class="text-sm">
+              <p class="font-medium">{{ requestingMovement.productName ?? '—' }}</p>
+              <p class="text-xs text-muted">
+                {{ qtyFmt.format(Number(requestingMovement.quantity)) }}
+                {{ requestingMovement.unit ?? '' }} ·
+                {{ requestingMovement.storeCode ?? '—' }} ·
+                {{ currency.format(Number(requestingMovement.totalValue)) }}
+              </p>
+            </div>
+
+            <UFormField label="Motivo" required>
+              <UInput
+                v-model="requestReason"
+                placeholder="Qué está mal en esta entrada…"
+                class="w-full"
+              />
+            </UFormField>
+
+            <p class="text-xs text-muted">
+              No anula nada todavía: abre un ticket para que un administrador lo revise. Si lo
+              aprueba, la entrada se anula y tendrás que volver a capturarla corregida.
+            </p>
+          </div>
+
+          <template #footer>
+            <div class="flex items-center justify-end gap-2">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                :disabled="submittingRequest"
+                @click="cancelRequest"
+              >
+                Cancelar
+              </UButton>
+              <UButton
+                color="warning"
+                :loading="submittingRequest"
+                :disabled="!requestReason.trim()"
+                @click="requestingMovement && confirmRequest(requestingMovement)"
+              >
+                Enviar solicitud
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="showVoidModal">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-ban" class="size-5 text-error" />
+              <div class="leading-tight">
+                <h2 class="font-semibold">Anular entrada</h2>
+                <p class="font-mono text-xs text-muted">{{ voidingMovement?.folio ?? '—' }}</p>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="voidingMovement" class="space-y-4">
+            <div class="text-sm">
+              <p class="font-medium">{{ voidingMovement.productName ?? '—' }}</p>
+              <p class="text-xs text-muted">
+                {{ qtyFmt.format(Number(voidingMovement.quantity)) }}
+                {{ voidingMovement.unit ?? '' }} ·
+                {{ voidingMovement.storeCode ?? '—' }} ·
+                {{ currency.format(Number(voidingMovement.totalValue)) }}
+              </p>
+            </div>
+
+            <UFormField label="Motivo (opcional)">
+              <UInput v-model="voidReason" placeholder="Motivo…" class="w-full" />
+            </UFormField>
+
+            <p class="text-xs text-muted">
+              Descuenta la cantidad del inventario. Solo es posible si aún no se ha
+              vendido/transferido ese stock.
+            </p>
+            <p v-if="voidingMovement.totalPaid > 0" class="text-xs text-error">
+              Se borrarán los pagos registrados ({{ currency.format(voidingMovement.totalPaid) }}):
+              la mercancía se devuelve, así que ese dinero deja de deberse.
+            </p>
+          </div>
+
+          <template #footer>
+            <div class="flex items-center justify-end gap-2">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                :disabled="submittingVoid"
+                @click="cancelVoidPanel"
+              >
+                Cancelar
+              </UButton>
+              <UButton
+                color="error"
+                :loading="submittingVoid"
+                @click="voidingMovement && confirmVoid(voidingMovement)"
+              >
+                Confirmar anulación
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="showEditModal">
+      <template #content>
+        <UCard :ui="{ body: 'max-h-[75vh] overflow-y-auto' }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-pencil" class="size-5 text-primary" />
+              <div class="leading-tight">
+                <h2 class="font-semibold">Corregir entrada</h2>
+                <p class="font-mono text-xs text-muted">{{ editingMovement?.folio ?? '—' }}</p>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="editingMovement" class="space-y-4">
+            <div class="text-sm">
+              <p class="font-medium">{{ editingMovement.productName ?? '—' }}</p>
+              <p class="text-xs text-muted">
+                {{ qtyFmt.format(Number(editingMovement.quantity)) }}
+                {{ editingMovement.unit ?? '' }} ·
+                {{ editingMovement.storeCode ?? '—' }} ·
+                capturada el {{ fmtDate(editingMovement.createdAt) }}
+              </p>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+              <UFormField label="Costo unitario">
+                <UInputNumber
+                  v-model="editForm.unitValue"
+                  :min="0"
+                  :step="0.01"
+                  :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 6 }"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Costo total" help="Incluye flete y cargos: el unitario se ajusta solo.">
+                <UInputNumber
+                  v-model="editTotal"
+                  :min="0"
+                  :step="0.01"
+                  :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Factura del proveedor">
+                <UInput
+                  v-model="editForm.supplierInvoiceNumber"
+                  placeholder="A-1234"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Fecha de la factura">
+                <UInput v-model="editForm.supplierInvoiceDate" type="date" class="w-full" />
+              </UFormField>
+            </div>
+
+            <UFormField label="Motivo (opcional)">
+              <UInput
+                v-model="editForm.reason"
+                placeholder="Llegó la factura real, flete de $100…"
+                class="w-full"
+              />
+            </UFormField>
+
+            <p class="text-xs text-muted">
+              No mueve el inventario: la cantidad no cambia. Ajusta el costo y la factura de esta
+              entrada, y con eso se revalúa el inventario desde la fecha de la factura.
+            </p>
+            <p v-if="editingMovement.totalPaid > 0" class="text-xs text-warning">
+              Ya tiene {{ currency.format(editingMovement.totalPaid) }} pagado(s): el nuevo costo
+              no puede quedar por debajo de esa cantidad.
+            </p>
+          </div>
+
+          <template #footer>
+            <div class="flex items-center justify-end gap-2">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                :disabled="submittingEdit"
+                @click="cancelEdit"
+              >
+                Cancelar
+              </UButton>
+              <UButton
+                color="primary"
+                :loading="submittingEdit"
+                :disabled="!canSubmitEdit"
+                @click="editingMovement && confirmEdit(editingMovement)"
+              >
+                Guardar corrección
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="showEditsModal">
+      <template #content>
+        <UCard :ui="{ body: 'max-h-[75vh] overflow-y-auto' }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-history" class="size-5 text-primary" />
+              <div class="leading-tight">
+                <h2 class="font-semibold">Correcciones de la entrada</h2>
+                <p class="font-mono text-xs text-muted">{{ editsMovement?.folio ?? '—' }}</p>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="loadingEdits" class="py-6 text-center text-sm text-muted">Cargando…</div>
+          <div v-else-if="!edits.length" class="py-6 text-center text-sm text-muted">
+            Esta entrada no se ha corregido.
+          </div>
+          <ul v-else class="divide-y divide-default text-sm">
+            <li v-for="e in edits" :key="e.id" class="py-3 space-y-1">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs text-muted">{{ fmtDate(e.editedAt) }}</span>
+                <span class="text-xs text-muted">{{ e.editedByName ?? '—' }}</span>
+              </div>
+              <p v-if="e.prevUnitValue !== e.newUnitValue" class="tabular-nums">
+                Costo total
+                <span class="text-muted">{{ currency.format(Number(e.prevTotalValue)) }}</span>
+                →
+                <span class="font-medium">{{ currency.format(Number(e.newTotalValue)) }}</span>
+              </p>
+              <p v-if="e.prevSupplierInvoiceNumber !== e.newSupplierInvoiceNumber">
+                Factura
+                <span class="text-muted">{{ e.prevSupplierInvoiceNumber ?? '—' }}</span>
+                →
+                <span class="font-medium">{{ e.newSupplierInvoiceNumber ?? '—' }}</span>
+              </p>
+              <p v-if="e.prevSupplierInvoiceDate !== e.newSupplierInvoiceDate">
+                Fecha de factura
+                <span class="text-muted">{{ fmtDay(e.prevSupplierInvoiceDate) }}</span>
+                →
+                <span class="font-medium">{{ fmtDay(e.newSupplierInvoiceDate) }}</span>
+              </p>
+              <p v-if="e.reason" class="text-xs text-muted">{{ e.reason }}</p>
+            </li>
+          </ul>
+
+          <template #footer>
+            <div class="flex justify-end">
+              <UButton color="neutral" variant="ghost" @click="showEditsModal = false">
+                Cerrar
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
 
     <!-- Pagos de la entrada -->
     <UModal v-model:open="showPaymentsModal">
