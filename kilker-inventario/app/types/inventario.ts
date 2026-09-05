@@ -263,7 +263,15 @@ export interface ApiBanksMovement {
   note: string | null
   /** De dónde salió el movimiento, ya resuelto por el endpoint. */
   source: 'venta' | 'entrada' | 'gasto' | 'anulacion' | 'manual'
+  /** Si este movimiento ES una reversa, a qué movimiento anula. */
   reversesId: number | null
+  /**
+   * Si este movimiento FUE revertido, la `anulacion` que lo anuló.
+   *
+   * ⚠️ No null significa que ese importe ya no cuenta: la fila sigue en la lista
+   * porque el libro es append-only, pero su par la dejó en cero.
+   */
+  reversedById: number | null
   createdByName: string | null
   createdAt: string
 }
