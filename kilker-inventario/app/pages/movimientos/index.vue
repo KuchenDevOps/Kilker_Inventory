@@ -155,6 +155,7 @@ async function confirmRequest(m: ApiMovement) {
 }
 
 const editingId = ref<number | null>(null)
+const showEditModal = ref(false)
 const submittingEdit = ref(false)
 const editForm = reactive({
   unitValue: undefined as number | undefined,
@@ -202,6 +203,7 @@ function openEdit(m: ApiMovement) {
   voidingId.value = null
   requestingId.value = null
   editingId.value = m.id
+  showEditModal.value = true
   Object.assign(editForm, {
     unitValue: Number(m.unitValue),
     supplierInvoiceNumber: m.supplierInvoiceNumber ?? '',
@@ -211,8 +213,13 @@ function openEdit(m: ApiMovement) {
 }
 
 function cancelEdit() {
+  showEditModal.value = false
   editingId.value = null
 }
+
+watch(showEditModal, (open) => {
+  if (!open) editingId.value = null
+})
 
 async function confirmEdit(m: ApiMovement) {
   if (!canSubmitEdit.value) return
@@ -704,7 +711,7 @@ async function exportAll() {
             size="xs"
           />
           <UButton
-            v-if="m.editable && editingId !== m.id"
+            v-if="m.editable"
             size="xs"
             color="primary"
             variant="ghost"
@@ -732,80 +739,6 @@ async function exportAll() {
               @click="openRequest(m)"
             />
           </template>
-        </div>
-      </td>
-    </tr>
-    <tr v-if="editingId === m.id" class="bg-elevated/40">
-      <td :colspan="colCount" class="px-4 py-3">
-        <div class="space-y-3">
-          <p class="text-xs text-muted">
-            Corregir <strong>{{ m.productName }}</strong>
-            ({{ qtyFmt.format(Number(m.quantity)) }} {{ m.unit }}) · folio
-            <span class="font-mono">{{ m.folio ?? '—' }}</span>
-          </p>
-          <div class="grid gap-3 sm:grid-cols-4">
-            <UFormField label="Costo unitario" size="xs">
-              <UInputNumber
-                v-model="editForm.unitValue"
-                :min="0"
-                :step="0.01"
-                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 6 }"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Costo total" size="xs">
-              <UInputNumber
-                v-model="editTotal"
-                :min="0"
-                :step="0.01"
-                :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Factura del proveedor" size="xs">
-              <UInput v-model="editForm.supplierInvoiceNumber" placeholder="A-1234" class="w-full" />
-            </UFormField>
-            <UFormField label="Fecha de la factura" size="xs">
-              <UInput v-model="editForm.supplierInvoiceDate" type="date" class="w-full" />
-            </UFormField>
-          </div>
-          <div class="flex flex-wrap items-end gap-3">
-            <UFormField label="Motivo (opcional)" size="xs" class="flex-1 min-w-60">
-              <UInput
-                v-model="editForm.reason"
-                placeholder="Llegó la factura real, flete de $100…"
-                class="w-full"
-              />
-            </UFormField>
-            <div class="flex items-center gap-2">
-              <UButton
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                :disabled="submittingEdit"
-                @click="cancelEdit"
-              >
-                Cancelar
-              </UButton>
-              <UButton
-                size="xs"
-                color="primary"
-                :loading="submittingEdit"
-                :disabled="!canSubmitEdit"
-                @click="confirmEdit(m)"
-              >
-                Guardar corrección
-              </UButton>
-            </div>
-          </div>
-          <p class="text-xs text-muted">
-            No mueve el inventario: la cantidad no cambia. Ajusta el costo y la factura de esta
-            entrada, y con eso se revalúa el inventario desde la fecha de la factura.
-          </p>
-          <p v-if="m.totalPaid > 0" class="text-xs text-warning">
-            Ya tiene {{ currency.format(m.totalPaid) }} pagado(s): el nuevo costo no puede quedar
-            por debajo de esa cantidad.
-          </p>
         </div>
       </td>
     </tr>
@@ -885,6 +818,103 @@ async function exportAll() {
       <p class="text-xs text-muted">Mostrando {{ movements.length }} de {{ total }} entrada(s)</p>
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
+
+    <UModal v-model:open="showEditModal">
+      <template #content>
+        <UCard :ui="{ body: 'max-h-[75vh] overflow-y-auto' }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-pencil" class="size-5 text-primary" />
+              <div class="leading-tight">
+                <h2 class="font-semibold">Corregir entrada</h2>
+                <p class="font-mono text-xs text-muted">{{ editingMovement?.folio ?? '—' }}</p>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="editingMovement" class="space-y-4">
+            <div class="text-sm">
+              <p class="font-medium">{{ editingMovement.productName ?? '—' }}</p>
+              <p class="text-xs text-muted">
+                {{ qtyFmt.format(Number(editingMovement.quantity)) }}
+                {{ editingMovement.unit ?? '' }} ·
+                {{ editingMovement.storeCode ?? '—' }} ·
+                capturada el {{ fmtDate(editingMovement.createdAt) }}
+              </p>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+              <UFormField label="Costo unitario">
+                <UInputNumber
+                  v-model="editForm.unitValue"
+                  :min="0"
+                  :step="0.01"
+                  :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 6 }"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Costo total" help="Incluye flete y cargos: el unitario se ajusta solo.">
+                <UInputNumber
+                  v-model="editTotal"
+                  :min="0"
+                  :step="0.01"
+                  :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Factura del proveedor">
+                <UInput
+                  v-model="editForm.supplierInvoiceNumber"
+                  placeholder="A-1234"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Fecha de la factura">
+                <UInput v-model="editForm.supplierInvoiceDate" type="date" class="w-full" />
+              </UFormField>
+            </div>
+
+            <UFormField label="Motivo (opcional)">
+              <UInput
+                v-model="editForm.reason"
+                placeholder="Llegó la factura real, flete de $100…"
+                class="w-full"
+              />
+            </UFormField>
+
+            <p class="text-xs text-muted">
+              No mueve el inventario: la cantidad no cambia. Ajusta el costo y la factura de esta
+              entrada, y con eso se revalúa el inventario desde la fecha de la factura.
+            </p>
+            <p v-if="editingMovement.totalPaid > 0" class="text-xs text-warning">
+              Ya tiene {{ currency.format(editingMovement.totalPaid) }} pagado(s): el nuevo costo
+              no puede quedar por debajo de esa cantidad.
+            </p>
+          </div>
+
+          <template #footer>
+            <div class="flex items-center justify-end gap-2">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                :disabled="submittingEdit"
+                @click="cancelEdit"
+              >
+                Cancelar
+              </UButton>
+              <UButton
+                color="primary"
+                :loading="submittingEdit"
+                :disabled="!canSubmitEdit"
+                @click="editingMovement && confirmEdit(editingMovement)"
+              >
+                Guardar corrección
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
 
     <UModal v-model:open="showEditsModal">
       <template #content>
