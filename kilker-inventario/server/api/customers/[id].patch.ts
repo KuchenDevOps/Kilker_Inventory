@@ -43,8 +43,23 @@ export default defineEventHandler(async (event) => {
   }
   if (body.rfc !== undefined) values.rfc = cleanText(body.rfc)
   if (body.address !== undefined) values.address = cleanText(body.address)
-  if (body.email !== undefined) values.email = cleanText(body.email)
-  if (body.phone !== undefined) values.phone = cleanText(body.phone)
+  // Correo y teléfono son obligatorios: si vienen en el body, no pueden quedar
+  // vacíos. Se valida solo lo que llega, para que las llamadas parciales
+  // (reactivar un cliente con `{ isActive: true }`) sigan pasando aunque el
+  // registro histórico traiga estos campos en NULL.
+  if (body.email !== undefined) {
+    const email = cleanText(body.email)
+    if (!email) throw createError({ statusCode: 400, statusMessage: 'El correo no puede quedar vacío' })
+    if (!isValidEmail(email)) {
+      throw createError({ statusCode: 400, statusMessage: 'El correo no tiene un formato válido' })
+    }
+    values.email = email
+  }
+  if (body.phone !== undefined) {
+    const phone = cleanText(body.phone)
+    if (!phone) throw createError({ statusCode: 400, statusMessage: 'El teléfono no puede quedar vacío' })
+    values.phone = phone
+  }
   if (body.isActive !== undefined) values.isActive = body.isActive
 
   const [updated] = await db

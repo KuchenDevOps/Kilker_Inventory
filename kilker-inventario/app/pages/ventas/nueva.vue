@@ -296,21 +296,37 @@ const customerItems = computed(() => [
 const creatingCustomer = ref(false)
 const newCustomerName = ref('')
 const newCustomerPhone = ref('')
+const newCustomerEmail = ref('')
 const savingCustomer = ref(false)
 
+// Correo y teléfono son obligatorios en el alta de clientes (lo exige
+// `POST /api/customers`), así que el alta rápida los pide también: sin ellos
+// el panel devolvía 400 y la venta se quedaba sin poder elegir cliente.
+const canQuickCreate = computed(
+  () =>
+    newCustomerName.value.trim().length > 0 &&
+    newCustomerPhone.value.trim().length > 0 &&
+    isValidEmail(newCustomerEmail.value)
+)
+
 async function quickCreateCustomer() {
-  if (!newCustomerName.value.trim()) return
+  if (!canQuickCreate.value) return
   savingCustomer.value = true
   try {
     const created = await apiFetch<{ id: number }>('/api/customers', {
       method: 'POST',
-      body: { name: newCustomerName.value.trim(), phone: newCustomerPhone.value.trim() || undefined }
+      body: {
+        name: newCustomerName.value.trim(),
+        phone: newCustomerPhone.value.trim(),
+        email: newCustomerEmail.value.trim()
+      }
     })
     await refresh()
     customerId.value = created.id
     creatingCustomer.value = false
     newCustomerName.value = ''
     newCustomerPhone.value = ''
+    newCustomerEmail.value = ''
   } catch (e) {
     toast.add({ title: 'No se pudo crear el cliente', description: apiErrorMessage(e), color: 'error' })
   } finally {
@@ -433,13 +449,21 @@ async function quickCreateCustomer() {
         <!-- Panel inline de alta rápida de cliente -->
         <UCard v-if="creatingCustomer" class="bg-elevated/30">
           <div class="flex flex-wrap items-end gap-3">
-            <UFormField label="Nombre" class="flex-1 min-w-48">
+            <UFormField label="Nombre" required class="flex-1 min-w-48">
               <UInput v-model="newCustomerName" placeholder="Nombre del cliente" class="w-full" />
             </UFormField>
-            <UFormField label="Teléfono (opcional)" class="flex-1 min-w-40">
+            <UFormField label="Teléfono" required class="flex-1 min-w-40">
               <UInput v-model="newCustomerPhone" placeholder="55..." class="w-full" />
             </UFormField>
-            <UButton :loading="savingCustomer" :disabled="!newCustomerName.trim()" @click="quickCreateCustomer">
+            <UFormField label="Correo" required class="flex-1 min-w-48">
+              <UInput
+                v-model="newCustomerEmail"
+                type="email"
+                placeholder="cliente@correo.com"
+                class="w-full"
+              />
+            </UFormField>
+            <UButton :loading="savingCustomer" :disabled="!canQuickCreate" @click="quickCreateCustomer">
               Guardar
             </UButton>
             <UButton variant="ghost" color="neutral" @click="creatingCustomer = false">Cancelar</UButton>
