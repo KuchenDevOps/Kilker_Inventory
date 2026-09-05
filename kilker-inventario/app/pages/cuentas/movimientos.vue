@@ -15,6 +15,7 @@
 // por pagar.
 import type { ApiBanksMovement, PaymentMethod } from '~/types/inventario'
 import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
+import { buildBanksMovementsDoc, fmtLedgerDate } from '~/utils/banksMovementsPdf'
 import {
   CASH_FLOW_LABELS,
   PAYMENT_LABELS,
@@ -26,8 +27,9 @@ import {
 definePageMeta({ requiresRole: ['admin', 'observador'] })
 useHead({ title: 'Movimientos de banco · Inventario Kilker' })
 
-// `balances` y `globalBalance` siguen viniendo del endpoint, pero las tarjetas
-// de saldo viven en el dashboard de banco: aquí no se destructuran.
+// `globalBalance` sigue viniendo del endpoint, pero las tarjetas de saldo viven
+// en el dashboard de banco: aquí no se destructura. `balances` sí, y sólo para
+// ponerle nombre a la bolsa filtrada en el encabezado del PDF.
 //
 // ⚠️ Lo único que esta pantalla muestra en cifras es `filteredNet`, y NO es un
 // saldo: es el neto de lo que quedó dentro del filtro. Por eso se rotula "neto
@@ -35,6 +37,7 @@ useHead({ title: 'Movimientos de banco · Inventario Kilker' })
 // de nada (ver el encabezado del endpoint).
 const {
   movements,
+  balances,
   concepts,
   types,
   filteredNet,
@@ -49,7 +52,8 @@ const {
   from,
   to,
   search,
-  refresh
+  refresh,
+  fetchAllFiltered
 } = useBanksMovements()
 
 const { me } = useMe()
@@ -63,16 +67,13 @@ const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: '
 /**
  * Formatea una columna `date` (`YYYY-MM-DD`) SIN pasar por `new Date()`.
  *
- * ⚠️ `new Date('2026-08-30')` es medianoche UTC, que en México es todavía el 29:
- * la fecha se vería un día antes de la capturada. Es el mismo desfase de seis
- * horas que documenta `server/utils/businessTime.ts`.
+ * ⚠️ Vive en `utils/banksMovementsPdf.ts` y se importa, en vez de estar escrito
+ * aquí, porque el PDF imprime estas mismas fechas: con dos copias, un arreglo en
+ * una dejaba al PDF diciendo un día distinto que la pantalla. El motivo de no
+ * usar `new Date()` está documentado allá (`new Date('2026-08-30')` es medianoche
+ * UTC, que en México es todavía el 29).
  */
-const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
-function fmtDateOnly(s: string | null | undefined) {
-  const m = String(s ?? '').match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!m) return '—'
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`
-}
+const fmtDateOnly = fmtLedgerDate
 
 /** Hoy en la hora LOCAL del navegador (que en México es la del negocio). */
 function today(): string {
@@ -140,6 +141,97 @@ function conceptOf(m: ApiBanksMovement) {
 /** El sentido se lee del SIGNO, nunca del concepto (convención de la tabla). */
 function isInflow(m: ApiBanksMovement) {
   return Number(m.amount) >= 0
+}
+
+// ───────────────────────────────────────────────
+//  EXPORTAR A PDF
+// ───────────────────────────────────────────────
+// Saca en PDF los movimientos del filtro vigente CON su saldo corrido, con el
+// formato de un estado de cuenta (utils/banksMovementsPdf.ts arma el documento).
+
+/**
+ * Qué universo cubre la columna de saldo, para rotularlo en el PDF.
+ *
+ * ⚠️ La bolsa es lo único que el saldo respeta del filtro (ver el endpoint). Sin
+ * filtro de bolsa la columna es la suma de todas juntas, que no es el saldo de
+ * ninguna cuenta en particular, y eso tiene que decirlo el papel.
+ */
+const balanceScope = computed(() => {
+  if (account.value === 'cash') return 'Efectivo'
+  const id = Number(account.value)
+  if (id) return balances.value.find((b) => b.accountId === id)?.label ?? 'la bolsa filtrada'
+  return 'todas las bolsas juntas'
+})
+
+/**
+ * Último día INCLUIDO del periodo. `to` viene exclusivo de FiltroPeriodo (el día
+ * siguiente al último), así que imprimirlo tal cual anunciaría un día de más.
+ */
+function lastIncludedDay(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00`)
+  d.setDate(d.getDate() - 1)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${mm}-${dd}`
+}
+
+/** Los filtros vigentes en texto, para el renglón gris del encabezado del PDF. */
+function filterLines(): string[] {
+  const lines = [
+    from.value || to.value
+      ? `${from.value ? fmtDateOnly(from.value) : 'Inicio'} – ${
+          to.value ? fmtDateOnly(lastIncludedDay(to.value)) : 'hoy'
+        }`
+      : 'Todo el histórico',
+    `Bolsa: ${balanceScope.value}`
+  ]
+  if (type.value) lines.push(`Clasificación: ${CASH_FLOW_LABELS[type.value] ?? type.value}`)
+  if (source.value) lines.push(`Origen: ${source.value === 'manual' ? 'capturados a mano' : 'de documento'}`)
+  if (search.value.trim()) lines.push(`Búsqueda: "${search.value.trim()}"`)
+  return lines
+}
+
+const exporting = ref(false)
+
+/**
+ * ⚠️ Vuelve a pedir los movimientos SIN paginar (`fetchAllFiltered`) en vez de
+ * imprimir `movements`: la tabla trae 100 filas y el PDF tiene que llevar todo
+ * lo que el filtro abarca, no la página que se está viendo.
+ *
+ * pdfmake se importa bajo demanda —el bundle con las fuentes embebidas pesa
+ * ~2 MB— igual que en el ticket de venta; el import dinámico además lo mantiene
+ * fuera del bundle de servidor, porque sólo corre en el navegador.
+ */
+async function exportPdf() {
+  exporting.value = true
+  try {
+    const rows = await fetchAllFiltered()
+    const [{ default: pdfMake }, { default: vfs }, { KILKER_LOGO_PNG }] = await Promise.all([
+      import('pdfmake/build/pdfmake'),
+      import('pdfmake/build/vfs_fonts'),
+      import('~/utils/brandLogo')
+    ])
+    pdfMake.addVirtualFileSystem(vfs)
+    const generatedAt = new Date()
+    pdfMake
+      .createPdf(
+        buildBanksMovementsDoc(
+          rows,
+          { balanceScope: balanceScope.value, filters: filterLines(), generatedAt },
+          KILKER_LOGO_PNG
+        )
+      )
+      .download(`movimientos-banco-${generatedAt.toISOString().slice(0, 10)}.pdf`)
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo generar el PDF',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    exporting.value = false
+  }
 }
 
 // ───────────────────────────────────────────────
@@ -280,9 +372,23 @@ async function onSubmit() {
           Todo el dinero que entra y sale · el efectivo va como bolsa aparte
         </p>
       </div>
-      <UButton v-if="canEdit" icon="i-lucide-plus" color="primary" @click="openNew">
-        Nuevo movimiento
-      </UButton>
+      <div class="flex items-center gap-2">
+        <!-- Exportar es una LECTURA: va fuera del `canEdit` del alta, para que el
+             observador también pueda bajarlo (el endpoint ya se lo permite). -->
+        <UButton
+          icon="i-lucide-file-down"
+          color="neutral"
+          variant="outline"
+          :loading="exporting"
+          :disabled="pending || !total"
+          @click="exportPdf"
+        >
+          Exportar PDF
+        </UButton>
+        <UButton v-if="canEdit" icon="i-lucide-plus" color="primary" @click="openNew">
+          Nuevo movimiento
+        </UButton>
+      </div>
     </header>
 
     <UAlert
@@ -329,6 +435,15 @@ async function onSubmit() {
             {{ currency.format(filteredNet) }}
           </span>
         </p>
+        <!-- Con un filtro puesto, dos renglones seguidos NO se diferencian por su
+             importe: entre ellos hay movimientos que el filtro escondió y el
+             saldo sí los cuenta. Decirlo aquí evita que parezca un error de
+             cálculo (es lo mismo que hace un estado de cuenta filtrado). -->
+        <p class="text-xs text-muted">
+          La columna «Saldo» acumula todo el libro hasta cada movimiento, también
+          lo que este filtro no muestra. Lo que suma exactamente lo visible es el
+          neto del filtro.
+        </p>
       </div>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
@@ -342,14 +457,15 @@ async function onSubmit() {
               <th class="px-4 py-3 font-medium">Nota</th>
               <th class="px-4 py-3 font-medium">Sucursal</th>
               <th class="px-4 py-3 font-medium text-right">Importe</th>
+              <th class="px-4 py-3 font-medium text-right">Saldo</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-default">
             <tr v-if="pending">
-              <td colspan="6" class="px-4 py-8 text-center text-muted">Cargando…</td>
+              <td colspan="7" class="px-4 py-8 text-center text-muted">Cargando…</td>
             </tr>
             <tr v-else-if="!movements.length">
-              <td colspan="6" class="px-4 py-8 text-center text-muted">
+              <td colspan="7" class="px-4 py-8 text-center text-muted">
                 No hay movimientos con estos filtros.
               </td>
             </tr>
@@ -382,6 +498,15 @@ async function onSubmit() {
                 :class="isInflow(m) ? 'text-success' : 'text-error'"
               >
                 {{ currency.format(Number(m.amount)) }}
+              </td>
+              <!-- Saldo de la bolsa DESPUÉS de este movimiento, calculado por el
+                   servidor sobre todo el libro. No se acumula aquí: con un filtro
+                   puesto, sumar los importes visibles daría otro número. -->
+              <td
+                class="px-4 py-3 text-right font-semibold tabular-nums whitespace-nowrap"
+                :class="m.balance < 0 ? 'text-error' : ''"
+              >
+                {{ currency.format(m.balance) }}
               </td>
             </tr>
           </tbody>

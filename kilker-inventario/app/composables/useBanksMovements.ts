@@ -36,6 +36,18 @@ export function useBanksMovements() {
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
+  /** Los filtros vigentes como query string, SIN paginar. */
+  function filterQuery() {
+    const q = new URLSearchParams()
+    if (account.value) q.set('account', account.value)
+    if (type.value) q.set('type', type.value)
+    if (source.value) q.set('source', source.value)
+    if (from.value) q.set('from', from.value)
+    if (to.value) q.set('to', to.value)
+    if (search.value.trim()) q.set('q', search.value.trim())
+    return q
+  }
+
   async function refresh() {
     if (!user.value) {
       movements.value = []
@@ -51,13 +63,7 @@ export function useBanksMovements() {
         return
       }
 
-      const q = new URLSearchParams()
-      if (account.value) q.set('account', account.value)
-      if (type.value) q.set('type', type.value)
-      if (source.value) q.set('source', source.value)
-      if (from.value) q.set('from', from.value)
-      if (to.value) q.set('to', to.value)
-      if (search.value.trim()) q.set('q', search.value.trim())
+      const q = filterQuery()
       q.set('page', String(page.value))
       q.set('pageSize', String(pageSize.value))
 
@@ -80,6 +86,25 @@ export function useBanksMovements() {
     } finally {
       pending.value = false
     }
+  }
+
+  /**
+   * Los movimientos del filtro vigente COMPLETOS, sin paginar, para exportar.
+   *
+   * ⚠️ Va sin `?page` a propósito y no es un descuido heredado de `/api/sales`:
+   * este endpoint responde envuelto siempre y sin `page` devuelve todo, sin
+   * recortes silenciosos (ver su encabezado). No toca `movements` ni los demás
+   * `useState` — la pantalla se queda en su página mientras se arma el PDF.
+   */
+  async function fetchAllFiltered(): Promise<ApiBanksMovement[]> {
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token
+    if (!token) return []
+    const result = await $fetch<ApiBanksMovementsPage>(
+      `/api/banks-movements?${filterQuery()}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    return result.data
   }
 
   useSharedScope('banks-movements', () => {
@@ -126,7 +151,8 @@ export function useBanksMovements() {
     from,
     to,
     search,
-    refresh
+    refresh,
+    fetchAllFiltered
   }
 }
 

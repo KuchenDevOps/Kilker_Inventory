@@ -28,6 +28,13 @@
 // es su historia completa. Un saldo recalculado sobre "agosto" no es un saldo,
 // es un neto del periodo — eso es `filteredNet`, que va aparte y se llama
 // distinto para que nadie los confunda.
+//
+// ⚠️ Cada fila trae además su `balance`: el saldo corrido de la bolsa DESPUÉS de
+// ese movimiento. Sigue exactamente el mismo criterio que `balances` —acumula
+// todo el libro y sólo respeta el filtro de bolsa— por lo que dos filas
+// consecutivas de una vista filtrada no se diferencian por su importe. Ver el
+// bloque "SALDO CORRIDO" más abajo.
+import type { SQL } from 'drizzle-orm'
 import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { bankAccounts, banksMovements, cashFlowType } from '../../db/schema'
@@ -98,13 +105,20 @@ export default defineEventHandler(async (event) => {
   // `account`: id de cuenta, o 'cash' para la bolsa de efectivo. Se distingue de
   // "sin filtro" porque efectivo es `account_id IS NULL`, y un `?account=` vacío
   // no puede significar las dos cosas.
+  //
+  // ⚠️ Se guarda APARTE del resto de los filtros porque es el único que entra en
+  // el saldo corrido de más abajo: la bolsa es lo único que parte el dinero de
+  // verdad. Un saldo que además respetara periodo, clasificación o búsqueda no
+  // sería un saldo — sería `filteredNet` con otro nombre.
   const accountParam = String(query.account ?? '').trim()
+  let accountFilter: SQL | undefined
   if (accountParam === 'cash') {
-    filters.push(isNull(banksMovements.accountId))
+    accountFilter = isNull(banksMovements.accountId)
   } else if (accountParam) {
     const accountId = Number(accountParam)
-    if (accountId) filters.push(eq(banksMovements.accountId, accountId))
+    if (accountId) accountFilter = eq(banksMovements.accountId, accountId)
   }
+  if (accountFilter) filters.push(accountFilter)
 
   const typeParam = String(query.type ?? '').trim()
   if (cashFlowType.enumValues.includes(typeParam as never)) {
@@ -194,6 +208,54 @@ export default defineEventHandler(async (event) => {
     }
   })
 
+  // ───────────────────────────────────────────────
+  //  SALDO CORRIDO (columna "Saldo")
+  // ───────────────────────────────────────────────
+  // Saldo REAL de la bolsa justo después de cada movimiento: la suma acumulada
+  // de TODO el libro en orden cronológico hasta esa fila. No es la suma de lo
+  // que se ve en pantalla.
+  //
+  // ⚠️ Ignora todos los filtros menos la bolsa, por lo mismo que `balances` (ver
+  // el encabezado): un saldo es la historia completa. Consecuencia que hay que
+  // conocer antes de "arreglarla": con un filtro puesto, dos filas consecutivas
+  // de la tabla NO se diferencian por su importe — entre ellas hay movimientos
+  // reales que el filtro escondió, y el saldo sí los cuenta. Es lo mismo que
+  // hace un estado de cuenta bancario filtrado. La suma de lo que sí se ve es
+  // `filteredNet`, que va aparte.
+  //
+  // ⚠️ El orden `(occurred_at, id)` tiene que ser el MISMO que el `orderBy` de
+  // arriba, invertido. Es un orden total (el `id` desempata), así que el saldo
+  // de cada fila está bien definido aunque haya varios movimientos el mismo día.
+  //
+  // Se resuelve con una ventana sobre la tabla entera y se recorta a los ids de
+  // la página. Es un escaneo completo de `banks_movements` por petición: barato
+  // a la escala de este libro, y es lo que evita una subconsulta correlacionada
+  // por fila (que en la exportación, sin `?page`, sería una por movimiento).
+  const pageIds = rows.map((r) => r.id)
+  const balanceById = new Map<number, number>()
+  if (pageIds.length) {
+    const running = db
+      .select({
+        id: banksMovements.id,
+        balance:
+          sql<string>`sum(${banksMovements.amount}) over (order by ${banksMovements.occurredAt} asc, ${banksMovements.id} asc)`.as(
+            'running_balance'
+          )
+      })
+      .from(banksMovements)
+      .where(accountFilter)
+      .as('running')
+
+    const runningRows = await db
+      .select({ id: running.id, balance: running.balance })
+      .from(running)
+      .where(inArray(running.id, pageIds))
+
+    for (const r of runningRows) {
+      balanceById.set(r.id, Math.round(Number(r.balance ?? 0) * 100) / 100)
+    }
+  }
+
   const data = rows.map((m) => ({
     id: m.id,
     type: m.type,
@@ -201,6 +263,8 @@ export default defineEventHandler(async (event) => {
     concept: m.concept,
     /** numeric → string, con signo (+ entra, − sale). */
     amount: m.amount,
+    /** Saldo de la bolsa DESPUÉS de este movimiento (acumulado de todo el libro). */
+    balance: balanceById.get(m.id) ?? 0,
     occurredAt: m.occurredAt,
     accountId: m.accountId,
     accountLabel: m.account
