@@ -134,7 +134,11 @@ export default defineEventHandler(async (event) => {
       method,
       storeId: movement.storeId,
       profileId: profile.id,
-      note: `Pago entrada ${movement.inventoryEntryInvoiceNumber ?? movementId}`
+      // ⚠️ El respaldo lleva `#`: sin él, una entrada sin folio capturado (la
+      // columna es nullable) escribía "Pago entrada 412", que se lee como un
+      // folio y no lo es. Misma convención que en corrections.ts y
+      // paymentDeletion.ts — el `#` es lo que marca "esto es un id interno".
+      note: `Pago entrada ${movement.inventoryEntryInvoiceNumber ?? `#${movementId}`}`
     })
 
     return { ...created, cashFlow }

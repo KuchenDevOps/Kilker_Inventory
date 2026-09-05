@@ -480,6 +480,17 @@ async function onSubmit() {
                     variant="subtle"
                     size="sm"
                   />
+                  <!-- ⚠️ El libro es append-only: un movimiento revertido NO se
+                       borra, se queda con su reversa al lado. Sin este aviso se
+                       leía como dinero vivo — una venta decía "pendiente" y su
+                       cobro seguía aquí como si hubiera entrado. -->
+                  <UBadge
+                    v-if="m.reversedById"
+                    label="Anulado"
+                    color="error"
+                    variant="soft"
+                    size="sm"
+                  />
                 </div>
                 <p class="text-xs text-muted">
                   {{ m.method ? PAYMENT_LABELS[m.method] : '—' }}
