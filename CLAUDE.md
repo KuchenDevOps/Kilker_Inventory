@@ -39,11 +39,13 @@ Sistema de **inventario web** para una empresa de pinturas con **varias sucursal
 | ORM              | **Drizzle ORM** + `drizzle-kit` (migraciones)                    |
 | Base de datos    | **Supabase (PostgreSQL gestionado)**                             |
 | Auth             | **Supabase Auth** (módulo `@nuxtjs/supabase`) + roles propios    |
-| Exportación      | **SheetJS (`xlsx`)** para exportar a Excel desde el cliente      |
+| Exportación      | **SheetJS (`xlsx`)** a Excel y **pdfmake** a PDF, desde el cliente |
 | Hosting          | **Vercel** (despliegue del Nuxt)                                 |
 
-> `pdfmake` y `@canvasjs/charts` están instalados pero **hoy no se usan** en `app/`
-> (candidatos a limpiar o a usar cuando entren PDF/gráficas).
+> `pdfmake` sí se usa (ticket de venta y libro de dinero en PDF), siempre con
+> **import dinámico**: el bundle con las fuentes embebidas pesa ~2 MB y sólo corre
+> en el navegador. `@canvasjs/charts` está instalado pero **hoy no se usa** en
+> `app/` (candidato a limpiar o a usar cuando entren gráficas).
 
 ### Historia de la decisión (por qué este stack)
 
@@ -365,6 +367,16 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   su tienda y los productos con stock en otra caen en el grupo
   "Sin existencias en tu sucursal" (la etiqueta cambia según el rol, para no afirmar que
   no hay existencias en ningún lado).
+- **Exportación a PDF** (pdfmake, en el cliente) del ticket de venta
+  (`app/utils/ticketPdf.ts`) y del **libro de dinero filtrado**
+  (`app/utils/banksMovementsPdf.ts`, botón en `/cuentas/movimientos`). El del
+  libro va **apaisado** y con las filas de la más VIEJA a la más nueva, al revés
+  que la pantalla: la columna de saldo sólo se lee hacia abajo si el tiempo
+  avanza hacia abajo. Pide las filas **sin `?page`** —el endpoint devuelve todo,
+  sin recortes silenciosos— para que el PDF no salga con la página que se está
+  viendo. La fecha la formatea `fmtLedgerDate`, exportada del mismo módulo y
+  usada también por la pantalla: con dos copias, un arreglo en una dejaba al PDF
+  diciendo un día distinto.
 
 ### 10.2 Reglas de negocio implementadas (lo no obvio)
 
@@ -496,6 +508,19 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   - **Una muestra sale como venta de $0 con folio** y entra al corte de caja; su costo
     cae en *costo de lo vendido* con ingreso 0. Separarlo en un reporte propio no
     requiere migración: la marca ya está en la línea.
+- ⚠️ **El SALDO CORRIDO del libro de dinero lo calcula el servidor, no la
+  pantalla.** Cada fila de `GET /api/banks-movements` trae su `balance`: el saldo
+  de la bolsa DESPUÉS de ese movimiento, acumulado sobre TODO el libro en orden
+  `(occurred_at, id)` —una función de ventana recortada a los ids de la página—.
+  Respeta el filtro de **bolsa** (`?account`) y ningún otro, por lo mismo que
+  `balances`: un saldo es la historia completa, y uno recalculado sobre "agosto"
+  sería `filteredNet` con otro nombre. **Consecuencia que hay que conocer antes de
+  "corregirla":** con un filtro puesto, dos filas consecutivas NO se diferencian
+  por su importe —entre ellas hay movimientos que el filtro escondió y el saldo sí
+  los cuenta—, igual que en un estado de cuenta bancario filtrado. Por eso la
+  pantalla y el PDF lo dicen por escrito. **No lo reconstruyas sumando los
+  importes visibles**: eso da otro número en cuanto haya cualquier filtro, y sobre
+  una lista paginada da el neto de la página.
 - ⚠️ **El descuento es de la FACTURA, no de la línea.** `invoice_items.line_total` es
   **bruto**: no lleva descuento aplicado. Todo reporte que sume ingresos por línea tiene
   que prorratearlo (`line_total * (1 - discount_pct/100)`) o dará una cifra de ventas
@@ -583,7 +608,7 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
   ventas/anulaciones/transferencias/ajustes en una sola vista.
 - **`GET /api/reports/unsold-products` es un stub** (devuelve `'Hello Nitro'`); la UI cubre
   el caso vía `?includeUnsold` de `top-products`.
-- **Limpieza:** `pdfmake` y `@canvasjs/charts` instalados sin uso; `MODELO-DATOS.md` se
+- **Limpieza:** `@canvasjs/charts` instalado sin uso; `MODELO-DATOS.md` se
   mantiene como resumen del esquema real.
 - **Caché de reportes:** `top-products` cachea 60 s **en memoria del proceso** (ahora en
   `server/utils/topProducts.ts`); con varias instancias en Vercel cada una tendrá la suya
