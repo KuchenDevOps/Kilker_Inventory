@@ -390,13 +390,7 @@ async function onSubmit() {
               </td>
               <td
                 class="px-4 py-3 text-right font-medium tabular-nums whitespace-nowrap"
-                :class="
-                  m.reversedById
-                    ? 'text-muted line-through'
-                    : isInflow(m)
-                      ? 'text-success'
-                      : 'text-error'
-                "
+                :class="isInflow(m) ? 'text-success' : 'text-error'"
               >
                 {{ currency.format(Number(m.amount)) }}
               </td>
