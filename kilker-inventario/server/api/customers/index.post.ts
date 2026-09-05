@@ -27,6 +27,22 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'El nombre es obligatorio' })
   }
 
+  // Correo y teléfono son obligatorios (decisión de negocio: no se dan de alta
+  // clientes sin forma de contacto). Se valida aquí, no con un NOT NULL en la BD,
+  // porque hay clientes históricos capturados sin estos datos.
+  const email = cleanText(body?.email)
+  if (!email) {
+    throw createError({ statusCode: 400, statusMessage: 'El correo es obligatorio' })
+  }
+  if (!isValidEmail(email)) {
+    throw createError({ statusCode: 400, statusMessage: 'El correo no tiene un formato válido' })
+  }
+
+  const phone = cleanText(body?.phone)
+  if (!phone) {
+    throw createError({ statusCode: 400, statusMessage: 'El teléfono es obligatorio' })
+  }
+
   const db = useDb()
   const [created] = await db
     .insert(customers)
@@ -34,8 +50,8 @@ export default defineEventHandler(async (event) => {
       name,
       rfc: cleanText(body?.rfc),
       address: cleanText(body?.address),
-      email: cleanText(body?.email),
-      phone: cleanText(body?.phone)
+      email,
+      phone
     })
     .returning()
 
