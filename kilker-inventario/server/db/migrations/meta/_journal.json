@@ -267,6 +267,20 @@
       "when": 1788489084863,
       "tag": "0037_careless_toad",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788616812516,
+      "tag": "0038_lively_cobalt_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788616819209,
+      "tag": "0039_stock_movements_editable_entries",
+      "breakpoints": true
     }
   ]
 }

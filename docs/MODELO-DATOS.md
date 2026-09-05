@@ -57,8 +57,9 @@
 
 | Tabla | Contenido |
 |-------|-----------|
-| `stock_movements` | **Libro append-only**: un trigger (migración `0001`) rechaza UPDATE/DELETE. `type`, `quantity` **con signo** (+ entra / − sale), `unit_value`, `total_value`, `invoice_id`, `transfer_id`, `reverses_movement_id` (liga la reversa al original), `supplier_invoice_number`/`_date` (factura del proveedor en entradas) y `"Folio"` (folio interno de entrada, único por tienda). |
+| `stock_movements` | **Libro append-only**: el trigger (migraciones `0001` y `0039`) rechaza todo DELETE y solo admite corregir `unit_value`, `total_value`, `supplier_invoice_number` y `supplier_invoice_date` de un movimiento `entrada` (ver `stock_movement_edits`). `type`, `quantity` **con signo** (+ entra / − sale), `unit_value`, `total_value`, `invoice_id`, `transfer_id`, `reverses_movement_id` (liga la reversa al original), `supplier_invoice_number`/`_date` (factura del proveedor en entradas) y `"Folio"` (folio interno de entrada, único por tienda). |
 | `entry_folio_counters` | Contador `last_seq` por tienda para el folio de entradas (`<CODE>-E-0001`). Upsert atómico. |
+| `stock_movement_edits` | Bitácora de las correcciones de una entrada: `prev_`/`new_unit_value`, `prev_`/`new_supplier_invoice_number`, `prev_`/`new_supplier_invoice_date`, `reason`, `edited_by` y `edited_at`. Append-only por uso (nadie la edita); `stock_movements` no tiene `updated_at`, así que este es el único rastro de que un costo cambió. |
 
 ### Ventas
 

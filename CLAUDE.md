@@ -277,7 +277,7 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
 clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
-datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031` en
+datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0039` en
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
 ⚠️ `sale_payments` ya está en `schema.ts` pero **su migración está pendiente de generar**
 (`npm run db:generate` + `npm run db:migrate`): sin ella, `GET /api/sales` truena.
@@ -291,7 +291,7 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
 |--------|-----------|-----------|
 | **Catálogo** | `productos/index`, `productos/nuevo` (pestañas Producto / Kit / **Muestras**; `?tipo=muestra\|kit` la preselecciona), **`productos/muestras`** (listado de muestras: SKU, nombre, base y precio $0 — sin existencias, porque son las del base), `productos/[id]/editar` | `GET/POST /api/products` (`?samples=exclude\|include\|only`), `GET/PATCH/DELETE /api/products/:id`, `GET /api/products/:id/inventory-value` |
 | **Categorías** | `categorias/index` | `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id` |
-| **Entradas de stock** | `movimientos/entrada`, `movimientos/index` (modal de pagos) | `POST /api/movements/entrada`, `GET /api/movements`, `POST /api/movements/:id/void`, `GET/POST /api/movements/:id/payments` |
+| **Entradas de stock** | `movimientos/entrada`, `movimientos/index` (modal de pagos, panel de corrección, historial de correcciones) | `POST /api/movements/entrada`, `GET /api/movements`, **`PATCH /api/movements/:id`**, **`GET /api/movements/:id/edits`**, `POST /api/movements/:id/void`, `GET/POST /api/movements/:id/payments` |
 | **Ventas** | `ventas/nueva`, `ventas/index` (modal de pagos) | `POST/GET /api/sales`, `GET /api/sales/:id`, `POST /api/sales/:id/void`, `GET/POST /api/sales/:id/payments` |
 | **Transferencias** | `transferencias/nueva`, `transferencias/index` | `POST/GET /api/transfers`, `GET /api/transfers/:id`, `POST /api/transfers/:id/receive`, `POST /api/transfers/:id/cancel` |
 | **Clientes** | `clientes/index` | `GET/POST /api/customers`, `PATCH/DELETE /api/customers/:id` |
@@ -480,6 +480,43 @@ datos mock. **Base de datos:** 21 tablas + 11 enums, migraciones `0000`–`0031`
     corresponder a esa factura. El endpoint devuelve `deletedPayments` para avisarlo.
   - **El ticket/PDF de la venta no muestra nada de esto**: los abonos son cobranza
     interna, no parte del comprobante.
+- ⚠️ **Corregir una entrada: el kardex ya NO es 100% inmutable.** El trigger de la
+  migración `0001` prohibía todo UPDATE, así que ajustar el costo real (la factura del
+  proveedor llega DESPUÉS de la mercancía, y el flete o los cargos de envío la suben)
+  obligaba a anular y recapturar: dos filas más por corrección y un historial ilegible.
+  Desde la migración `0039` el trigger es una **lista blanca**: sigue prohibiendo DELETE
+  y cualquier UPDATE sobre un movimiento que no sea `entrada`, y de la entrada solo deja
+  tocar `unit_value`, `total_value`, `supplier_invoice_number` y `supplier_invoice_date`
+  (además exige que `total_value = unit_value * quantity`). Producto, sucursal,
+  cantidad, folio, ligas y `created_at`/`created_by` siguen congelados: **la cantidad no
+  se corrige, se anula**. Cuatro cosas que hay que saber:
+  - **El candado es el FIFO, no el rol.** `PATCH /api/movements/:id` solo acepta la
+    corrección si la **capa de esa entrada sigue íntegra** (`isEntryLayerIntact` de
+    `server/utils/inventoryFifo.ts`): ninguna de sus unidades salió por venta,
+    transferencia, ajuste ni pagó una venta descubierta anterior. Da igual que haya
+    existencia suficiente del producto —eso es lo que mira la anulación—: si el FIFO ya
+    consumió esa capa, su costo ya valuó una salida. `GET /api/movements` devuelve el
+    veredicto como `editable` para que la pantalla sepa si mostrar el botón, y lo
+    calcula el motor, no una heurística. Medido contra la base real: de las 100 entradas
+    más recientes, **30 editables y 70 bloqueadas** (capturas retroactivas cuyo material
+    ya se vendió).
+  - **⚠️ El caso "consumida por VENTAS" se bloquea por decisión del negocio, no porque
+    rompa nada**: el costo de lo vendido se reconstruye del histórico en cada lectura, así
+    que corregir la entrada también recostearía esas ventas. El único consumo que sí sería
+    irreversible es la **transferencia**, porque el costo viaja materializado en el
+    `unit_value` de la pata de destino y ese no se recalcula. Si algún día se quiere
+    aflojar la regla, el corte correcto es "bloquear solo si hubo transferencia".
+  - **Corregir cambia el pasado**, como anular: el costo nuevo revalúa el inventario y la
+    utilidad desde la fecha efectiva de la entrada, así que un mes ya reportado puede
+    moverse. Es la misma tensión de `voidEffectiveDate`, resuelta igual: gana la veracidad
+    del costeo.
+  - **Queda rastro**: cada corrección inserta una fila en **`stock_movement_edits`**
+    (valor anterior y nuevo, motivo, quién y cuándo), que la pantalla muestra en el
+    historial del folio. Sin eso se repetía el agujero del `PATCH` de gastos: un
+    documento editado indistinguible de uno capturado así. El pagable de la entrada es
+    `total_value`, de modo que el endpoint rechaza (409) dejar el costo por debajo de lo
+    ya abonado, y **la tienda se bloquea (`FOR UPDATE`) antes de leer el FIFO**, para
+    serializar contra las ventas de esa sucursal.
 - ⚠️ **Muestras: producto propio, inventario del base.** Una muestra es una fila de
   `products` con `sample_of_product_id` → producto base: tiene SKU y nombre propios y
   se elige al vender como cualquier otro producto, pero **no tiene inventario ni

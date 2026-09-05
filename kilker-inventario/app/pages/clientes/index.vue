@@ -77,7 +77,25 @@ function openEdit(c: ApiCustomer) {
   showModal.value = true
 }
 
-const canSubmit = computed(() => canWrite.value && form.name.trim().length > 0)
+// Correo y teléfono son obligatorios. La validación real la hace el servidor
+// (`POST/PATCH /api/customers`); esto solo evita el viaje y explica el porqué.
+const emailError = computed(() => {
+  const v = form.email.trim()
+  if (!v) return 'El correo es obligatorio'
+  if (!isValidEmail(v)) return 'El correo no tiene un formato válido'
+  return undefined
+})
+const phoneError = computed(() =>
+  form.phone.trim() ? undefined : 'El teléfono es obligatorio'
+)
+
+const canSubmit = computed(
+  () =>
+    canWrite.value &&
+    form.name.trim().length > 0 &&
+    !emailError.value &&
+    !phoneError.value
+)
 
 async function onSubmit() {
   if (!canSubmit.value) return
@@ -279,12 +297,12 @@ async function toggleActive(c: ApiCustomer) {
               <UFormField label="RFC">
                 <UInput v-model="form.rfc" placeholder="XAXX010101000" class="w-full" />
               </UFormField>
-              <UFormField label="Teléfono">
+              <UFormField label="Teléfono" required :error="phoneError">
                 <UInput v-model="form.phone" placeholder="55..." class="w-full" />
               </UFormField>
             </div>
 
-            <UFormField label="Correo">
+            <UFormField label="Correo" required :error="emailError">
               <UInput v-model="form.email" type="email" placeholder="cliente@correo.com" class="w-full" />
             </UFormField>
 

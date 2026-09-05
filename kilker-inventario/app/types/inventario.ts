@@ -674,6 +674,9 @@ export interface ApiMovement {
   voided: boolean
   /** Hay un ticket de corrección abierto contra esta entrada. */
   pendingCorrection: boolean
+  editable: boolean
+  editCount: number
+  lastEditAt: string | null
   /** Costo limpio de la entrada (= totalValue). Sin IVA ni retenciones. */
   totalToPay: number
   totalPaid: number
@@ -712,6 +715,22 @@ export const ENTRY_PAYMENT_STATUS_LABELS: Record<EntryPaymentStatus, string> = {
   parcial: 'Parcial',
   pagado: 'Pagado',
   anulada: 'Anulada'
+}
+
+export interface ApiMovementEdit {
+  id: number
+  movementId: number
+  prevUnitValue: string
+  newUnitValue: string
+  prevTotalValue: string
+  newTotalValue: string
+  prevSupplierInvoiceNumber: string | null
+  newSupplierInvoiceNumber: string | null
+  prevSupplierInvoiceDate: string | null
+  newSupplierInvoiceDate: string | null
+  reason: string | null
+  editedByName: string | null
+  editedAt: string
 }
 
 /** Abono de una entrada (`GET /api/movements/:id/payments`). */

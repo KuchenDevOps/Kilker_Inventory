@@ -491,6 +491,29 @@ export const entryPayments = pgTable(
 ).enableRLS()
 
 
+export const stockMovementEdits = pgTable(
+  'stock_movement_edits',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    movementId: bigint('movement_id', { mode: 'number' })
+      .notNull()
+      .references(() => stockMovements.id),
+    prevUnitValue: numeric('prev_unit_value', { precision: 18, scale: 6 }).notNull(),
+    newUnitValue: numeric('new_unit_value', { precision: 18, scale: 6 }).notNull(),
+    prevSupplierInvoiceNumber: text('prev_supplier_invoice_number'),
+    newSupplierInvoiceNumber: text('new_supplier_invoice_number'),
+    prevSupplierInvoiceDate: date('prev_supplier_invoice_date'),
+    newSupplierInvoiceDate: date('new_supplier_invoice_date'),
+    reason: text('reason'),
+    editedBy: uuid('edited_by')
+      .notNull()
+      .references(() => profiles.id),
+    editedAt: timestamp('edited_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => [index('stock_movement_edits_movement_idx').on(t.movementId, t.editedAt)]
+).enableRLS()
+
+
 export const entryFolioCounters = pgTable('entry_folio_counters', {
   storeId: bigint('store_id', { mode: 'number' })
     .primaryKey()
@@ -1097,9 +1120,21 @@ export const stockMovementsRelations = relations(
       fields: [stockMovements.createdBy],
       references: [profiles.id]
     }),
-    payments: many(entryPayments) 
+    payments: many(entryPayments),
+    edits: many(stockMovementEdits)
   })
 )
+
+export const stockMovementEditsRelations = relations(stockMovementEdits, ({ one }) => ({
+  movement: one(stockMovements, {
+    fields: [stockMovementEdits.movementId],
+    references: [stockMovements.id]
+  }),
+  editedBy: one(profiles, {
+    fields: [stockMovementEdits.editedBy],
+    references: [profiles.id]
+  })
+}))
 
 export const transfersRelations = relations(transfers, ({ one, many }) => ({
   fromStore: one(stores, {
