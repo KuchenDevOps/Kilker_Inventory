@@ -17,6 +17,11 @@
 // no se acumula nada. Reconstruirlo sumando los importes visibles daría otro
 // número en cuanto haya un filtro puesto, porque el saldo cuenta también los
 // movimientos que el filtro escondió (ver `GET /api/banks-movements`).
+//
+// ⚠️ Los movimientos REVERTIDOS (`reversedById`) se imprimen marcados "ANULADO"
+// y con el importe tachado, igual que el badge rojo de la pantalla. Marcar no es
+// descontar: ni el saldo ni las cifras de arriba cambian, porque la reversa es
+// otra fila del mismo libro y ya está contada.
 import type { PdfContent, PdfDocDefinition } from 'pdfmake/build/pdfmake'
 import type { ApiBanksMovement } from '~/types/inventario'
 import { CASH_FLOW_LABELS, PAYMENT_LABELS } from '~/types/inventario'
@@ -66,6 +71,22 @@ export interface BanksMovementsReportMeta {
 /** El concepto que se muestra: el texto libre, o la etiqueta de la clasificación. */
 function conceptOf(m: ApiBanksMovement) {
   return m.concept ?? CASH_FLOW_LABELS[m.type]
+}
+
+/**
+ * Si el movimiento FUE revertido (`reversedById`), o sea que su importe ya no
+ * cuenta.
+ *
+ * ⚠️ El libro es append-only: la fila revertida no se borra, se queda con su
+ * `anulacion` al lado. Sin marcarla, el PDF la imprimía idéntica a las vivas y
+ * se leía como dinero que entró — justo lo que en la pantalla evita el badge
+ * rojo "Anulado".
+ *
+ * La marca es la PALABRA "ANULADO" y el tachado del importe, no el color:
+ * impreso en blanco y negro (o fotocopiado) el rojo es un gris más.
+ */
+function isVoided(m: ApiBanksMovement) {
+  return m.reversedById != null
 }
 
 /** Encabezado de columna. */
@@ -163,9 +184,15 @@ export function buildBanksMovementsDoc(
     (a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id - b.id
   )
 
+  // ⚠️ Entradas/salidas/neto suman los importes TAL CUAL, anulados incluidos, y
+  // así se quedan: tanto el movimiento original como su reversa están dentro del
+  // filtro, así que se cancelan solos en el neto. Descontar aquí los marcados
+  // ANULADO los restaría dos veces. Es el mismo criterio del `filteredNet` de la
+  // pantalla; cambiarlo es una decisión aparte y de los dos lados.
   const inflow = rows.reduce((s, m) => (Number(m.amount) > 0 ? s + Number(m.amount) : s), 0)
   const outflow = rows.reduce((s, m) => (Number(m.amount) < 0 ? s + Number(m.amount) : s), 0)
   const net = Math.round((inflow + outflow) * 100) / 100
+  const voidedCount = rows.reduce((n, m) => (isVoided(m) ? n + 1 : n), 0)
 
   const first = rows[0]
   const last = rows[rows.length - 1]
@@ -189,6 +216,7 @@ export function buildBanksMovementsDoc(
 
   for (const m of rows) {
     const amount = Number(m.amount)
+    const voided = isVoided(m)
     const sub = [m.method ? PAYMENT_LABELS[m.method] : null, m.createdByName]
       .filter(Boolean)
       .join(' · ')
@@ -197,7 +225,15 @@ export function buildBanksMovementsDoc(
       { text: fmtLedgerDate(m.occurredAt), fontSize: 7.5, noWrap: true },
       {
         stack: [
-          { text: conceptOf(m), fontSize: 7.5 },
+          voided
+            ? {
+                // La palabra va en el mismo renglón del concepto, no debajo:
+                // se lee junto con lo que califica y no le agrega alto a la
+                // fila (la tabla ya lleva dos renglones por movimiento).
+                text: [conceptOf(m), { text: '  ANULADO', bold: true, color: ERROR }],
+                fontSize: 7.5
+              }
+            : { text: conceptOf(m), fontSize: 7.5 },
           ...(sub ? [{ text: sub, fontSize: 6.5, color: MUTED }] : [])
         ]
       },
@@ -205,11 +241,14 @@ export function buildBanksMovementsDoc(
       { text: m.note ?? '—', fontSize: 6.5, color: MUTED },
       { text: m.storeCode ?? '—', fontSize: 6.5, color: MUTED },
       {
+        // Tachado y en gris cuando está anulado: el verde/rojo del signo diría
+        // "entró"/"salió" de un importe que ya se revirtió.
         text: money(amount),
         fontSize: 7.5,
         alignment: 'right',
         noWrap: true,
-        color: amount < 0 ? ERROR : SUCCESS
+        ...(voided ? { decoration: 'lineThrough' } : {}),
+        color: voided ? MUTED : amount < 0 ? ERROR : SUCCESS
       },
       {
         text: money(m.balance),
@@ -337,6 +376,22 @@ export function buildBanksMovementsDoc(
         color: MUTED,
         margin: [0, 0, 0, 6]
       },
+      // Qué significa la marca, y por qué las cifras de arriba no la descuentan.
+      // Va sólo si hay alguna: un renglón fijo explicando algo que no aparece en
+      // la tabla es ruido en el 90% de los libros.
+      ...(voidedCount
+        ? [
+            {
+              text:
+                `${voidedCount} ${voidedCount === 1 ? 'movimiento marcado' : 'movimientos marcados'} ` +
+                'ANULADO (importe tachado): su reversa es otra fila de este mismo libro, así que el ' +
+                'saldo y las cifras de arriba ya la cuentan. No los restes.',
+              fontSize: 7,
+              color: ERROR,
+              margin: [0, 0, 0, 6]
+            }
+          ]
+        : []),
       {
         table: {
           headerRows: 1,
