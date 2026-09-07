@@ -27,7 +27,14 @@ const payableOf = (cost: number) => round2(cost) + round2(cost * IVA_RATE)
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export default defineEventHandler(async (event) => {
-  const profile = await requireProfile(event)
+  // ⚠️ Corregir una entrada es EXCLUSIVO del admin de la empresa. Antes lo podía
+  // hacer cualquiera con permiso de escritura y el único candado era el FIFO
+  // (`isEntryLayerIntact`), pero corregir el costo REVALÚA el inventario y la
+  // utilidad hacia atrás —lo mismo que anular—, así que va del lado de las
+  // anulaciones: el empleado y el administrador de sucursal abren un ticket de
+  // corrección y el admin resuelve. El candado del FIFO sigue vivo debajo; ahora
+  // son dos, y hay que pasar los dos.
+  const profile = await requireProfile(event, { role: 'admin' })
   const id = Number(getRouterParam(event, 'id'))
   if (!id) throw createError({ statusCode: 400, statusMessage: 'ID inválido' })
 
@@ -84,6 +91,9 @@ export default defineEventHandler(async (event) => {
         statusMessage: 'Solo se pueden corregir movimientos de tipo "entrada"'
       })
     }
+    // Hoy inalcanzable (solo entra `admin`, que es global), pero se conserva a
+    // propósito: si algún día se le devuelve la corrección a un rol acotado, el
+    // aislamiento por sucursal tiene que seguir puesto sin que nadie lo recuerde.
     if (isStoreScopedRole(profile.role) && movement.storeId !== profile.storeId) {
       throw createError({
         statusCode: 403,

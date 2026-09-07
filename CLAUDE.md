@@ -188,21 +188,70 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
   ambos paths. Las lecturas públicas (`/api/products`, `/api/stores`, `/api/categories`) no
   requieren auth; el resto de endpoints sí (`requireProfile`).
 - **Reparto de permisos vigente (lo que hace el código hoy):**
-  - **Solo admin:** alta/edición/borrado de productos y categorías, alta/edición de
-    sucursales y usuarios, anulación de ventas (`POST /api/sales/:id/void`), resolución de
-    tickets, anulación de entradas de stock (`POST /api/movements/:id/void`) y de gastos
-    (`POST /api/expenses/:id/void`).
+  - **Solo admin (de la EMPRESA):** borrado de productos, categorías y kits, **alta**
+    de sucursales y su activación/desactivación, anulación de ventas
+    (`POST /api/sales/:id/void`), resolución de tickets, anulación de entradas de stock
+    (`POST /api/movements/:id/void`) y de gastos (`POST /api/expenses/:id/void`),
+    **borrado del último corte de caja** (`DELETE /api/cortes/:id`), **borrado y edición
+    de pagos** (los tres `payments/:paymentId` y `payments` PATCH de ventas, entradas y
+    gastos), **corrección de entradas** (`PATCH /api/movements/:id`: revalúa el inventario
+    hacia atrás, así que va con las anulaciones) y **el cambio de contraseña de un usuario
+    existente** (`PATCH /api/users/:id`).
   - **Admin + empleado:** vender, registrar entradas, crear/recibir/cancelar
     transferencias, gastos y sus pagos, clientes, cortes de caja y abrir tickets.
   - **`admin_tienda` (administrador de sucursal):** es el encargado de UNA tienda,
     distinto del `admin` de la empresa. **Opera acotado a su sucursal igual que un
-    empleado** (vende, captura entradas, transfiere, gastos, cortes, tickets) y
-    además **gestiona el catálogo compartido**: alta y edición de productos, kits,
-    **muestras** y categorías (rutas `/productos/nuevo`, `/productos/:id/editar`,
-    `/categorias`).
-    **No puede:** borrar del catálogo, anular ventas, entradas o gastos (abre
-    ticket de corrección como el empleado), resolver tickets, ni administrar
-    sucursales y usuarios. Lleva `store_id` obligatorio, igual que el empleado.
+    empleado** (vende, captura entradas, transfiere, gastos, cortes, tickets),
+    **gestiona el catálogo compartido** (alta y edición de productos, kits,
+    **muestras** y categorías: `/productos/nuevo`, `/productos/:id/editar`,
+    `/categorias`) y **entra a la sección de Administración** —`/tiendas`,
+    `/empleados`, `/cuentas` y `/cuentas/movimientos`— con `ADMIN_AREA_ROLES`
+    (`server/utils/auth.ts`; espejo en la UI: `ADMIN_AREA_ROLES` de
+    `app/types/inventario.ts` y `canAdminister`/`isCompanyAdmin` de `useMe()`).
+    **Entrar no es poder todo lo del admin.** Ahí queda acotado:
+    - **Empleados:** `GET /api/users` solo le devuelve a la gente de SU sucursal (el
+      recorte va en el `where`, no en el `map`, para que el `count()` de la paginación
+      cuente lo mismo que la página). Da de alta y edita a los suyos, pero **no puede
+      asignar roles globales** ni **cambiarles la contraseña**.
+      ⚠️ La contraseña se le niega solo en el `PATCH`, no en el alta: la INICIAL la pone
+      él —sin ella no podría dar de alta a nadie, y ahí todavía no hay sesión de nadie
+      que suplantar—, pero cambiársela a un usuario existente es poder entrar como esa
+      persona, y entonces `created_by`/`edited_by`/`voided_by` dejan de decir quién hizo
+      cada venta, corte o gasto. Reponer una olvidada se le pide al admin.
+      ⚠️ **Esa es la guarda anti-escalada y sin ella todo lo demás es decorativo:** con
+      `/empleados` abierto podía crearse una cuenta `admin` —o ponerse el rol a sí mismo,
+      porque la única guarda que había impedía que un admin se quitara el suyo, no que
+      otro se lo pusiera— y con ella anular, borrar cortes y borrar pagos. La regla vive
+      en `assertCanAssignRole` y se explica sola: **un rol acotado solo puede asignar
+      roles acotados**, o sea `isStoreScopedRole` otra vez, sin lista nueva que mantener
+      —un rol acotado futuro nace asignable y uno global nace prohibido—. `storeId` se
+      resuelve con `resolveTargetStoreId`, que ignora el del body igual que en ventas y
+      entradas, así que tampoco puede mover personal a otra tienda.
+    - **Sucursales:** ve todas, edita **solo la suya** (`assertOwnStore`) y **no puede
+      cambiarle el estado activo**. ⚠️ Desactivar una tienda desactiva EN CASCADA a todo
+      su personal acotado, él incluido: se dejaría a sí mismo y a su equipo fuera del
+      sistema y solo un admin de la empresa podría revertirlo. El alta de sucursales
+      sigue siendo del admin. ⚠️ La guarda compara `isActive` **contra lo guardado**, no
+      contra "vino en el body": la pantalla manda el cuerpo completo aunque solo se
+      cambie el nombre, y rechazar por presencia lo dejaba sin poder editar nada (el
+      mismo error que ya se había cometido en el `PATCH` de gastos).
+    - **Cuentas bancarias:** alta y edición. Una cuenta es una **bolsa**: crearla no mueve
+      un peso, así que no cae del lado de las anulaciones. No llevan `store_id` (son de la
+      empresa), así que aquí no hay nada que acotar.
+    - **Movimientos de banco:** lee el libro **y asienta movimientos manuales**. Es un
+      permiso fuerte (mete o saca dinero sin documento que lo respalde), pero el libro es
+      APPEND-ONLY y cada fila guarda quién la capturó: un error se compensa con otro
+      movimiento y quedan los dos. Eso es lo que lo separa de una anulación, que sí borra
+      —los abonos de la venta, la entrada o el gasto— y sigue siendo del admin.
+      ⚠️ Su `store_id` (procedencia, **nullable**) no se le fuerza: puede capturar "sin
+      sucursal" —un retiro general no es de ninguna tienda— y solo se le rechaza
+      atribuirlo a OTRA. Forzarlo con `resolveTargetStoreId` habría vuelto cada retiro
+      suyo un movimiento de su sucursal, que es un dato falso.
+    **No puede:** borrar del catálogo, anular ventas, entradas o gastos **ni corregir
+    entradas** (para las cuatro cosas abre ticket de corrección, como el empleado),
+    resolver tickets, borrar cortes de caja, borrar ni editar pagos, dar de alta o
+    desactivar sucursales, ni cambiarle la contraseña a un usuario ya creado. Lleva
+    `store_id` obligatorio, igual que el empleado.
   - **Solo lectura (`observador`):** ve **todo** (todas las sucursales, todos los
     listados, tickets, cortes, gastos, sucursales y empleados) pero **no puede
     escribir nada**. El candado es central: `requireProfile` rechaza con 403
@@ -277,14 +326,12 @@ variables de entorno (Supabase + `DATABASE_URL`) en el panel de Vercel (ver §8)
 
 La app **funciona end-to-end contra Supabase**: catálogo, entradas, ventas, transferencias,
 clientes, gastos, cortes de caja, tickets, administración y reportes. Ya no queda nada de
-datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0039` en
+datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0040` en
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
 ⚠️ `sale_payments` ya está en `schema.ts` pero **su migración está pendiente de generar**
 (`npm run db:generate` + `npm run db:migrate`): sin ella, `GET /api/sales` truena.
-⚠️ Lo mismo con **`stock_movements.iva` / `total_to_pay`** (el IVA de las entradas, ver
-§10.2): están en `schema.ts` y el servidor ya los LEE, así que sin generar y aplicar su
-migración truenan `GET /api/movements`, `POST /api/movements/:id/payments` y
-`GET /api/dashboard/summary`.
+El IVA de las entradas (**`stock_movements.iva` / `total_to_pay`**, ver §10.2) ya está
+aplicado: migración **`0040`**.
 
 > Este apartado es un **resumen**, no un changelog. La verdad está en el código:
 > `server/db/schema.ts`, `server/api/**` y `app/**`.
@@ -302,7 +349,7 @@ migración truenan `GET /api/movements`, `POST /api/movements/:id/payments` y
 | **Gastos** | `gastos/index` | `GET/POST /api/expenses` (filtros `?q`, `?paidBy`, `?type`, `?storeId`, fechas), `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments`, `POST /api/expenses/:id/void` |
 | **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id`, **`DELETE /api/cortes/:id`** |
 | **Tickets de corrección** | `tickets/ventas`, `tickets/entradas`, `tickets/gastos` (las tres montan `components/TicketsPanel.vue`; `tickets/index` solo redirige a ventas) | `GET/POST /api/tickets` (filtro `?target=factura\|movimiento\|gasto`), `POST /api/tickets/:id/resolve` |
-| **Administración** | `tiendas/index`, `empleados/index` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id` |
+| **Administración** | `tiendas/index`, `empleados/index`, `cuentas/index`, `cuentas/movimientos` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id`, `GET/POST /api/bank-accounts`, `PATCH /api/bank-accounts/:id`, `GET/POST /api/banks-movements`. Las cuatro pantallas las abre `ADMIN_AREA_ROLES` (`admin` + `admin_tienda`), pero el de sucursal va acotado — ver §7. |
 | **Reportes / Dashboard** | `dashboard` | `GET /api/dashboard/summary` (agregado del dashboard), `GET /api/reports/monthly-inventory`, `/api/reports/top-products`, `/api/reports/inventory-value`, `/api/average-costs` |
 
 - **Auth/UI:** login por Supabase Auth, guard global solo-cliente
@@ -541,7 +588,13 @@ migración truenan `GET /api/movements`, `POST /api/movements/:id/payments` y
   (además exige que `total_value = unit_value * quantity`). Producto, sucursal,
   cantidad, folio, ligas y `created_at`/`created_by` siguen congelados: **la cantidad no
   se corrige, se anula**. Cuatro cosas que hay que saber:
-  - **El candado es el FIFO, no el rol.** `PATCH /api/movements/:id` solo acepta la
+  - **Son DOS candados y hay que pasar los dos: el rol y el FIFO.**
+    ⚠️ Corregir una entrada es **exclusivo del `admin` de la empresa**. Antes lo podía
+    hacer cualquier rol con permiso de escritura y el único freno era el FIFO, pero
+    corregir el costo **revalúa el inventario y la utilidad hacia atrás** —lo mismo que
+    anular—, así que va del lado de las anulaciones: el `empleado` y el `admin_tienda`
+    abren un **ticket de corrección** (`target = 'movimiento'`) y el admin lo resuelve.
+    Además, `PATCH /api/movements/:id` solo acepta la
     corrección si la **capa de esa entrada sigue íntegra** (`isEntryLayerIntact` de
     `server/utils/inventoryFifo.ts`): ninguna de sus unidades salió por venta,
     transferencia, ajuste ni pagó una venta descubierta anterior. Da igual que haya
@@ -550,7 +603,11 @@ migración truenan `GET /api/movements`, `POST /api/movements/:id/payments` y
     veredicto como `editable` para que la pantalla sepa si mostrar el botón, y lo
     calcula el motor, no una heurística. Medido contra la base real: de las 100 entradas
     más recientes, **30 editables y 70 bloqueadas** (capturas retroactivas cuyo material
-    ya se vendió).
+    ya se vendió). En la UI el botón va con `isAdmin && m.editable`, pero eso **solo
+    esconde**: la autorización es la del servidor. El chequeo de sucursal que hay dentro
+    del endpoint queda hoy inalcanzable (solo entra `admin`, que es global) y se conserva
+    a propósito, para que el aislamiento siga puesto si algún día se le devuelve la
+    corrección a un rol acotado.
   - **⚠️ El caso "consumida por VENTAS" se bloquea por decisión del negocio, no porque
     rompa nada**: el costo de lo vendido se reconstruye del histórico en cada lectura, así
     que corregir la entrada también recostearía esas ventas. El único consumo que sí sería

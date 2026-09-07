@@ -1,12 +1,25 @@
 <script setup lang="ts">
 import type { ApiStore } from '~/types/inventario'
 
-// El observador entra en modo consulta: ve la lista, no las acciones.
-definePageMeta({ requiresRole: ['admin', 'observador'] })
+// El observador entra en modo consulta: ve la lista, no las acciones. El
+// administrador de sucursal ve todas pero solo edita la suya (ver `canEditStore`).
+definePageMeta({ requiresRole: ['admin', 'observador', 'admin_tienda'] })
 useHead({ title: 'Sucursales · Inventario Kilker' })
 
-const { me } = useMe()
-const canEdit = computed(() => me.value?.role === 'admin')
+const { me, isCompanyAdmin, isStoreScoped } = useMe()
+/** Hay columna de acciones: el admin edita todas, el de sucursal solo la suya. */
+const canEdit = computed(() => isCompanyAdmin.value || isStoreScoped.value)
+/**
+ * ⚠️ Fila por fila, no una sola bandera: el administrador de sucursal ve el
+ * listado completo pero solo puede editar SU tienda. Tampoco da de alta
+ * sucursales ni cambia su estado activo —esa baja desactivaría en cascada a
+ * todo su personal, él incluido—; las dos cosas las rechaza el servidor y aquí
+ * solo se esconde el control.
+ */
+const canEditStore = (storeId: number) =>
+  isCompanyAdmin.value || (isStoreScoped.value && me.value?.storeId === storeId)
+const canCreateStore = computed(() => isCompanyAdmin.value)
+const canToggleActive = computed(() => isCompanyAdmin.value)
 
 const toast = useToast()
 const { data: stores, pending, error, refresh } = useStores()
@@ -149,7 +162,7 @@ async function toggleActive(s: ApiStore) {
         </p>
       </div>
       <UButton
-        v-if="canEdit"
+        v-if="canCreateStore"
         icon="i-lucide-plus"
         color="primary"
         :disabled="isNew"
@@ -197,7 +210,10 @@ async function toggleActive(s: ApiStore) {
             <UInput v-model="formAddress" placeholder="Calle, número, ciudad…" class="w-full" />
           </UFormField>
         </div>
-        <div v-if="!isNew" class="flex items-center gap-2">
+        <!-- El estado no se le ofrece a quien vive dentro de la sucursal: darla
+             de baja desactiva en cascada a todo su personal. El servidor lo
+             rechaza igual, comparando contra lo guardado. -->
+        <div v-if="!isNew && canToggleActive" class="flex items-center gap-2">
           <USwitch v-model="formIsActive" />
           <span class="text-sm">{{ formIsActive ? 'Activa' : 'Inactiva' }}</span>
         </div>
@@ -249,6 +265,7 @@ async function toggleActive(s: ApiStore) {
               <td class="px-4 py-3">
                 <div v-if="canEdit" class="flex items-center justify-end gap-1">
                   <UButton
+                    v-if="canEditStore(s.id)"
                     size="xs"
                     color="neutral"
                     variant="ghost"
@@ -256,6 +273,7 @@ async function toggleActive(s: ApiStore) {
                     @click="openEdit(s)"
                   />
                   <UButton
+                    v-if="canToggleActive"
                     size="xs"
                     :color="s.isActive ? 'error' : 'success'"
                     variant="ghost"

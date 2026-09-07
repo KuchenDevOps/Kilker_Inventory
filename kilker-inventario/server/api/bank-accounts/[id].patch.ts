@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/bank-accounts/:id — editar cuenta bancaria (admin)
+//  PATCH /api/bank-accounts/:id — editar cuenta bancaria (admin y admin de sucursal)
 // ───────────────────────────────────────────────
 // Edita banco, titular, últimos 4 y estado.
 //
@@ -24,7 +24,9 @@ function cleanText(v: unknown): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  // Sección de Administración; las cuentas son de la empresa y no llevan
+  // `store_id`, así que no hay recorte por sucursal (ver el POST).
+  await requireProfile(event, { role: ADMIN_AREA_ROLES })
 
   const id = Number(getRouterParam(event, 'id'))
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id inválido' })

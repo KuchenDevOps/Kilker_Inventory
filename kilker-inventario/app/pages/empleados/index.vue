@@ -2,19 +2,21 @@
 import type { ApiUser, UserRole } from '~/types/inventario'
 import { ROLE_LABELS, STORE_SCOPED_ROLES } from '~/types/inventario'
 
-// El observador entra en modo consulta: ve la lista, no las acciones.
-definePageMeta({ requiresRole: ['admin', 'observador'] })
+// El observador entra en modo consulta: ve la lista, no las acciones. El
+// administrador de sucursal entra acotado: el servidor solo le devuelve a la
+// gente de SU tienda y solo le deja asignar roles acotados.
+definePageMeta({ requiresRole: ['admin', 'observador', 'admin_tienda'] })
 useHead({ title: 'Empleados · Inventario Kilker' })
 
 const toast = useToast()
 const { users, total, page, pageSize, pending, error, refresh } = useUsersHistory()
 const { data: stores } = useStores()
-const { me } = useMe()
+const { me, isCompanyAdmin, isStoreScoped } = useMe()
 const apiFetch = useApiFetch()
 
 onMounted(refresh)
 
-const canEdit = computed(() => me.value?.role === 'admin')
+const canEdit = computed(() => isCompanyAdmin.value || isStoreScoped.value)
 // La columna "Acciones" solo existe para admin: el colspan de las filas
 // vacías (cargando / sin resultados) tiene que seguirla.
 const colCount = computed(() => (canEdit.value ? 6 : 5))
@@ -22,16 +24,32 @@ const colCount = computed(() => (canEdit.value ? 6 : 5))
 // 'admin' y 'observador' no llevan sucursal (son globales); 'empleado' y
 // 'admin_tienda' sí — el formulario pide storeId exactamente para esos dos
 // (STORE_SCOPED_ROLES), que es la misma regla que valida el backend.
-const roleItems = [
+const ALL_ROLE_ITEMS = [
   { label: 'Empleado', value: 'empleado' as UserRole },
   { label: 'Administrador de tienda', value: 'admin_tienda' as UserRole },
   { label: 'Administrador', value: 'admin' as UserRole },
   { label: 'Observador (solo consulta)', value: 'observador' as UserRole }
 ]
 
+/**
+ * ⚠️ Un administrador de SUCURSAL solo puede asignar roles ACOTADOS (empleado y
+ * administrador de tienda). Ofrecerle 'admin' sería ofrecerle fabricarse una
+ * cuenta con la que anular ventas, borrar cortes y borrar pagos — justo lo que
+ * su rol tiene prohibido. El candado real es `assertCanAssignRole` en el
+ * servidor; esto solo evita que el formulario ofrezca lo que va a rebotar.
+ */
+const roleItems = computed(() =>
+  isStoreScoped.value
+    ? ALL_ROLE_ITEMS.filter((r) => STORE_SCOPED_ROLES.includes(r.value))
+    : ALL_ROLE_ITEMS
+)
+
 const storeItems = computed(() =>
   stores.value
     .filter((s) => s.isActive)
+    // El de sucursal solo se ve a sí mismo en la lista: no puede dar de alta ni
+    // mover personal a otra tienda (el servidor ignora el `storeId` del body).
+    .filter((s) => !isStoreScoped.value || s.id === me.value?.storeId)
     .map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 )
 
@@ -56,7 +74,10 @@ const storeFilterItems = computed(() => [
   { label: 'Todas las sucursales', value: 0 },
   ...storeItems.value
 ])
-const roleFilterItems = [{ label: 'Todos los roles', value: 'todos' }, ...roleItems]
+const roleFilterItems = computed(() => [
+  { label: 'Todos los roles', value: 'todos' },
+  ...roleItems.value
+])
 
 const filteredUsers = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -96,7 +117,8 @@ function openNew() {
   formPassword.value = ''
   formName.value = ''
   formRole.value = 'empleado'
-  formStoreId.value = 0
+  // El de sucursal no elige tienda: es la suya y no hay otra opción en la lista.
+  formStoreId.value = isStoreScoped.value ? (me.value?.storeId ?? 0) : 0
   formIsActive.value = true
 }
 
@@ -235,7 +257,14 @@ const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
       <div class="flex flex-wrap items-center gap-3">
 
         <USelect v-model="roleFilter" :items="roleFilterItems" class="w-44" />
-        <USelect v-model="storeFilter" :items="storeFilterItems" class="w-60" />
+        <!-- Filtrar por sucursal no tiene sentido para quien solo ve la suya:
+             el servidor ya le devuelve únicamente a su gente. -->
+        <USelect
+          v-if="!isStoreScoped"
+          v-model="storeFilter"
+          :items="storeFilterItems"
+          class="w-60"
+        />
            <UInput
         v-model="search"
         icon="i-lucide-search"
@@ -271,7 +300,13 @@ const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
               :disabled="!isNew"
             />
           </UFormField>
+          <!-- ⚠️ El administrador de sucursal pone la contraseña INICIAL al dar
+               de alta, pero no la cambia después: hacerlo es poder entrar como
+               esa persona, y entonces la bitácora deja de decir quién hizo cada
+               venta, corte o gasto. Reponer una olvidada se le pide al admin.
+               El servidor lo rechaza igual (403). -->
           <UFormField
+            v-if="isNew || !isStoreScoped"
             label="Contraseña"
             name="password"
             :required="isNew"

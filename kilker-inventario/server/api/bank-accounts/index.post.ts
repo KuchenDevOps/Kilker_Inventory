@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  POST /api/bank-accounts — alta de cuenta bancaria (admin)
+//  POST /api/bank-accounts — alta de cuenta bancaria (admin y admin de sucursal)
 // ───────────────────────────────────────────────
 // banco y dueño obligatorios; los últimos 4 de la tarjeta son opcionales
 // (una cuenta puede no tener plástico).
@@ -20,9 +20,13 @@ function cleanText(v: unknown): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  // Solo admin, igual que sucursales y empleados: es un dato de la empresa, no
-  // de la operación diaria de una tienda.
-  await requireProfile(event, { role: 'admin' })
+  // Sección de Administración, igual que sucursales y empleados. Una cuenta es
+  // una BOLSA: darla de alta no mueve un peso —eso lo hacen los pagos y los
+  // movimientos manuales—, así que no cae del lado de las anulaciones y el
+  // administrador de sucursal también la captura. No lleva `store_id`: las
+  // cuentas son de la empresa, no de una tienda, así que aquí no hay nada que
+  // acotar por sucursal.
+  await requireProfile(event, { role: ADMIN_AREA_ROLES })
   const body = await readBody<NewBankAccountBody>(event)
 
   const bank = cleanText(body?.bank)
