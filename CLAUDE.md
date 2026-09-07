@@ -281,6 +281,10 @@ datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0039`
 `server/db/migrations/` (RLS habilitado sin policies → acceso solo server-side).
 ⚠️ `sale_payments` ya está en `schema.ts` pero **su migración está pendiente de generar**
 (`npm run db:generate` + `npm run db:migrate`): sin ella, `GET /api/sales` truena.
+⚠️ Lo mismo con **`stock_movements.iva` / `total_to_pay`** (el IVA de las entradas, ver
+§10.2): están en `schema.ts` y el servidor ya los LEE, así que sin generar y aplicar su
+migración truenan `GET /api/movements`, `POST /api/movements/:id/payments` y
+`GET /api/dashboard/summary`.
 
 > Este apartado es un **resumen**, no un changelog. La verdad está en el código:
 > `server/db/schema.ts`, `server/api/**` y `app/**`.
@@ -561,8 +565,8 @@ datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0039`
     (valor anterior y nuevo, motivo, quién y cuándo), que la pantalla muestra en el
     historial del folio. Sin eso se repetía el agujero del `PATCH` de gastos: un
     documento editado indistinguible de uno capturado así. El pagable de la entrada es
-    `total_value`, de modo que el endpoint rechaza (409) dejar el costo por debajo de lo
-    ya abonado, y **la tienda se bloquea (`FOR UPDATE`) antes de leer el FIFO**, para
+    `total_to_pay` (costo + IVA), de modo que el endpoint rechaza (409) dejar el costo
+    por debajo de lo ya abonado, y **la tienda se bloquea (`FOR UPDATE`) antes de leer el FIFO**, para
     serializar contra las ventas de esa sucursal.
 - ⚠️ **Muestras: producto propio, inventario del base.** Una muestra es una fila de
   `products` con `sample_of_product_id` → producto base: tiene SKU y nombre propios y
@@ -612,11 +616,35 @@ datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0039`
   `soldTotals`) y `monthlyInventory` (`exitsValue`). Si algún día hay descuento por
   línea, lo correcto será guardar el neto en la BD (`line_total_net`) en vez de seguir
   reconstruyéndolo.
-- **IVA (16%): dinero real en los DOS documentos, y lo calcula POSTGRES** en columnas
-  generadas — `expenses.iva`/`total_to_pay` y `invoices.iva`/`total_to_pay`. La tasa
-  está escrita en el DDL: **cambiarla es una migración, no un deploy**. Las ventas se
-  siguen registrando sin desglose fiscal (no hay CFDI/SAT): el IVA se cobra, pero no se
-  emite comprobante fiscal.
+- **IVA (16%): dinero real en los TRES documentos, y lo calcula POSTGRES** en columnas
+  generadas — `expenses.iva`/`total_to_pay`, `invoices.iva`/`total_to_pay` y
+  `stock_movements.iva`/`total_to_pay` (las entradas). La tasa está escrita en el DDL:
+  **cambiarla es una migración, no un deploy**. Las ventas se siguen registrando sin
+  desglose fiscal (no hay CFDI/SAT): el IVA se cobra, pero no se emite comprobante fiscal.
+- ⚠️ **La ENTRADA se le paga al proveedor CON IVA, pero la COMPRA no lo lleva.** El
+  pagable es `stock_movements.total_to_pay` = `round(total_value,2) + round(total_value*0.16,2)`,
+  columna GENERADA sólo para `type='entrada'` (en el resto del kardex vale 0: ahí
+  `total_value` es negativo y un IVA negativo sumado por error sería dinero inventado).
+  Contra ella se topan `entry_payments`, el saldo, el estado de pago y las tarjetas de
+  compras de **`/dashboardbanco`**. Es la misma asimetría de gastos y de ventas, por el
+  lado del proveedor, y lo importante es el otro lado de la regla:
+  - **El IVA no toca NADA del costeo.** `total_value` y `unit_value` siguen siendo el
+    costo limpio, y son los únicos que ven el motor FIFO (`fifoEngine.ts`), la valuación
+    de inventario (`monthlyInventory.ts`), el costo de lo vendido (`topProducts.ts`), los
+    dos `inventory-value` y la tarjeta "Compras" de `/dashboard` y `/dashboardresultados`.
+    El IVA acreditable se entera al SAT: no es compra, no es costo y no valúa inventario.
+    **Si un cálculo de costo empieza a leer `total_to_pay`, está mal.**
+  - **`entriesValue` (sin IVA) y `entriesTotalToPay` (con IVA) conviven a propósito** en
+    `GET /api/dashboard/summary`; lo mismo `activeAmount`/`activeTotalToPay` en los
+    `totals` de `GET /api/movements`. Ninguna se obtiene multiplicando la otra por 1.16 en
+    la pantalla: las dos las manda la base, porque una segunda definición del importe es
+    justo lo que en gastos dejó entrar abonos inflados.
+  - ⚠️ **Consecuencia sobre el histórico:** al aplicar la migración, toda entrada ya
+    liquidada contra su costo pelón pasa de `pagado` a `parcial` con un saldo del 16%.
+    No es un error del cálculo: es que ese IVA nunca se registró como abonado.
+  - El `PATCH /api/movements/:id` compara los abonos contra el pagable **con IVA**
+    (helper `payableOf`, única copia en el servidor, con la tasa de `IVA_RATE`): contra el
+    costo pelón un costo nuevo perfectamente válido rebotaba con 409.
 - ⚠️ **`stock_movements.unit_value` lleva SEIS decimales (`numeric(18,6)`), no dos.**
   No es un precio: es un costo **calculado**, casi siempre un promedio ponderado de
   varias capas FIFO (`getFifoUnitCost` = costo total / unidades). Con dos decimales ese

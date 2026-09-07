@@ -281,6 +281,13 @@
       "when": 1788616819209,
       "tag": "0039_stock_movements_editable_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788804584952,
+      "tag": "0040_rainy_grandmaster",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../../../db'
-import { entryPayments, stockMovementEdits, stockMovements, stores } from '../../../db/schema'
+import { IVA_RATE, entryPayments, stockMovementEdits, stockMovements, stores } from '../../../db/schema'
 import { isEntryLayerIntact } from '../../../utils/inventoryFifo'
 
 interface EditBody {
@@ -12,6 +12,18 @@ interface EditBody {
 
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6
 const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * Pagable que TENDRÍA la entrada con este costo: `total_to_pay` = costo + IVA.
+ *
+ * Se replica aquí —única copia en el servidor— porque la columna generada
+ * todavía no existe: la validación corre ANTES del UPDATE, sobre un costo
+ * hipotético. La definición que manda sigue siendo la del DDL (`schema.ts`), y
+ * por eso la tasa se toma de `IVA_RATE` y el redondeo imita el suyo
+ * (`round(total_value, 2) + round(total_value * 0.16, 2)`): con `× 1.16` a secas
+ * el guard podía diferir un centavo de lo que la base guarda un renglón después.
+ */
+const payableOf = (cost: number) => round2(cost) + round2(cost * IVA_RATE)
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export default defineEventHandler(async (event) => {
@@ -123,12 +135,18 @@ export default defineEventHandler(async (event) => {
       columns: { amount: true }
     })
     const totalPaid = round2(paidRows.reduce((sum, p) => sum + Number(p.amount), 0))
-    if (totalPaid > round2(totalValue) + 0.001) {
+    // ⚠️ Se compara contra el PAGABLE (costo + IVA), no contra el costo pelón:
+    // el proveedor cobra el 16%, así que abonos de hasta `costo × 1.16` son
+    // legítimos y contra `total_value` un costo perfectamente válido rebotaba
+    // con 409. Es el mismo pagable que topa los abonos en
+    // `payments/index.post.ts`, sólo que sobre el costo que aún no se guarda.
+    const nextPayable = payableOf(totalValue)
+    if (totalPaid > nextPayable + 0.001) {
       throw createError({
         statusCode: 409,
         statusMessage:
-          `No se puede dejar el costo en ${round2(totalValue)}: ya hay ${totalPaid} pagado(s) a esta entrada. ` +
-          'Borra o ajusta los pagos primero.'
+          `No se puede dejar el costo en ${round2(totalValue)} (${round2(nextPayable)} con IVA): ` +
+          `ya hay ${totalPaid} pagado(s) a esta entrada. Borra o ajusta los pagos primero.`
       })
     }
 

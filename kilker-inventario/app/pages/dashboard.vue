@@ -202,8 +202,14 @@ function stockFor(p: (typeof products.value)[number]) {
 // --- VALOR DE ENTRADAS Y SALIDAS ---
 // Ambos los agrega ahora el servidor con SUM(), en vez de descargar todas las
 // entradas y todas las ventas del periodo para sumarlas aquí.
+// Compra del negocio: el COSTO limpio, sin IVA. Es lo que ve el motor FIFO y lo
+// que valúa el inventario de esta pantalla.
 const entryValue = computed(() => summary.value?.entriesValue ?? 0)
-// Pago de esas mismas compras: pagadas + por pagar = Compras.
+// ⚠️ Pago de esas mismas compras, pero medido contra el PAGABLE (costo + IVA):
+// al proveedor se le paga el 16%. Así que pagadas + por pagar NO da "Compras",
+// sino "Compras + IVA"; la diferencia es exactamente el impuesto. Las tres
+// tarjetas conviven porque responden preguntas distintas —cuánto se compró y
+// cuánto hay que desembolsar—; el desglose de banco está en /dashboardbanco.
 const entriesPaid = computed(() => summary.value?.entriesPaid ?? 0)
 const entriesBalance = computed(() => summary.value?.entriesBalance ?? 0)
 
@@ -341,7 +347,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Compras',
       value: currency.format(entryValue.value),
-      hint: 'en el periodo',
+      hint: 'en el periodo · costo sin IVA',
       icon: 'i-lucide-arrow-up-right',
       color: 'text-info',
       loading: loadingSummary.value,
@@ -350,7 +356,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Compras pagadas',
       value: currency.format(entriesPaid.value),
-      hint: 'abonado a las entradas del periodo',
+      hint: 'abonado a las entradas del periodo · con IVA',
       icon: 'i-lucide-circle-check',
       color: 'text-success',
       loading: loadingSummary.value,
@@ -359,7 +365,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Compras por pagar',
       value: currency.format(entriesBalance.value),
-      hint: 'saldo pendiente con proveedores',
+      hint: 'saldo pendiente con proveedores · con IVA',
       icon: 'i-lucide-clock',
       color: 'text-warning',
       loading: loadingSummary.value,

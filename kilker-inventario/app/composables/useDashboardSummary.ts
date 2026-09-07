@@ -39,9 +39,21 @@ export interface DashboardSummary {
   storeId: number | null
   from: string | null
   to: string | null
-  /** Compras del periodo (entradas, excluyendo facturas 'II' y anuladas). */
+  /**
+   * Compras del periodo (entradas, excluyendo facturas 'II' y anuladas), en
+   * COSTO limpio (sin IVA): es la compra del negocio, la que ve el motor FIFO y
+   * la que valúa el inventario. El IVA acreditable se entera al SAT.
+   */
   entriesValue: number
-  /** Abonado y saldo de esas mismas compras: suman `entriesValue`. */
+  /** IVA de esas compras (`stock_movements.iva`, columna generada). */
+  entriesIva: number
+  /** Lo que se le debe al proveedor: `entriesValue + entriesIva`. */
+  entriesTotalToPay: number
+  /**
+   * Abonado y saldo de esas mismas compras: suman `entriesTotalToPay`, NO
+   * `entriesValue` — al proveedor se le paga con IVA, así que el pagable es
+   * `stock_movements.total_to_pay`. Misma asimetría que en ventas y gastos.
+   */
   entriesPaid: number
   entriesBalance: number
   /**

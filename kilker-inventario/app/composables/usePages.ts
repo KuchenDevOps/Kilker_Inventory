@@ -22,8 +22,11 @@ import type {
 const ZERO_MOVEMENT_TOTALS: ApiMovementsTotals = {
   activeCount: 0,
   activeAmount: 0,
+  activeIva: 0,
+  activeTotalToPay: 0,
   voidedCount: 0,
-  voidedAmount: 0
+  voidedAmount: 0,
+  voidedTotalToPay: 0
 }
 
 const ZERO_SALES_TOTALS: ApiSalesTotals = {
