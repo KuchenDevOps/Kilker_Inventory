@@ -677,7 +677,14 @@ export interface ApiMovement {
   editable: boolean
   editCount: number
   lastEditAt: string | null
-  /** Costo limpio de la entrada (= totalValue). Sin IVA ni retenciones. */
+  /** IVA (16%) de la entrada. Columna GENERADA; no se recalcula en el cliente. */
+  iva: number
+  /**
+   * Lo que se le paga al proveedor: costo + IVA (`total_to_pay` en la base).
+   *
+   * ⚠️ NO es `totalValue`: ese es el costo limpio —la COMPRA del negocio, lo que
+   * ve el FIFO y lo que valúa el inventario—. El IVA se paga pero no es costo.
+   */
   totalToPay: number
   totalPaid: number
   balance: number
@@ -687,7 +694,13 @@ export interface ApiMovement {
 
 /**
  * Sumatoria de `GET /api/movements?page=…`, sobre TODO el filtro (no la
- * página). `activeAmount` es el costo capturado (`total_value`), sin IVA.
+ * página).
+ *
+ * ⚠️ Dos cifras que no son la misma y conviven a propósito: `activeAmount` es
+ * el costo capturado (`total_value`), SIN IVA —la compra del negocio, la que
+ * cuadra contra el FIFO—, y `activeTotalToPay` es lo que se le desembolsa al
+ * proveedor (costo + IVA). Las dos vienen de la base; ninguna se obtiene
+ * multiplicando la otra por 1.16 en la pantalla.
  *
  * ⚠️ "Anulada" no es una columna: el servidor la deriva de que exista una
  * `anulacion` que revierte la entrada (kardex append-only). Las anuladas no
@@ -696,8 +709,11 @@ export interface ApiMovement {
 export interface ApiMovementsTotals {
   activeCount: number
   activeAmount: number
+  activeIva: number
+  activeTotalToPay: number
   voidedCount: number
   voidedAmount: number
+  voidedTotalToPay: number
 }
 
 export interface ApiMovementsPage {

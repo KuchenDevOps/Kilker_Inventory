@@ -262,8 +262,13 @@ function stockFor(p: (typeof products.value)[number]) {
 // --- VALOR DE ENTRADAS Y SALIDAS ---
 // Ambos los agrega ahora el servidor con SUM(), en vez de descargar todas las
 // entradas y todas las ventas del periodo para sumarlas aquí.
+// ⚠️ La compra es el COSTO limpio, sin IVA: el IVA acreditable se entera al
+// SAT, no es compra ni costo, y no entra al FIFO ni a la valuación. Esta
+// pantalla es la de resultados, así que aquí nunca se muestra con IVA; lo que
+// se le debe al proveedor (costo + 16%) se ve en /dashboardbanco.
 const entryValue = computed(() => summary.value?.entriesValue ?? 0)
-// Pago de esas mismas compras: pagadas + por pagar = Compras.
+// Pago de esas mismas compras, medido contra el pagable CON IVA (por eso no
+// suman `entryValue`). Hoy no se pintan en esta pantalla.
 const entriesPaid = computed(() => summary.value?.entriesPaid ?? 0)
 const entriesBalance = computed(() => summary.value?.entriesBalance ?? 0)
 
@@ -461,7 +466,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Compras',
       value: currency.format(entryValue.value),
-      hint: 'en el periodo',
+      hint: 'en el periodo · costo sin IVA',
       icon: 'i-lucide-arrow-up-right',
       color: 'text-info',
       loading: loadingSummary.value,

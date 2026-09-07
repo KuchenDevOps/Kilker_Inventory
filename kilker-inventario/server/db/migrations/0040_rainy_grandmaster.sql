@@ -1,0 +1,2 @@
+ALTER TABLE "stock_movements" ADD COLUMN "iva" numeric(14, 2) GENERATED ALWAYS AS (case when "type" = 'entrada' then round("total_value" * 0.16, 2) else 0 end) STORED NOT NULL;--> statement-breakpoint
+ALTER TABLE "stock_movements" ADD COLUMN "total_to_pay" numeric(14, 2) GENERATED ALWAYS AS (case when "type" = 'entrada' then round("total_value", 2) + round("total_value" * 0.16, 2) else 0 end) STORED NOT NULL;

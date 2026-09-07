@@ -84,9 +84,13 @@ export default defineEventHandler(async (event) => {
       from: from ?? null,
       to: to ?? null,
       entriesValue: 0,
+      entriesIva: 0,
+      entriesTotalToPay: 0,
       entriesPaid: 0,
       entriesBalance: 0,
       salesValue: 0,
+      salesIva: 0,
+      salesTotalToPay: 0,
       salesPaid: 0,
       salesBalance: 0,
       expenses: { Fijo: EMPTY_EXPENSE_BUCKET, Operativo: EMPTY_EXPENSE_BUCKET },
@@ -181,17 +185,33 @@ export default defineEventHandler(async (event) => {
     soldTotals,
     monthly
   ] = await Promise.all([
+    // ⚠️ La COMPRA del negocio es el costo limpio (`total_value`), sin IVA: el
+    // IVA acreditable se entera al SAT, no es compra, no entra al FIFO y no
+    // valúa el inventario. Es la misma asimetría que en ventas (el ingreso es
+    // el subtotal) y en gastos (el gasto es el subtotal). `iva` y `total_to_pay`
+    // viajan al lado porque el dashboard de banco sí mide contra ellos.
     db
-      .select({ value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)` })
+      .select({
+        value: sql<string>`coalesce(sum(${stockMovements.totalValue}), 0)`,
+        iva: sql<string>`coalesce(sum(${stockMovements.iva}), 0)`,
+        totalToPay: sql<string>`coalesce(sum(${stockMovements.totalToPay}), 0)`
+      })
       .from(stockMovements)
       .where(and(...entryFilters)),
 
-    // Pagado y saldo de esas mismas entradas. `least`/`greatest` topan por
-    // entrada para que pagado + pendiente nunca exceda su costo.
+    // Pagado y saldo de esas mismas entradas.
+    //
+    // ⚠️ Se topa contra `total_to_pay` (costo + IVA), NO contra `total_value`:
+    // al proveedor se le paga con IVA, así que contra el costo pelón una entrada
+    // liquidada por completo reportaba pagado sólo su costo y su pendiente salía
+    // en CERO debiendo todavía el 16% — el mismo agujero que tuvieron gastos y
+    // ventas cuando su IVA pasó a ser dinero real.
+    // `least`/`greatest` topan por entrada para que pagado + pendiente nunca
+    // exceda su pagable (si no, un sobrepago compensaría el saldo de otra).
     db
       .select({
-        totalPaid: sql<string>`coalesce(sum(least(round(${stockMovements.totalValue}, 2), round(coalesce(${entryPaymentsAgg.paid}, 0), 2))), 0)`,
-        balance: sql<string>`coalesce(sum(greatest(0, round(${stockMovements.totalValue}, 2) - round(coalesce(${entryPaymentsAgg.paid}, 0), 2))), 0)`
+        totalPaid: sql<string>`coalesce(sum(least(round(${stockMovements.totalToPay}, 2), round(coalesce(${entryPaymentsAgg.paid}, 0), 2))), 0)`,
+        balance: sql<string>`coalesce(sum(greatest(0, round(${stockMovements.totalToPay}, 2) - round(coalesce(${entryPaymentsAgg.paid}, 0), 2))), 0)`
       })
       .from(stockMovements)
       .leftJoin(entryPaymentsAgg, eq(entryPaymentsAgg.movementId, stockMovements.id))
@@ -278,7 +298,11 @@ export default defineEventHandler(async (event) => {
     storeId: storeId ?? null,
     from: from ?? null,
     to: to ?? null,
+    /** Compra del negocio: costo limpio, SIN IVA (lo que ve el FIFO). */
     entriesValue: round2(Number(entryRows[0]?.value ?? 0)),
+    entriesIva: round2(Number(entryRows[0]?.iva ?? 0)),
+    /** Lo que se le debe al proveedor: costo + IVA. Contra esto se paga. */
+    entriesTotalToPay: round2(Number(entryRows[0]?.totalToPay ?? 0)),
     entriesPaid: round2(Number(entryPaymentRows[0]?.totalPaid ?? 0)),
     entriesBalance: round2(Number(entryPaymentRows[0]?.balance ?? 0)),
     /** Venta del negocio: subtotal, SIN IVA (el IVA no es ingreso). */

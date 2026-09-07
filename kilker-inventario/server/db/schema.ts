@@ -443,6 +443,44 @@ export const stockMovements = pgTable(
     // dos decimales igual que siempre.
     unitValue: numeric('unit_value', { precision: 18, scale: 6 }).notNull(),
     totalValue: numeric('total_value', { precision: 18, scale: 6 }).notNull(),
+    // ─── IVA y pagable de la ENTRADA: columnas GENERADAS, las calcula Postgres ───
+    // Tercer documento que sigue el patrón de `expenses` y de `invoices`: al
+    // proveedor se le paga la mercancía MÁS el 16%, así que el pagable no puede
+    // seguir siendo `total_value` a secas. Una sola definición de "cuánto se
+    // debe" —la de la base—; el endpoint de abonos, el saldo, el estado de pago
+    // y el dashboard de banco la LEEN.
+    //
+    // ⚠️ El IVA NO toca el costo. `total_value` (y `unit_value`) siguen siendo
+    // el costo limpio de la mercancía, y son los únicos que ven el motor FIFO,
+    // la valuación de inventario, el costo de lo vendido y la tarjeta "Compras"
+    // del dashboard de resultados: el IVA acreditable se entera al SAT, no es
+    // compra. Es la misma asimetría de gastos (el gasto es el subtotal) y de
+    // ventas (el ingreso es el subtotal), por el lado del proveedor.
+    //
+    // ⚠️ Sólo tienen sentido en `type = 'entrada'`, que es el único movimiento
+    // que se paga. En el resto del kardex valen 0 a propósito: `total_value`
+    // ahí es negativo (una salida) y un IVA negativo sumado por error en
+    // cualquier reporte sería dinero inventado.
+    //
+    // ⚠️ La tasa está escrita en el DDL: cambiarla es una migración, no un deploy.
+    iva: numeric('iva', { precision: 14, scale: 2 })
+      .notNull()
+      .generatedAlwaysAs(
+        sql`case when "type" = 'entrada' then round("total_value" * 0.16, 2) else 0 end`
+      ),
+    /**
+     * Lo que se le paga al proveedor por esta entrada: costo + IVA.
+     *
+     * El costo se redondea a centavos antes de sumar porque `total_value` lleva
+     * SEIS decimales (es un costo calculado, ver arriba) y el pagable es dinero:
+     * sin el `round` el saldo de la entrada arrastraba millonésimas que ningún
+     * abono podía liquidar y la dejaban `parcial` para siempre.
+     */
+    totalToPay: numeric('total_to_pay', { precision: 14, scale: 2 })
+      .notNull()
+      .generatedAlwaysAs(
+        sql`case when "type" = 'entrada' then round("total_value", 2) + round("total_value" * 0.16, 2) else 0 end`
+      ),
     invoiceId: bigint('invoice_id', { mode: 'number' }).references(
       () => invoices.id
     ),
@@ -667,8 +705,13 @@ export const expenseStatus = pgEnum('expense_status', ['emitido', 'anulado'])
 
 /**
  * IVA vigente. Vive aquí porque la BD lo usa en las columnas generadas de
- * `expenses` **y de `invoices`**: en los dos documentos el 16% es dinero que se
- * paga o se cobra, no un adorno de la pantalla.
+ * `expenses`, de `invoices` **y de `stock_movements`** (las entradas): en los
+ * tres documentos el 16% es dinero que se paga o se cobra, no un adorno de la
+ * pantalla.
+ *
+ * En los tres, además, el número del NEGOCIO es el subtotal —el gasto, el
+ * ingreso y el costo de la compra—: el IVA se entera al SAT y no es ninguno de
+ * los tres.
  */
 export const IVA_RATE = 0.16
 
