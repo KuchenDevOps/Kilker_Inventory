@@ -58,6 +58,37 @@ const corteStoreId = ref<number | undefined>(undefined)
 const corteNote = ref('')
 const submittingCorte = ref(false)
 
+// ───────────────────────────────────────────────
+//  FECHA DE CIERRE DEL CORTE
+// ───────────────────────────────────────────────
+// Se elige el CIERRE, no el periodo completo: el inicio lo encadena el servidor
+// al cierre del corte anterior. Lo que quede después de esta fecha no se
+// pierde — entra en el siguiente corte. La puede poner cualquiera que pueda
+// cortar; el corte sigue siendo el de su sucursal.
+const corteCierre = ref('')
+
+/** `datetime-local` trabaja en hora local, e `ISOString` en UTC: sin restar el
+ *  offset, el campo nacería con la hora de Londres. */
+function toLocalInput(d: Date) {
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 16)
+}
+
+const cierreInvalido = computed(() => {
+  if (!corteCierre.value) return false
+  const d = new Date(corteCierre.value)
+  return isNaN(d.getTime()) || d.getTime() > Date.now()
+})
+
+/**
+ * Un corte es retroactivo cuando se capturó bastante después de su cierre. El
+ * margen de un minuto es para los cortes normales: ahí `created_at` y
+ * `period_to` son el mismo instante salvo por lo que tarda la petición.
+ */
+function esRetroactivo(c: ApiCorte) {
+  return new Date(c.createdAt).getTime() - new Date(c.periodTo).getTime() > 60_000
+}
+
 const storeSelectItems = computed(() =>
   stores.value.map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 )
@@ -66,13 +97,14 @@ function openMakeCorte() {
   makingCorte.value = true
   corteStoreId.value = isAdmin.value ? undefined : (me.value?.storeId ?? undefined)
   corteNote.value = ''
+  corteCierre.value = toLocalInput(new Date())
 }
 function cancelMakeCorte() {
   makingCorte.value = false
 }
 
 const canSubmitCorte = computed(
-  () => canWrite.value && (isAdmin.value ? corteStoreId.value != null : true)
+  () => canWrite.value && !cierreInvalido.value && (isAdmin.value ? corteStoreId.value != null : true)
 )
 
 async function submitCorte() {
@@ -80,6 +112,7 @@ async function submitCorte() {
   try {
     const body: Record<string, unknown> = { note: corteNote.value.trim() || undefined }
     if (isAdmin.value) body.storeId = corteStoreId.value
+    if (corteCierre.value) body.periodTo = new Date(corteCierre.value).toISOString()
     const created = await apiFetch<ApiCorte>('/api/cortes', { method: 'POST', body })
     toast.add({
       title: 'Corte realizado',
@@ -122,6 +155,54 @@ async function toggleDetail(c: ApiCorte) {
     openDetailId.value = null
   } finally {
     loadingDetail.value = false
+  }
+}
+
+// ───────────────────────────────────────────────
+//  BORRAR UN CORTE (solo admin, y solo el último de la sucursal)
+// ───────────────────────────────────────────────
+// El `v-if` solo esconde el botón: el candado real es del servidor
+// (`DELETE /api/cortes/:id` exige rol admin y que no exista un corte posterior
+// de esa tienda). `isLatest` viene del listado, calculado sobre todo el
+// historial, no sobre la página que se está viendo.
+const corteABorrar = ref<ApiCorte | null>(null)
+const borrando = ref(false)
+const showDeleteModal = computed({
+  get: () => corteABorrar.value != null,
+  set: (v: boolean) => {
+    if (!v) corteABorrar.value = null
+  }
+})
+
+async function confirmarBorrado() {
+  const c = corteABorrar.value
+  if (!c) return
+  borrando.value = true
+  try {
+    await apiFetch(`/api/cortes/${c.id}`, { method: 'DELETE' })
+    toast.add({
+      title: 'Corte borrado',
+      description:
+        'Su periodo vuelve a quedar sin cortar: esas ventas entrarán en el siguiente corte.',
+      color: 'success',
+      icon: 'i-lucide-circle-check'
+    })
+    // Si estaba abierto su detalle, se cierra: la fila ya no existe.
+    if (openDetailId.value === c.id) {
+      openDetailId.value = null
+      detail.value = null
+    }
+    corteABorrar.value = null
+    await refresh()
+  } catch (e) {
+    toast.add({
+      title: 'No se pudo borrar el corte',
+      description: apiErrorMessage(e),
+      color: 'error',
+      icon: 'i-lucide-triangle-alert'
+    })
+  } finally {
+    borrando.value = false
   }
 }
 </script>
@@ -176,13 +257,27 @@ async function toggleDetail(c: ApiCorte) {
               class="w-full"
             />
           </UFormField>
+          <UFormField
+            label="Cerrar el corte hasta"
+            help="Por omisión, ahora. Las ventas posteriores entran en el siguiente corte."
+          >
+            <UInput
+              v-model="corteCierre"
+              type="datetime-local"
+              class="w-full"
+              :color="cierreInvalido ? 'error' : undefined"
+            />
+          </UFormField>
           <UFormField label="Nota (opcional)">
             <UInput v-model="corteNote" placeholder="Turno, cajero…" class="w-full" />
           </UFormField>
         </div>
+        <p v-if="cierreInvalido" class="text-xs text-error">
+          La fecha de cierre no puede ser futura.
+        </p>
         <p class="text-xs text-muted">
-          El corte resume las ventas de la sucursal desde el corte anterior hasta ahora,
-          separando efectivo, tarjeta de débito, tarjeta de crédito y transferencia.
+          El corte resume las ventas de la sucursal desde el corte anterior hasta la fecha de
+          cierre, separando efectivo, tarjeta de débito, tarjeta de crédito y transferencia.
         </p>
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="ghost" @click="cancelMakeCorte">Cancelar</UButton>
@@ -214,7 +309,7 @@ async function toggleDetail(c: ApiCorte) {
         <table class="w-full text-sm">
           <thead class="text-muted border-b border-default">
             <tr class="text-left">
-              <th class="px-4 py-3 font-medium">Fecha</th>
+              <th class="px-4 py-3 font-medium">Cierre</th>
               <th class="px-4 py-3 font-medium">Suc.</th>
               <th class="px-4 py-3 font-medium text-right">Ventas</th>
               <th class="px-4 py-3 font-medium text-right">Efectivo</th>
@@ -237,7 +332,10 @@ async function toggleDetail(c: ApiCorte) {
             </tr>
             <template v-for="c in cortes" v-else :key="c.id">
               <tr class="hover:bg-elevated/50">
-                <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(c.createdAt) }}</td>
+                <!-- La columna muestra el CIERRE del corte, no cuándo se capturó:
+                     desde que el admin elige la fecha, los dos pueden ser días
+                     distintos y el que importa es el del periodo cortado. -->
+                <td class="px-4 py-3 text-muted whitespace-nowrap">{{ fmtDate(c.periodTo) }}</td>
                 <td class="px-4 py-3 text-muted">{{ c.storeCode ?? '—' }}</td>
                 <td class="px-4 py-3 text-right tabular-nums">{{ c.salesCount }}</td>
                 <td class="px-4 py-3 text-right tabular-nums">
@@ -256,14 +354,27 @@ async function toggleDetail(c: ApiCorte) {
                   {{ currency.format(Number(c.totalEmitido)) }}
                 </td>
                 <td class="px-4 py-3 text-muted">{{ c.createdByName ?? '—' }}</td>
-                <td class="px-4 py-3 text-right">
-                  <UButton
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    :icon="openDetailId === c.id ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-                    @click="toggleDetail(c)"
-                  />
+                <td class="px-4 py-3">
+                  <div class="flex items-center justify-end gap-1">
+                    <!-- Solo el último corte de la sucursal se puede borrar: ver
+                         el comentario de `corteABorrar` y el DELETE. -->
+                    <UButton
+                      v-if="isAdmin && c.isLatest"
+                      size="xs"
+                      color="error"
+                      variant="ghost"
+                      icon="i-lucide-trash-2"
+                      title="Borrar este corte"
+                      @click="corteABorrar = c"
+                    />
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      :icon="openDetailId === c.id ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                      @click="toggleDetail(c)"
+                    />
+                  </div>
                 </td>
               </tr>
               <!-- Detalle: estado de cuenta del periodo -->
@@ -275,6 +386,12 @@ async function toggleDetail(c: ApiCorte) {
                       · {{ c.voidedCount }} anulada(s) ({{ currency.format(Number(c.totalVoided)) }})
                     </span>
                     <span v-if="c.note"> · {{ c.note }}</span>
+                  </p>
+                  <p
+                    v-if="esRetroactivo(c)"
+                    class="text-xs text-muted mb-2"
+                  >
+                    Corte con fecha retroactiva · capturado el {{ fmtDate(c.createdAt) }}
                   </p>
                   <p v-if="loadingDetail" class="text-sm text-muted">Cargando detalle…</p>
                   <table v-else-if="detail" class="w-full text-xs">
@@ -320,5 +437,52 @@ async function toggleDetail(c: ApiCorte) {
       <p class="text-xs text-muted">Mostrando {{ cortes.length }} de {{ total }} entrada(s)</p>
       <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
     </div>
+
+    <!-- Confirmación de borrado -->
+    <UModal v-model:open="showDeleteModal">
+      <template #content>
+        <UCard v-if="corteABorrar">
+          <template #header>
+            <h2 class="font-semibold">Borrar corte de caja</h2>
+          </template>
+
+          <div class="space-y-3 text-sm">
+            <p>
+              Se borrará el corte de
+              <strong>{{ corteABorrar.storeCode ?? 'la sucursal' }}</strong> cerrado el
+              <strong>{{ fmtDate(corteABorrar.periodTo) }}</strong>:
+              {{ corteABorrar.salesCount }} venta(s) por
+              <strong>{{ currency.format(Number(corteABorrar.totalEmitido)) }}</strong>.
+            </p>
+            <p class="text-muted">
+              Las ventas no se tocan. El periodo que cubría vuelve a quedar sin cortar, así que
+              entrará completo en el siguiente corte de esa sucursal.
+            </p>
+            <p class="text-muted">Esta acción no se puede deshacer.</p>
+          </div>
+
+          <template #footer>
+            <div class="flex justify-end gap-2">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                :disabled="borrando"
+                @click="corteABorrar = null"
+              >
+                Cancelar
+              </UButton>
+              <UButton
+                color="error"
+                icon="i-lucide-trash-2"
+                :loading="borrando"
+                @click="confirmarBorrado"
+              >
+                Borrar corte
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
   </UContainer>
 </template>
