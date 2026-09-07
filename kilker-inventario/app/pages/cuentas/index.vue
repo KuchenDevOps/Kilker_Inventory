@@ -4,11 +4,15 @@ import type { ApiBankAccount } from '~/types/inventario'
 
 
 // El observador entra en modo consulta: ve la lista, no el alta.
-definePageMeta({ requiresRole: ['admin', 'observador'] })
+definePageMeta({ requiresRole: ['admin', 'observador', 'admin_tienda'] })
 useHead({ title: 'Cuentas bancarias · Inventario Kilker' })
 
-const { me } = useMe()
-const canEdit = computed(() => me.value?.role === 'admin')
+// Una cuenta es una BOLSA: darla de alta o editarla no mueve dinero (eso lo
+// hacen los pagos y los movimientos manuales), así que entra en Administración
+// para el admin de sucursal. Las cuentas son de la empresa y no llevan
+// `store_id`, de modo que aquí no hay nada que acotar por tienda.
+const { canAdminister } = useMe()
+const canEdit = canAdminister
 
 const toast = useToast()
 const apiFetch = useApiFetch()

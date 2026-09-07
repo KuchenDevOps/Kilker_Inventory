@@ -1,5 +1,6 @@
 // ───────────────────────────────────────────────
-//  POST /api/banks-movements — movimiento de dinero MANUAL (admin)
+//  POST /api/banks-movements — movimiento de dinero MANUAL
+//  (admin y admin de sucursal)
 // ───────────────────────────────────────────────
 // El dinero que NO viene de un documento: el saldo con el que arranca una
 // cuenta, la nómina, un préstamo, la compra de un equipo… Los tres conceptos
@@ -20,8 +21,19 @@
 // un movimiento equivocado se compensa con otro en sentido contrario, que es lo
 // que el libro append-only permite.
 //
-// ⚠️ Solo admin. Esto mete o saca dinero sin nada que lo respalde, así que es de
-// la familia de "anular una venta", no de la de "registrar un pago".
+// ⚠️ Lo asientan `admin` y `admin_tienda` (ADMIN_AREA_ROLES), como el resto de la
+// sección de Administración. Es un permiso fuerte —mete o saca dinero sin nada
+// que lo respalde— pero el libro es APPEND-ONLY y cada fila guarda quién la
+// capturó, así que un movimiento equivocado se compensa con otro en sentido
+// contrario y queda el rastro de los dos. Eso es lo que lo separa de una
+// anulación, que sí borra (los abonos de la venta, la entrada o el gasto) y por
+// eso sigue siendo exclusiva del admin de la empresa.
+//
+// ⚠️ `store_id` es procedencia informativa y admite NULL (un retiro no es de
+// ninguna sucursal), así que a un rol acotado NO se le fuerza la suya: se le
+// deja capturar "sin sucursal", y solo se le rechaza atribuirle el movimiento a
+// OTRA tienda. Forzarlo con `resolveTargetStoreId` habría convertido cada
+// retiro general suyo en un movimiento de su sucursal, que es un dato falso.
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { banksMovements, bankAccounts, paymentMethod, stores } from '../../db/schema'
@@ -48,7 +60,7 @@ interface Body {
 }
 
 export default defineEventHandler(async (event) => {
-  const profile = await requireProfile(event, { role: 'admin' })
+  const profile = await requireProfile(event, { role: ADMIN_AREA_ROLES })
   const body = await readBody<Body>(event)
 
   const concept = String(body?.concept ?? '').trim()
@@ -100,6 +112,8 @@ export default defineEventHandler(async (event) => {
   if (rawStoreId != null && !rawStoreId) {
     throw createError({ statusCode: 400, statusMessage: 'Sucursal inválida' })
   }
+  // Ver la cabecera: null se permite (movimiento sin sucursal); otra tienda no.
+  if (rawStoreId != null) assertOwnStore(profile, rawStoreId)
 
   const db = useDb()
 

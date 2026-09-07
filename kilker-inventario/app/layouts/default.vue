@@ -161,20 +161,35 @@ const allNav: NavEntry[] = [
   {
     section: 'Administración',
     icon: 'i-lucide-shield',
+    // El administrador de SUCURSAL entra a las cuatro pantallas, pero acotado:
+    // ve y edita su tienda y su gente, no puede asignar roles globales ni dar de
+    // alta sucursales, y en el libro de dinero solo consulta (el movimiento
+    // manual sigue siendo del admin de la empresa). Lo impone el servidor; aquí
+    // solo se decide qué aparece en el menú.
     children: [
-      { label: 'Sucursales', to: '/tiendas', icon: 'i-lucide-store', roles: ['admin', 'observador'] },
-      { label: 'Empleados', to: '/empleados', icon: 'i-lucide-users', roles: ['admin', 'observador'] },
+      {
+        label: 'Sucursales',
+        to: '/tiendas',
+        icon: 'i-lucide-store',
+        roles: ['admin', 'observador', 'admin_tienda']
+      },
+      {
+        label: 'Empleados',
+        to: '/empleados',
+        icon: 'i-lucide-users',
+        roles: ['admin', 'observador', 'admin_tienda']
+      },
       {
         label: 'Cuentas bancarias',
         to: '/cuentas',
         icon: 'i-lucide-landmark',
-        roles: ['admin', 'observador']
+        roles: ['admin', 'observador', 'admin_tienda']
       },
       {
         label: 'Movimientos de banco',
         to: '/cuentas/movimientos',
         icon: 'i-lucide-arrow-left-right',
-        roles: ['admin', 'observador']
+        roles: ['admin', 'observador', 'admin_tienda']
       }
     ]
   }

@@ -22,6 +22,17 @@ export const STORE_SCOPED_ROLES: UserRole[] = ['empleado', 'admin_tienda']
 /** Roles que dan de alta y editan el catálogo (productos, kits, categorías). */
 export const CATALOG_MANAGER_ROLES: UserRole[] = ['admin', 'admin_tienda']
 
+/**
+ * Roles con acceso a la sección de **Administración** (sucursales, empleados y
+ * cuentas bancarias). Espejo de ADMIN_AREA_ROLES (`server/utils/auth.ts`).
+ *
+ * ⚠️ Entrar no es poder todo lo del admin: el administrador de sucursal queda
+ * acotado a su tienda y no puede asignar roles globales, dar de alta
+ * sucursales, activarlas o desactivarlas, ni asentar movimientos de banco
+ * manuales. Eso lo impone el SERVIDOR; aquí solo se esconden botones.
+ */
+export const ADMIN_AREA_ROLES: UserRole[] = ['admin', 'admin_tienda']
+
 /** Etiquetas en español de cada rol (menú, badges y formularios). */
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Administrador',

@@ -1,7 +1,13 @@
 // ───────────────────────────────────────────────
-//  PATCH /api/stores/:id — editar sucursal (admin)
+//  PATCH /api/stores/:id — editar sucursal (admin y admin de sucursal)
 // ───────────────────────────────────────────────
 // Edita nombre/dirección/estado. El código NO es editable (se usa en folios de factura).
+//
+// ⚠️ El administrador de SUCURSAL solo edita la suya, y solo sus datos: el
+// estado activo se le niega. Dar de baja una tienda desactiva EN CASCADA a todo
+// su personal acotado —él incluido—, así que con ese permiso podía dejarse a sí
+// mismo y a su equipo fuera del sistema, y nadie salvo un admin de la empresa
+// podría revertirlo. Dar de ALTA sucursales sigue siendo exclusivo de admin.
 import { and, eq, inArray } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { profiles, stores } from '../../db/schema'
@@ -19,10 +25,13 @@ function cleanText(v: unknown): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  const actor = await requireProfile(event, { role: ADMIN_AREA_ROLES })
 
   const id = Number(getRouterParam(event, 'id'))
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id inválido' })
+
+  // Un rol acotado solo edita su propia sucursal.
+  assertOwnStore(actor, id)
 
   const body = await readBody<PatchStoreBody>(event)
   const db = useDb()
@@ -43,6 +52,21 @@ export default defineEventHandler(async (event) => {
     patch.address = cleanText(body.address)
   }
   if (body?.isActive !== undefined) {
+    // ⚠️ Se compara contra lo GUARDADO, no contra "el campo vino en el body": la
+    // pantalla manda el cuerpo completo aunque solo se toque el nombre, así que
+    // rechazar por presencia dejaba al administrador de sucursal sin poder
+    // editar nada. Es el mismo error que ya se había cometido en el PATCH de
+    // gastos. Solo se le niega CAMBIAR el estado (ver la cabecera: la cascada de
+    // bajas se lo llevaría a él y a su equipo por delante).
+    const wantsStateChange = Boolean(body.isActive) !== current.isActive
+    if (wantsStateChange && isStoreScopedRole(actor.role)) {
+      throw createError({
+        statusCode: 403,
+        statusMessage:
+          'Activar o desactivar una sucursal es exclusivo del administrador de la empresa: ' +
+          'la baja desactiva también a todo su personal'
+      })
+    }
     patch.isActive = Boolean(body.isActive)
   }
 
