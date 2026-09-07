@@ -10,13 +10,16 @@
 // ningún corte. Las dos salidas posibles —cortar por `created_at`, o prohibir
 // capturar ventas con fecha anterior al último corte de la tienda— están
 // registradas en docs/CONTEXTO.md → "Preguntas abiertas".
-import { and, desc, eq, gte, lt, sql } from 'drizzle-orm'
+import { and, eq, gte, lt, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { cashCloseouts, invoices, stores } from '../../db/schema'
+import { fmtCorteDate, latestCloseoutOrder } from '../../utils/cortes'
 
 interface CorteBody {
   storeId?: number
   note?: string
+  /** Fecha/hora de cierre del corte (ISO). Solo admin; por omisión, ahora. */
+  periodTo?: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -37,6 +40,38 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  // ───────────────────────────────────────────────
+  //  Fecha de CIERRE del corte
+  // ───────────────────────────────────────────────
+  // ⚠️ Solo se elige el cierre; el INICIO se sigue encadenando solo al
+  // `period_to` del corte anterior. Dejar elegir los dos abriría el hueco que
+  // el encadenamiento evita por construcción: dos cortes traslapados cuentan
+  // las mismas ventas dos veces, y dos cortes con espacio entre ellos dejan un
+  // periodo que ningún corte cubre — y nadie se entera, porque cada corte por
+  // separado cuadra.
+  //
+  // La fecha la elige cualquiera que pueda cortar (admin, empleado y
+  // admin_tienda): el reparto de permisos del corte no cambia por esto — quien
+  // podía hacer el corte de su tienda lo sigue haciendo, ahora pudiendo fecharlo.
+  // El aislamiento por sucursal lo sigue poniendo `storeId` arriba.
+  let requestedPeriodTo: Date | null = null
+  if (body?.periodTo != null && String(body.periodTo).trim() !== '') {
+    const parsed = new Date(String(body.periodTo))
+    if (isNaN(parsed.getTime())) {
+      throw createError({ statusCode: 400, statusMessage: 'Fecha de corte inválida' })
+    }
+    // Un cierre futuro deja "cortado" un periodo que todavía no ocurre: las
+    // ventas que caigan ahí no entrarían en este corte (aún no existen) ni en
+    // ninguno posterior (el siguiente arranca justo en este `period_to`).
+    if (parsed.getTime() > Date.now()) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'La fecha del corte no puede ser futura'
+      })
+    }
+    requestedPeriodTo = parsed
+  }
+
   const db = useDb()
 
   // Todo el corte va en una transacción con la tienda bloqueada: leer el
@@ -51,13 +86,27 @@ export default defineEventHandler(async (event) => {
     const store = await tx.query.stores.findFirst({ where: eq(stores.id, storeId) })
     if (!store) throw createError({ statusCode: 404, statusMessage: 'Tienda no existe' })
 
-    // Inicio = fin del último corte (null = desde el inicio).
+    // Inicio = fin del último corte (null = desde el inicio). El orden sale del
+    // helper compartido: "el último corte" tiene que significar lo mismo aquí,
+    // en el DELETE y en el `isLatest` del listado.
     const last = await tx.query.cashCloseouts.findFirst({
       where: eq(cashCloseouts.storeId, storeId),
-      orderBy: [desc(cashCloseouts.periodTo)]
+      orderBy: latestCloseoutOrder
     })
     const periodFrom = last?.periodTo ?? null
-    const periodTo = new Date()
+    const periodTo = requestedPeriodTo ?? new Date()
+
+    // La cadena tiene que avanzar. Con un cierre anterior o igual al del corte
+    // previo el periodo saldría vacío o invertido, y el siguiente corte
+    // retrocedería su inicio (`period_from` = máximo `period_to`), recontando
+    // ventas ya cortadas. La comparación va DENTRO del candado: `last` se lee
+    // aquí, así que validarla fuera dejaría pasar dos cortes simultáneos.
+    if (periodFrom && periodTo.getTime() <= periodFrom.getTime()) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: `La fecha del corte debe ser posterior al cierre del corte anterior (${fmtCorteDate(periodFrom)})`
+      })
+    }
 
     // Ventas dentro de la ventana [periodFrom, periodTo).
     const conds = [eq(invoices.storeId, storeId), lt(invoices.issuedAt, periodTo)]

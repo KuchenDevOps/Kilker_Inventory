@@ -296,7 +296,7 @@ datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0039`
 | **Transferencias** | `transferencias/nueva`, `transferencias/index` | `POST/GET /api/transfers`, `GET /api/transfers/:id`, `POST /api/transfers/:id/receive`, `POST /api/transfers/:id/cancel` |
 | **Clientes** | `clientes/index` | `GET/POST /api/customers`, `PATCH/DELETE /api/customers/:id` |
 | **Gastos** | `gastos/index` | `GET/POST /api/expenses` (filtros `?q`, `?paidBy`, `?type`, `?storeId`, fechas), `PATCH /api/expenses/:id`, `GET/POST /api/expenses/:id/payments`, `POST /api/expenses/:id/void` |
-| **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id` |
+| **Cortes de caja** | `cortes/index` | `GET/POST /api/cortes`, `GET /api/cortes/:id`, **`DELETE /api/cortes/:id`** |
 | **Tickets de corrección** | `tickets/ventas`, `tickets/entradas`, `tickets/gastos` (las tres montan `components/TicketsPanel.vue`; `tickets/index` solo redirige a ventas) | `GET/POST /api/tickets` (filtro `?target=factura\|movimiento\|gasto`), `POST /api/tickets/:id/resolve` |
 | **Administración** | `tiendas/index`, `empleados/index` | `GET/POST /api/stores`, `PATCH /api/stores/:id`, `GET/POST /api/users`, `PATCH /api/users/:id` |
 | **Reportes / Dashboard** | `dashboard` | `GET /api/dashboard/summary` (agregado del dashboard), `GET /api/reports/monthly-inventory`, `/api/reports/top-products`, `/api/reports/inventory-value`, `/api/average-costs` |
@@ -480,6 +480,53 @@ datos mock. **Base de datos:** 22 tablas + 11 enums, migraciones `0000`–`0039`
     corresponder a esa factura. El endpoint devuelve `deletedPayments` para avisarlo.
   - **El ticket/PDF de la venta no muestra nada de esto**: los abonos son cobranza
     interna, no parte del comprobante.
+- ⚠️ **El corte encadena su periodo solo, y el ADMIN elige la fecha de cierre.**
+  `period_from` no se captura nunca: es el `period_to` del corte anterior de esa tienda
+  (el máximo), y `null` la primera vez. Del corte solo se elige **hasta cuándo**
+  (`periodTo` en el body de `POST /api/cortes`, opcional, por omisión ahora). Ese reparto
+  es lo que hace imposible por construcción el hueco y el traslape: con los dos extremos
+  libres, dos cortes solapados cuentan las mismas ventas dos veces y dos cortes separados
+  dejan un periodo que ningún corte cubre — y nadie se entera, porque cada corte por
+  separado cuadra. Reglas:
+  - **El reparto de permisos del corte no cambia:** la fecha la pone cualquiera que ya
+    podía cortar (`admin`, `empleado`, `admin_tienda`), y el aislamiento por sucursal lo
+    sigue poniendo `storeId` (el rol acotado corta su tienda y nada más).
+  - **Ni futura ni anterior al cierre previo** (400). Un cierre futuro deja "cortado" un
+    periodo que aún no ocurre: lo que se venda ahí no entra en este corte ni en ninguno
+    posterior. Uno anterior al último haría *retroceder* el inicio del siguiente,
+    recontando ventas ya cortadas. La comparación contra el corte previo va **dentro de la
+    transacción**, con la tienda ya bloqueada, porque es ahí donde se lee.
+  - **Lo que quede después del cierre no se pierde:** entra en el siguiente corte.
+  - En la UI la columna «Cierre» de `/cortes` muestra `period_to`, **no** `created_at`, y
+    el listado ordena y filtra por él (`?from`/`?to`): desde que se puede elegir la fecha,
+    los dos pueden ser días distintos y el que importa es el del periodo cortado. El
+    detalle avisa "capturado el …" cuando difieren.
+- ⚠️ **Borrar un corte: solo `admin` y solo el ÚLTIMO de esa sucursal**
+  (`DELETE /api/cortes/:id`). Es el único borrado **duro** fuera del catálogo: el corte es
+  un snapshot recalculable de las ventas del periodo —no mueve dinero ni stock y ninguna
+  tabla lo referencia—, así que una baja suave solo dejaría cortes muertos en el listado
+  y obligaría a excluirlos al calcular el `period_from` del siguiente. Cuatro cosas:
+  - **En orden, del más reciente hacia atrás.** Borrar el último devuelve su periodo a
+    "sin cortar" y el siguiente corte lo recoge íntegro, porque `period_from` se lee del
+    corte que EXISTE. Borrar uno de en medio no: el que le sigue ya congeló su
+    `period_from`, así que ese periodo queda huérfano —ningún corte lo cubre— y nadie se
+    entera, porque cada corte por separado cuadra. Un corte con otro posterior devuelve
+    **409** nombrando el que hay que borrar primero.
+  - **Mismo candado que el POST** (`stores … FOR UPDATE`) y el corte se **relee dentro**:
+    es el patrón "leer estado → actuar" de §10.2. Sin él, un corte nuevo que entre entre
+    la lectura y el borrado deja de ser el último sin que el endpoint se entere, y el
+    borrado abre justo el hueco que la regla evita.
+  - **"El último corte" se decide en un solo sitio**: `latestCloseoutOrder` y
+    `newerCloseoutThan` de **`server/utils/cortes.ts`**, que usan el POST (para el
+    `period_from`), el DELETE (para el 409) y el `isLatest` del listado. El desempate por
+    `id` importa desde que la fecha de cierre se escribe a mano: con dos cortes al mismo
+    `period_to` y solo esa columna en el ORDER BY, cada consulta podía quedarse con uno
+    distinto y se borraría un corte que no es el que la pantalla marcó.
+  - **`isLatest` lo calcula el SERVIDOR** (`GET /api/cortes`), sobre todo el historial y
+    no sobre la página: el listado viene paginado y filtrado, así que el primer corte de
+    una tienda en la página 2 no es su último, y el botón saldría donde el servidor
+    responde 409. En la UI el botón va con `isAdmin && c.isLatest`, pero eso **solo
+    esconde**: la autorización es la del servidor.
 - ⚠️ **Corregir una entrada: el kardex ya NO es 100% inmutable.** El trigger de la
   migración `0001` prohibía todo UPDATE, así que ajustar el costo real (la factura del
   proveedor llega DESPUÉS de la mercancía, y el flete o los cargos de envío la suben)
