@@ -70,6 +70,84 @@ export function isStoreScopedRole(role: UserRole): boolean {
  */
 export const CATALOG_MANAGER_ROLES: UserRole[] = ['admin', 'admin_tienda']
 
+/**
+ * Roles con acceso a la sección de **Administración**: sucursales, empleados y
+ * cuentas bancarias. `observador` entra aparte donde toca, en modo consulta.
+ *
+ * ⚠️ Entrar NO es poder todo lo que puede el admin de la empresa. Un rol
+ * ACOTADO que llegue por aquí queda además limitado por su sucursal, y esa
+ * limitación se decide con `isStoreScopedRole`, no con `role === 'admin_tienda'`
+ * (misma razón que STORE_SCOPED_ROLE_LIST: un rol acotado nuevo hereda el
+ * candado sin que nadie tenga que acordarse). En concreto:
+ *
+ * - **Empleados:** solo ve y solo toca a los de SU sucursal, y solo puede
+ *   asignar roles acotados — ver `assertCanAssignRole`.
+ * - **Sucursales:** solo edita la suya, y no su estado activo (ver
+ *   `PATCH /api/stores/:id`).
+ *
+ * Lo que sigue siendo EXCLUSIVO de `admin` y no entra aquí: anular ventas,
+ * entradas y gastos, resolver tickets, borrar cortes de caja, borrar pagos,
+ * borrar del catálogo, dar de alta sucursales y asentar movimientos de banco
+ * manuales (que son de la familia de "anular", no de la de "registrar un pago";
+ * ver `POST /api/banks-movements`).
+ */
+export const ADMIN_AREA_ROLES: UserRole[] = ['admin', 'admin_tienda']
+
+/**
+ * Candado anti-escalada del alta y la edición de usuarios.
+ *
+ * ⚠️ Sin esto, dar `/empleados` al administrador de sucursal regalaba la
+ * empresa: podía crearse una cuenta `admin` (o ponerse el rol a sí mismo) y con
+ * ella anular ventas, borrar cortes y borrar pagos — justo lo que el reparto de
+ * permisos le niega. Las guardas que ya existían solo cuidaban al admin de
+ * quitarse su propio rol, no de que otro se lo pusiera.
+ *
+ * La regla es la que se explica sola: **un rol acotado solo puede asignar roles
+ * acotados**. No hay lista nueva que mantener —es `isStoreScopedRole` otra vez—,
+ * así que un rol acotado futuro nace asignable y uno global nace prohibido.
+ */
+export function assertCanAssignRole(actor: SessionProfile, role: UserRole): void {
+  if (!isStoreScopedRole(actor.role)) return
+  if (isStoreScopedRole(role)) return
+  throw createError({
+    statusCode: 403,
+    statusMessage:
+      'Como administrador de sucursal solo puedes dar de alta empleados y administradores de tu tienda'
+  })
+}
+
+/**
+ * La sucursal sobre la que un rol acotado puede actuar: siempre la suya.
+ *
+ * Devuelve el `storeId` que el endpoint debe usar, ignorando el que venga en el
+ * body (misma regla que en ventas, entradas y cortes). Para los roles globales
+ * devuelve `requested` tal cual.
+ */
+export function resolveTargetStoreId(
+  actor: SessionProfile,
+  requested: number | null | undefined
+): number | null {
+  if (!isStoreScopedRole(actor.role)) return requested ?? null
+  if (actor.storeId == null) {
+    throw createError({
+      statusCode: 403,
+      statusMessage: 'Tu usuario no tiene sucursal asignada'
+    })
+  }
+  return actor.storeId
+}
+
+/** Rechaza (403) si un rol acotado intenta operar sobre otra sucursal. */
+export function assertOwnStore(actor: SessionProfile, storeId: number | null): void {
+  if (!isStoreScopedRole(actor.role)) return
+  if (actor.storeId == null || storeId !== actor.storeId) {
+    throw createError({
+      statusCode: 403,
+      statusMessage: 'Solo puedes administrar tu propia sucursal'
+    })
+  }
+}
+
 const PROFILE_CACHE_TTL_MS = 60_000
 /** Tope de entradas: evita crecimiento sin límite en procesos de larga vida. */
 const PROFILE_CACHE_MAX_ENTRIES = 500

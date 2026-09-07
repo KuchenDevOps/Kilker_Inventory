@@ -24,7 +24,7 @@ import {
 
 // El observador entra en modo consulta: ve el libro, no el alta. Mismo reparto
 // que /cuentas.
-definePageMeta({ requiresRole: ['admin', 'observador'] })
+definePageMeta({ requiresRole: ['admin', 'observador', 'admin_tienda'] })
 useHead({ title: 'Movimientos de banco · Inventario Kilker' })
 
 // `globalBalance` sigue viniendo del endpoint, pero las tarjetas de saldo viven
@@ -56,8 +56,13 @@ const {
   fetchAllFiltered
 } = useBanksMovements()
 
-const { me } = useMe()
-const canEdit = computed(() => me.value?.role === 'admin')
+// El administrador de sucursal también asienta movimientos manuales: el libro es
+// append-only y guarda quién capturó cada fila, así que un error se compensa con
+// otro movimiento y quedan los dos — no borra nada, que es lo que separa esto de
+// una anulación. Lo único que el servidor le acota es la sucursal: puede dejarla
+// vacía, pero no atribuirle el movimiento a otra tienda.
+const { me, canAdminister, isStoreScoped } = useMe()
+const canEdit = canAdminister
 const { data: stores } = useStores()
 const toast = useToast()
 const apiFetch = useApiFetch()
@@ -257,10 +262,14 @@ const methodItems = (Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((v) => 
   value: v
 }))
 
+// "Sin sucursal" se conserva para todos: la procedencia es informativa y un
+// retiro general no es de ninguna tienda. Al rol acotado solo se le quitan las
+// DEMÁS sucursales — el servidor rechaza esas igual (`assertOwnStore`).
 const storeItems = computed(() => [
   { label: 'Sin sucursal', value: 0 },
   ...stores.value
     .filter((s) => s.isActive)
+    .filter((s) => !isStoreScoped.value || s.id === me.value?.storeId)
     .map((s) => ({ label: `${s.code} · ${s.name}`, value: s.id }))
 ])
 

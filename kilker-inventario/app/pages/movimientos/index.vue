@@ -64,19 +64,22 @@ function clearFilters() {
 // total de la página visible y cambiaría al paginar. Las entradas anuladas no
 // suman (su mercancía se revirtió), pero se informan para que la tarjeta cuadre
 // con el listado, que sí las muestra.
-// La tarjeta muestra el COSTO (sin IVA) y el hint dice cuánto se le paga al
-// proveedor con él: son dos cifras distintas y las dos vienen del servidor.
-// La de arriba es la compra del negocio —la que ve el FIFO y valúa el
-// inventario—; la del hint es el desembolso.
+// Dos tarjetas, mismo reparto que en /ventas y /gastos: la primera es el COSTO
+// (sin IVA) —la compra del negocio, la que ve el FIFO y valúa el inventario— y
+// la segunda el IVA, con el desembolso real en su hint. Las dos cifras las manda
+// el servidor; ninguna sale de multiplicar la otra por 1.16 aquí.
 const totalHint = computed(() => {
   const n = totals.value.activeCount
-  const base =
-    `${n} entrada${n === 1 ? '' : 's'} · costo sin IVA · ` +
-    `a pagar ${currency.format(totals.value.activeTotalToPay)} con IVA`
+  const base = `${n} entrada${n === 1 ? '' : 's'} · costo sin IVA`
   if (!totals.value.voidedCount) return base
   const v = totals.value.voidedCount
   return `${base} · ${v} anulada${v === 1 ? '' : 's'} fuera (${currency.format(totals.value.voidedAmount)})`
 })
+
+const ivaTotal = computed(() => totals.value.activeIva)
+const ivaHint = computed(
+  () => `Total a pagar al proveedor: ${currency.format(totals.value.activeTotalToPay)}`
+)
 
 // Folio, Fecha, Producto, Sucursal, Cantidad, Total, Factura prov., Fecha
 // factura, Registró y Pago; + Acciones para quien pueda escribir (admin anula
@@ -640,6 +643,13 @@ async function exportAll() {
         :hint="totalHint"
         :loading="pending"
       />
+      <TarjetaTotal
+        label="IVA (16%)"
+        icon="i-lucide-percent"
+        :amount="ivaTotal"
+        :hint="ivaHint"
+        :loading="pending"
+      />
     </div>
 
     <UCard :ui="{ body: 'p-0 sm:p-0' }">
@@ -730,7 +740,10 @@ async function exportAll() {
         <div v-if="m.voided" class="flex justify-end">
           <UBadge label="Anulada" color="error" variant="subtle" size="xs" />
         </div>
-        <!-- El admin anula directo; el empleado solicita y el admin resuelve. -->
+        <!-- El admin anula y corrige directo; el empleado y el administrador de
+             sucursal solicitan, y el admin resuelve. Corregir el costo revalúa
+             el inventario hacia atrás, igual que anular, así que las dos
+             acciones van del mismo lado. -->
         <div v-else class="flex items-center justify-end gap-1">
           <UBadge
             v-if="m.pendingCorrection"
@@ -740,7 +753,7 @@ async function exportAll() {
             size="xs"
           />
           <UButton
-            v-if="m.editable"
+            v-if="isAdmin && m.editable"
             size="xs"
             color="primary"
             variant="ghost"

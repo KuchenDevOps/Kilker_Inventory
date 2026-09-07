@@ -17,7 +17,7 @@ import type {
   Me,
   ProductUnit
 } from '~/types/inventario'
-import { CATALOG_MANAGER_ROLES, STORE_SCOPED_ROLES } from '~/types/inventario'
+import { ADMIN_AREA_ROLES, CATALOG_MANAGER_ROLES, STORE_SCOPED_ROLES } from '~/types/inventario'
 
 // transform coalesce undefined→default por si el endpoint responde 204 (cuerpo vacío).
 
@@ -302,7 +302,34 @@ export function useMe() {
     () => !!me.value && CATALOG_MANAGER_ROLES.includes(me.value.role)
   )
 
-  return { me, canWrite, seesAllStores, isStoreScoped, canManageCatalog, refresh }
+  /**
+   * true para los roles que entran a **Administración** (sucursales, empleados
+   * y cuentas bancarias): `admin` y `admin_tienda`. Espejo de ADMIN_AREA_ROLES
+   * del servidor.
+   *
+   * ⚠️ No confundir con "puede todo lo del admin". El administrador de sucursal
+   * entra a esas pantallas pero el servidor lo acota a su tienda y le niega
+   * asignar roles globales, dar de alta sucursales, activarlas o desactivarlas
+   * y asentar movimientos de banco manuales. Combinar con `isStoreScoped` para
+   * esconder lo que no le toca; la autorización real es la del backend.
+   */
+  const canAdminister = computed(
+    () => !!me.value && ADMIN_AREA_ROLES.includes(me.value.role)
+  )
+
+  /** true solo para el admin de la EMPRESA (anulaciones, borrados, altas de sucursal). */
+  const isCompanyAdmin = computed(() => me.value?.role === 'admin')
+
+  return {
+    me,
+    canWrite,
+    seesAllStores,
+    isStoreScoped,
+    canManageCatalog,
+    canAdminister,
+    isCompanyAdmin,
+    refresh
+  }
 }
 
 /** Historial de ventas; el backend filtra por rol. Filtros status/storeId/fecha/q recargan. */

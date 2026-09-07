@@ -1,5 +1,5 @@
 // ───────────────────────────────────────────────
-//  POST /api/users — alta de usuario (admin)
+//  POST /api/users — alta de usuario (admin y admin de sucursal)
 // ───────────────────────────────────────────────
 // Crea el usuario en Supabase Auth (contraseña definida por el admin, email ya
 // confirmado) y su fila en `profiles`. Si el profile falla, revierte el usuario.
@@ -25,7 +25,7 @@ function cleanText(v: unknown): string | null {
 }
 
 export default defineEventHandler(async (event) => {
-  await requireProfile(event, { role: 'admin' })
+  const actor = await requireProfile(event, { role: ADMIN_AREA_ROLES })
   const body = await readBody<NewUserBody>(event)
 
   const email = cleanText(body?.email)?.toLowerCase() ?? null
@@ -49,13 +49,21 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Rol inválido' })
   }
 
+  // ⚠️ Anti-escalada: un administrador de sucursal solo puede crear roles
+  // ACOTADOS. Sin esta línea podía fabricarse una cuenta `admin` y con ella
+  // anular ventas, borrar cortes y borrar pagos — todo lo que su propio rol
+  // tiene prohibido. Ver `assertCanAssignRole`.
+  assertCanAssignRole(actor, role)
+
   const db = useDb()
 
   // Admin y observador = globales (sin tienda); empleado y admin_tienda
   // operan acotados a una sucursal, así que la exigen.
   let storeId: number | null = null
   if (isStoreScopedRole(role)) {
-    storeId = Number(body?.storeId)
+    // Para un actor acotado la sucursal es SIEMPRE la suya: el `storeId` del
+    // body se ignora, igual que en ventas, entradas y cortes.
+    storeId = resolveTargetStoreId(actor, Number(body?.storeId) || null)
     if (!storeId) {
       throw createError({
         statusCode: 400,
