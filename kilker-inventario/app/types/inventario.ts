@@ -760,6 +760,13 @@ export interface NewEntryPaymentInput {
 /** Corte de caja (snapshot) tal como lo lista `GET /api/cortes`. Los numeric → string. */
 export interface ApiCorte {
   id: number
+  /**
+   * ¿Es el último corte de su sucursal? Lo calcula el servidor sobre TODO el
+   * historial, no sobre la página: es la misma regla que deja borrarlo
+   * (`DELETE /api/cortes/:id` solo acepta el último, para no dejar periodos que
+   * ningún corte cubra).
+   */
+  isLatest: boolean
   storeId: number
   storeCode: string | null
   storeName: string | null
@@ -778,8 +785,12 @@ export interface ApiCorte {
   createdAt: string
 }
 
-/** Detalle de un corte (`GET /api/cortes/:id`): el snapshot + sus ventas del periodo. */
-export interface ApiCorteDetail extends ApiCorte {
+/**
+ * Detalle de un corte (`GET /api/cortes/:id`): el snapshot + sus ventas del
+ * periodo. Sin `isLatest`: eso sale del listado, que es donde se decide si el
+ * corte se puede borrar.
+ */
+export interface ApiCorteDetail extends Omit<ApiCorte, 'isLatest'> {
   sales: {
     id: number
     folio: string
