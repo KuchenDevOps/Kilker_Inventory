@@ -64,9 +64,15 @@ function clearFilters() {
 // total de la página visible y cambiaría al paginar. Las entradas anuladas no
 // suman (su mercancía se revirtió), pero se informan para que la tarjeta cuadre
 // con el listado, que sí las muestra.
+// La tarjeta muestra el COSTO (sin IVA) y el hint dice cuánto se le paga al
+// proveedor con él: son dos cifras distintas y las dos vienen del servidor.
+// La de arriba es la compra del negocio —la que ve el FIFO y valúa el
+// inventario—; la del hint es el desembolso.
 const totalHint = computed(() => {
   const n = totals.value.activeCount
-  const base = `${n} entrada${n === 1 ? '' : 's'} · costo sin IVA`
+  const base =
+    `${n} entrada${n === 1 ? '' : 's'} · costo sin IVA · ` +
+    `a pagar ${currency.format(totals.value.activeTotalToPay)} con IVA`
   if (!totals.value.voidedCount) return base
   const v = totals.value.voidedCount
   return `${base} · ${v} anulada${v === 1 ? '' : 's'} fuera (${currency.format(totals.value.voidedAmount)})`
@@ -349,9 +355,11 @@ async function confirmVoid(m: ApiMovement) {
 // ───────────────────────────────────────────────
 //  MODAL DE PAGOS DE LA ENTRADA
 // ───────────────────────────────────────────────
-// El pagable es la entrada misma: su total es el costo limpio, sin IVA ni
-// retenciones (a diferencia de gastos). Tampoco se captura quién paga: las
-// entradas siempre las cubre la misma empresa.
+// ⚠️ El pagable es `totalToPay` = costo + IVA (16%), igual que en gastos y en
+// ventas: al proveedor se le paga el impuesto. NO es `totalValue`, que es el
+// costo limpio de la mercancía —lo que cuenta como compra y lo que valúa el
+// inventario—. A diferencia de gastos no hay retenciones, y tampoco se captura
+// quién paga: las entradas siempre las cubre la misma empresa.
 const viewingMovement = ref<ApiMovement | null>(null)
 const showPaymentsModal = ref(false)
 const payments = ref<ApiEntryPayment[]>([])
@@ -485,6 +493,8 @@ function movementsToSheet(rows: any[]) {
     Cantidad: Number(m.quantity),
     Unidad: m.unit ?? '',
     'Valor Total': Number(m.totalValue),
+    'IVA (16%)': Number(m.iva ?? 0),
+    'Total a pagar': Number(m.totalToPay ?? 0),
     'Factura Proveedor': m.supplierInvoiceNumber ?? '',
     'Fecha Factura': fmtDay(m.supplierInvoiceDate),
     'Registró': m.createdByName ?? '',
@@ -642,7 +652,8 @@ async function exportAll() {
               <th class="px-4 py-3 font-medium">Producto</th>
               <th class="px-4 py-3 font-medium">Sucursal</th>
               <th class="px-4 py-3 font-medium text-right">Cantidad</th>
-              <th class="px-4 py-3 font-medium text-right">Total</th>
+              <!-- El COSTO, no el pagable: el desglose con IVA está en el modal de pagos. -->
+              <th class="px-4 py-3 font-medium text-right">Total sin IVA</th>
               <th class="px-4 py-3 font-medium">Factura prov.</th>
               <th class="px-4 py-3 font-medium">Fecha factura</th>
               <th class="px-4 py-3 font-medium">Registró</th>
@@ -964,7 +975,7 @@ async function exportAll() {
             </p>
             <p v-if="editingMovement.totalPaid > 0" class="text-xs text-warning">
               Ya tiene {{ currency.format(editingMovement.totalPaid) }} pagado(s): el nuevo costo
-              no puede quedar por debajo de esa cantidad.
+              más su IVA no puede quedar por debajo de esa cantidad.
             </p>
           </div>
 
@@ -1098,7 +1109,14 @@ async function exportAll() {
             <USeparator />
 
             <!-- Resumen de pago -->
-            <div class="grid gap-3 sm:grid-cols-3 text-sm rounded-lg bg-elevated/40 px-4 py-3">
+            <div class="grid gap-3 sm:grid-cols-4 text-sm rounded-lg bg-elevated/40 px-4 py-3">
+              <div>
+                <p class="text-muted text-xs">Costo + IVA</p>
+                <p class="font-medium tabular-nums">
+                  {{ currency.format(Number(viewingMovement.totalValue)) }}
+                  <span class="text-muted">+ {{ currency.format(viewingMovement.iva) }}</span>
+                </p>
+              </div>
               <div>
                 <p class="text-muted text-xs">Total a pagar</p>
                 <p class="font-medium tabular-nums">
@@ -1119,7 +1137,8 @@ async function exportAll() {
               </div>
             </div>
             <p class="text-xs text-muted">
-              El total es el costo de la entrada, sin IVA ni retenciones.
+              Al proveedor se le paga el costo más el IVA (16%). El costo sin IVA es lo que
+              cuenta como compra y lo que valúa el inventario.
             </p>
 
             <AsignarCuentaPagos

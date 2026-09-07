@@ -61,7 +61,14 @@ const salesBalance = computed(() => summary.value?.salesBalance ?? 0)
 //  COMPRAS (entradas de stock)
 // ───────────────────────────────────────────────
 // Los agrega el servidor con SUM(); pagadas + por pagar = Compras.
-const entryValue = computed(() => summary.value?.entriesValue ?? 0)
+// ⚠️ Igual que las ventas de arriba, esta pantalla trabaja SIEMPRE con IVA: lo
+// que se le debe al proveedor es `entriesTotalToPay` (costo + 16%), que es
+// contra lo que se topan los abonos. Por eso NO lee `entriesValue` —el costo
+// limpio, que es la compra contable y lo que ve el FIFO—: esa lectura es la de
+// /dashboardresultados, y mezclarlas aquí dejaba dos tarjetas contiguas
+// midiendo contra bases distintas (pagadas + por pagar no cerraba contra
+// Compras, y la diferencia era justo el 16%).
+const entriesTotalToPay = computed(() => summary.value?.entriesTotalToPay ?? 0)
 const entriesPaid = computed(() => summary.value?.entriesPaid ?? 0)
 const entriesBalance = computed(() => summary.value?.entriesBalance ?? 0)
 
@@ -333,8 +340,8 @@ const metricsSection2 = computed(() => {
     },
     {
       label: 'Compras',
-      value: currency.format(entryValue.value),
-      hint: 'en el periodo',
+      value: currency.format(entriesTotalToPay.value),
+      hint: 'en el periodo · a pagar al proveedor con IVA (16%)',
       icon: 'i-lucide-arrow-up-right',
       color: 'text-info',
       loading: loadingSummary.value,
@@ -343,7 +350,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Compras pagadas',
       value: currency.format(entriesPaid.value),
-      hint: 'abonado a las entradas del periodo',
+      hint: 'abonado a las entradas del periodo · con IVA, es lo que se paga',
       icon: 'i-lucide-circle-check',
       color: 'text-success',
       loading: loadingSummary.value,
@@ -352,7 +359,7 @@ const metricsSection2 = computed(() => {
     {
       label: 'Compras por pagar',
       value: currency.format(entriesBalance.value),
-      hint: 'saldo pendiente con proveedores',
+      hint: 'saldo pendiente con proveedores · con IVA',
       icon: 'i-lucide-clock',
       color: 'text-warning',
       loading: loadingSummary.value,

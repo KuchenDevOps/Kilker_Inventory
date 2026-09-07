@@ -58,7 +58,7 @@ export default defineEventHandler(async (event) => {
         id: true,
         storeId: true,
         type: true,
-        totalValue: true,
+        totalToPay: true,
         inventoryEntryInvoiceNumber: true
       },
       with: { payments: { columns: { amount: true } } }
@@ -90,7 +90,11 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const totalToPay = Number(movement.totalValue)
+    // ⚠️ El pagable es `total_to_pay` = costo + IVA, columna GENERADA por
+    // Postgres (ver `schema.ts`). Toparlo contra `total_value` —el costo limpio—
+    // dejaba la entrada "pagada" debiendo todavía el 16%, el mismo agujero que
+    // en gastos cuando el IVA pasó a pagarse.
+    const totalToPay = Number(movement.totalToPay)
     const alreadyPaid = movement.payments.reduce((sum, p) => sum + Number(p.amount), 0)
     const remaining = Math.round((totalToPay - alreadyPaid) * 100) / 100
 

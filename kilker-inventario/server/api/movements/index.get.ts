@@ -119,7 +119,14 @@ export default defineEventHandler(async (event) => {
   const mapped = rows.map((m) => {
     
     const isVoided = voided.has(m.id)
-    const totalToPay = Math.round(Number(m.totalValue) * 100) / 100
+    // ⚠️ El pagable de la entrada es `total_to_pay` = costo + IVA, una columna
+    // GENERADA (ver `schema.ts`). Se LEE, no se recalcula aquí: multiplicar por
+    // 1.16 en la app sería la segunda definición del importe, que es justo lo
+    // que en gastos dejó entrar abonos inflados. `totalValue` sigue viajando
+    // aparte porque es el costo limpio —lo que ve el FIFO y lo que se reporta
+    // como compra—.
+    const totalToPay = Math.round(Number(m.totalToPay) * 100) / 100
+    const iva = Math.round(Number(m.iva) * 100) / 100
     const totalPaid = Math.round(m.payments.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100
     const balance = Math.max(0, Math.round((totalToPay - totalPaid) * 100) / 100)
 
@@ -152,6 +159,7 @@ export default defineEventHandler(async (event) => {
       editable: !isVoided && (remainingUnits.get(m.id) ?? 0) >= Number(m.quantity) - 0.0005,
       editCount: editsByMovement.get(m.id)?.count ?? 0,
       lastEditAt: editsByMovement.get(m.id)?.lastEditAt ?? null,
+      iva,
       totalToPay,
       totalPaid,
       balance,
@@ -178,10 +186,17 @@ export default defineEventHandler(async (event) => {
       .select({
         total: count(),
         activeCount: sql<number>`count(*) filter (where ${notVoided})::int`,
-        // Costo limpio de la entrada (`total_value`): sin IVA ni retenciones.
+        // Costo limpio de la entrada (`total_value`): sin IVA. Es la cifra de
+        // COMPRA del negocio y la que cuadra contra el FIFO.
         activeAmount: sql<string>`coalesce(sum(${stockMovements.totalValue}) filter (where ${notVoided}), 0)`,
+        // Y lo que de verdad se le paga al proveedor: costo + IVA, leído de las
+        // columnas generadas. Las dos cifras conviven a propósito: la tarjeta
+        // dice cuánto se compró y cuánto hay que desembolsar por ello.
+        activeIva: sql<string>`coalesce(sum(${stockMovements.iva}) filter (where ${notVoided}), 0)`,
+        activeTotalToPay: sql<string>`coalesce(sum(${stockMovements.totalToPay}) filter (where ${notVoided}), 0)`,
         voidedCount: sql<number>`count(*) filter (where not ${notVoided})::int`,
-        voidedAmount: sql<string>`coalesce(sum(${stockMovements.totalValue}) filter (where not ${notVoided}), 0)`
+        voidedAmount: sql<string>`coalesce(sum(${stockMovements.totalValue}) filter (where not ${notVoided}), 0)`,
+        voidedTotalToPay: sql<string>`coalesce(sum(${stockMovements.totalToPay}) filter (where not ${notVoided}), 0)`
       })
       .from(stockMovements)
       .where(whereClause)
@@ -195,8 +210,11 @@ export default defineEventHandler(async (event) => {
     totals: {
       activeCount: Number(agg?.activeCount ?? 0),
       activeAmount: Math.round(Number(agg?.activeAmount ?? 0) * 100) / 100,
+      activeIva: Math.round(Number(agg?.activeIva ?? 0) * 100) / 100,
+      activeTotalToPay: Math.round(Number(agg?.activeTotalToPay ?? 0) * 100) / 100,
       voidedCount: Number(agg?.voidedCount ?? 0),
-      voidedAmount: Math.round(Number(agg?.voidedAmount ?? 0) * 100) / 100
+      voidedAmount: Math.round(Number(agg?.voidedAmount ?? 0) * 100) / 100,
+      voidedTotalToPay: Math.round(Number(agg?.voidedTotalToPay ?? 0) * 100) / 100
     }
   }
 })
