@@ -312,12 +312,12 @@ const roleLabel = (r: UserRole) => ROLE_LABELS[r] ?? r
             :required="isNew"
             :help="isNew ? 'Mínimo 8 caracteres. Entrégala al empleado.' : 'Déjala en blanco para no cambiarla.'"
           >
-            <UInput
-              v-model="formPassword"
-              type="password"
-              :placeholder="isNew ? '••••••••' : 'Sin cambios'"
-              class="w-full"
-            />
+          <InputPassword
+            v-model="formPassword"
+            autocomplete="new-password"
+            :placeholder="isNew ? '••••••••' : 'Sin cambios'"
+            class="w-full"
+          />
           </UFormField>
           <UFormField label="Nombre completo" name="fullName" required>
             <UInput v-model="formName" placeholder="Ej. Juan Pérez" class="w-full" />

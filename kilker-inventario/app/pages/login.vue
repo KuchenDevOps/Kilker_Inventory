@@ -70,9 +70,8 @@ async function onSubmit() {
         </UFormField>
 
         <UFormField label="Contraseña" name="password">
-          <UInput
+          <InputPassword
             v-model="password"
-            type="password"
             placeholder="••••••••"
             autocomplete="current-password"
             required
