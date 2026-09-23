@@ -390,6 +390,12 @@ aplicado: migración **`0040`**.
     en tres pantallas) solo sirve para **previsualizar** un formulario antes de guardar.
 - **Filtros compartidos:** `app/components/FiltroPeriodo.vue` y `FiltroCortePeriodo.vue`
   (Todo/Día/Semana/Mes sobre el periodo concreto elegido + búsqueda `?q`).
+- **Filtro por estado de pago** (`?paymentStatus=pendiente|parcial|pagado`) en
+  `GET /api/sales`, `/api/movements` y `/api/expenses`, con su select en las tres
+  pantallas. ⚠️ El estado se deriva en TS al mapear, pero para filtrar un listado
+  paginado va **en SQL, en el `where`** (`server/utils/paymentStatus.ts`), así que la
+  regla está escrita dos veces: si cambia en el `map` de un endpoint, cambia ahí también.
+  Las anuladas nunca entran en ninguno de los tres estados.
 - **Limpiar filtros:** `app/components/BotonLimpiarFiltros.vue`, en todos los listados y
   en los tres dashboards. El botón solo unifica cómo se ve y cuándo se habilita
   (`:active`); **qué se limpia lo decide cada pantalla** en su `@clear`, porque periodo y

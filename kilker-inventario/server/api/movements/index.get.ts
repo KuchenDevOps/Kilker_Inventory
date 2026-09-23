@@ -3,6 +3,7 @@ import { useDb } from '../../db'
 import { products, profiles, stockMovementEdits, stockMovements, stores, tickets } from '../../db/schema'
 import { getEntriesRemainingUnits } from '../../utils/inventoryFifo'
 import { effectiveMovementDateBetween, effectiveMovementDateSql } from '../../utils/movementDates'
+import { parsePaymentStatusFilter, paymentStatusCondition } from '../../utils/paymentStatus'
 
 
 export default defineEventHandler(async (event) => {
@@ -51,6 +52,23 @@ export default defineEventHandler(async (event) => {
     if (profIds.length) orParts.push(inArray(stockMovements.createdBy, profIds.map((r) => r.id)))
 
     filters.push(or(...orParts)!)
+  }
+
+  // Estado de pago (?paymentStatus=pendiente|parcial|pagado). Misma regla que
+  // el `paymentStatus` del map de abajo, escrita en SQL para que la paginación
+  // y los `totals` la respeten (ver `server/utils/paymentStatus.ts`).
+  const paymentStatusFilter = parsePaymentStatusFilter(query.paymentStatus)
+  if (paymentStatusFilter) {
+    filters.push(
+      paymentStatusCondition(paymentStatusFilter, {
+        paid: sql`(select coalesce(sum(ep.amount), 0) from entry_payments ep where ep.movement_id = ${stockMovements.id})`,
+        toPay: sql`${stockMovements.totalToPay}`,
+        voided: sql`exists (
+          select 1 from stock_movements rev
+          where rev.type = 'anulacion' and rev.reverses_movement_id = ${stockMovements.id}
+        )`
+      })
+    )
   }
 
   const whereClause = and(...filters)

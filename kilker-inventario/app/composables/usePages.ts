@@ -11,6 +11,7 @@ import type {
   ApiUser,
   ApiTicket,
   ApiCorte,
+  PaymentStatusFilter,
   TicketTarget
 } from '~/types/inventario'
 
@@ -53,6 +54,7 @@ export function useMovementsHistory() {
   const from = useState<string | undefined>('movements-history-from', () => undefined)
   const to = useState<string | undefined>('movements-history-to', () => undefined)
   const search = useState('movements-history-search', () => '')
+  const paymentStatus = useState<PaymentStatusFilter>('movements-history-payment-status', () => 'todos')
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
@@ -75,6 +77,7 @@ export function useMovementsHistory() {
       }
       const q = new URLSearchParams()
       if (storeId.value) q.set('storeId', String(storeId.value))
+      if (paymentStatus.value !== 'todos') q.set('paymentStatus', paymentStatus.value)
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       if (search.value.trim()) q.set('q', search.value.trim())
@@ -99,12 +102,12 @@ export function useMovementsHistory() {
 
   useSharedScope('movements-history', () => {
     // Cambios de filtro regresan a página 1
-    watch([user, storeId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
+    watch([user, storeId, paymentStatus, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
     // Cambio de página solo re-fetchea
     watch(page, () => void refresh())
   })
 
-  return { movements, total, totals, page, pageSize, pending, error, storeId, from, to, search, refresh }
+  return { movements, total, totals, page, pageSize, pending, error, storeId, paymentStatus, from, to, search, refresh }
 }
 
 export function useSalesHistory() {
@@ -121,6 +124,7 @@ export function useSalesHistory() {
   const from = useState<string | undefined>('sales-history-from', () => undefined)
   const to = useState<string | undefined>('sales-history-to', () => undefined)
   const search = useState('sales-history-search', () => '')
+  const paymentStatus = useState<PaymentStatusFilter>('sales-history-payment-status', () => 'todos')
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
@@ -143,6 +147,7 @@ export function useSalesHistory() {
       }
       const q = new URLSearchParams()
       if (status.value !== 'todas') q.set('status', status.value)
+      if (paymentStatus.value !== 'todos') q.set('paymentStatus', paymentStatus.value)
       if (storeId.value) q.set('storeId', String(storeId.value))
       if (productId.value) q.set('productId', String(productId.value))
       if (from.value) q.set('from', from.value)
@@ -178,11 +183,11 @@ if (Array.isArray(res)) {
   }
 
   useSharedScope('sales-history', () => {
-    watch([user, status, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
+    watch([user, status, paymentStatus, storeId, productId, from, to, search], () => { page.value = 1; void refresh() }, { immediate: true })
     watch(page, () => void refresh())
   })
 
-  return { sales, total, totals, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh }
+  return { sales, total, totals, page, pageSize, pending, error, status, paymentStatus, storeId, productId, from, to, search, refresh }
 }
 
 export function useTransferHistory() {
