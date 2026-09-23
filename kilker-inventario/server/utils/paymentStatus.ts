@@ -22,6 +22,7 @@ export type PaymentStatusFilter = (typeof PAYMENT_STATUS_FILTERS)[number]
 
 export function parsePaymentStatusFilter(v: unknown): PaymentStatusFilter | null {
   const s = String(v ?? '').trim()
+  return (PAYMENT_STATUS_FILTERS as readonly string[]).includes(s) ? (s as PaymentStatusFilter) : null
 }
 
 export interface PaymentStatusSql {
