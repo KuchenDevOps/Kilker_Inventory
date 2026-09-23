@@ -3,7 +3,8 @@ import type {
   ApiExpense,
   ApiExpensesPage,
   ApiExpensesTotals,
-  ExpenseType
+  ExpenseType,
+  PaymentStatusFilter
 } from '~/types/inventario'
 
 /**
@@ -37,6 +38,7 @@ export function useExpenses() {
   const search = useState('expenses-search', () => '')
   /** Búsqueda por quién pagó (expense_payments.paid_by). Filtro aparte de `search`. */
   const paidBy = useState('expenses-paid-by', () => '')
+  const paymentStatus = useState<PaymentStatusFilter>('expenses-payment-status', () => 'todos')
   const user = useSupabaseUser()
   const supabase = useSupabaseClient()
 
@@ -59,6 +61,7 @@ export function useExpenses() {
       const q = new URLSearchParams()
       if (storeId.value) q.set('storeId', String(storeId.value))
       if (type.value) q.set('type', type.value)
+      if (paymentStatus.value !== 'todos') q.set('paymentStatus', paymentStatus.value)
       if (from.value) q.set('from', from.value)
       if (to.value) q.set('to', to.value)
       if (search.value.trim()) q.set('q', search.value.trim())
@@ -101,7 +104,7 @@ export function useExpenses() {
       else void refresh()
     }
 
-    watch([storeId, type, from, to], resetAndRefresh)
+    watch([storeId, type, paymentStatus, from, to], resetAndRefresh)
 
     // Los dos campos de texto sí se debouncean: sin esto cada tecla dispara
     // una petición (y la de `paidBy` además consulta expense_payments).
@@ -117,7 +120,7 @@ export function useExpenses() {
     watch(page, () => void refresh())
   })
 
-  return { expenses, total, totals, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh }
+  return { expenses, total, totals, page, pageSize, pending, error, storeId, type, paymentStatus, from, to, search, paidBy, refresh }
 }
 
 // composables/useAllExpenses.ts

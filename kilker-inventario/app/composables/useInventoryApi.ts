@@ -15,6 +15,7 @@ import type {
   ApiTicket,
   ApiUser,
   Me,
+  PaymentStatusFilter,
   ProductUnit
 } from '~/types/inventario'
 import { ADMIN_AREA_ROLES, CATALOG_MANAGER_ROLES, STORE_SCOPED_ROLES } from '~/types/inventario'
@@ -408,6 +409,7 @@ export function useSales() {
 
 export interface AllSalesFilters {
   status?: 'todas' | 'emitida' | 'anulada'
+  paymentStatus?: PaymentStatusFilter
   storeId?: number
   productId?: number
   from?: string
@@ -436,6 +438,9 @@ export function useAllSales() {
 
       const q = new URLSearchParams()
       if (filters.status && filters.status !== 'todas') q.set('status', filters.status)
+      if (filters.paymentStatus && filters.paymentStatus !== 'todos') {
+        q.set('paymentStatus', filters.paymentStatus)
+      }
       if (filters.storeId) q.set('storeId', String(filters.storeId))
       if (filters.productId) q.set('productId', String(filters.productId))
       if (filters.from) q.set('from', filters.from)
