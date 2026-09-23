@@ -968,6 +968,21 @@ export const EXPENSE_PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   anulada: 'Anulado'
 }
 
+/**
+ * Filtro por estado de pago de los listados de ventas, entradas y gastos
+ * (`?paymentStatus`). Las anuladas no están: ya las filtra el estado del
+ * documento y no son ni deuda ni cobro. Espejo de `PAYMENT_STATUS_FILTERS`
+ * de `server/utils/paymentStatus.ts`.
+ */
+export type PaymentStatusFilter = 'todos' | 'pendiente' | 'parcial' | 'pagado'
+
+export const PAYMENT_STATUS_FILTER_OPTIONS: { label: string; value: PaymentStatusFilter }[] = [
+  { label: 'Todos los pagos', value: 'todos' },
+  { label: 'Pagados', value: 'pagado' },
+  { label: 'Parciales', value: 'parcial' },
+  { label: 'Pendientes', value: 'pendiente' }
+]
+
 export const EXPENSE_PAYMENT_STATUS_COLORS: Record<
   PaymentStatus,
   'success' | 'warning' | 'error' | 'neutral'

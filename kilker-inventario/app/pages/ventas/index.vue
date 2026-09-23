@@ -8,14 +8,18 @@ import type {
   PaymentMethod,
   SalePaymentStatus
 } from '~/types/inventario'
-import { PAYMENT_LABELS, SALE_PAYMENT_STATUS_LABELS } from '~/types/inventario'
+import {
+  PAYMENT_LABELS,
+  PAYMENT_STATUS_FILTER_OPTIONS,
+  SALE_PAYMENT_STATUS_LABELS
+} from '~/types/inventario'
 import type { TicketGroup } from '~/utils/ticket'
 import { groupSaleItemsByKit } from '~/utils/ticket'
 import { buildSaleTicketDoc } from '~/utils/ticketPdf'
 import * as XLSX from 'xlsx'
 import FiltroPeriodo from '~/components/FiltroPeriodo.vue'
 
-const { sales, total, totals, page, pageSize, pending, error, status, storeId, productId, from, to, search, refresh } = useSalesHistory()
+const { sales, total, totals, page, pageSize, pending, error, status, paymentStatus, storeId, productId, from, to, search, refresh } = useSalesHistory()
 
 useHead({ title: 'Historial de ventas · Inventario Kilker' })
 
@@ -84,6 +88,7 @@ const hasFilters = computed(
     !!from.value ||
     !!to.value ||
     status.value !== 'todas' ||
+    paymentStatus.value !== 'todos' ||
     storeId.value != null ||
     productId.value != null
 )
@@ -93,6 +98,7 @@ function clearFilters() {
   from.value = undefined
   to.value = undefined
   status.value = 'todas'
+  paymentStatus.value = 'todos'
   storeId.value = undefined
   productId.value = undefined
 }
@@ -477,9 +483,10 @@ function salesToSheet(rows: ApiSale[]) {
     'Total con IVA': round2(s.totalToPay),
     Canal: s.channel === 'en_linea' ? 'En línea' : 'Mostrador',
     Estado: s.status === 'anulada' ? 'Anulada' : 'Emitida',
-    // Pagado: round2(s.totalPaid ?? 0),
-    // Saldo: round2(s.balance ?? 0),
-    // 'Estado de pago': SALE_PAYMENT_STATUS_LABELS[s.paymentStatus] ?? '',
+    // Cobranza: se mide contra "Total con IVA", que es lo que se le cobra.
+    Pagado: round2(s.totalPaid ?? 0),
+    Saldo: round2(s.balance ?? 0),
+    'Estado de pago': SALE_PAYMENT_STATUS_LABELS[s.paymentStatus] ?? '',
     Creó: s.createdByName ?? ''
   }))
 }
@@ -593,6 +600,7 @@ async function exportFiltered() {
   try {
     const rows = await fetchAllSales({
       status: status.value,
+      paymentStatus: paymentStatus.value,
       storeId: storeId.value,
       productId: productId.value,
       from: from.value,
@@ -745,6 +753,7 @@ if (Number.isFinite(queryProductId) && queryProductId > 0) {
       />
       <div class="flex flex-wrap gap-3">
         <USelect v-model="status" :items="statusItems" class="w-44" />
+        <USelect v-model="paymentStatus" :items="PAYMENT_STATUS_FILTER_OPTIONS" class="w-44" />
         <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeItems" class="w-60" />
          <USelectMenu
       v-model="productId"

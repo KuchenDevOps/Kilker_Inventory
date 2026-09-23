@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import {
   ENTRY_PAYMENT_STATUS_LABELS,
   PAYMENT_LABELS,
+  PAYMENT_STATUS_FILTER_OPTIONS,
   type ApiEntryPayment,
   type ApiMovement,
   type ApiMovementEdit,
@@ -15,7 +16,7 @@ useHead({ title: 'Historial de entradas · Inventario Kilker' })
 const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
 
-const { movements, total, totals, page, pageSize, pending, error, storeId, from, to, search, refresh } = useMovementsHistory()
+const { movements, total, totals, page, pageSize, pending, error, storeId, paymentStatus, from, to, search, refresh } = useMovementsHistory()
 
 
 const { data: stores } = useStores()
@@ -47,7 +48,12 @@ const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: '
 // la navegación, así que un periodo viejo sigue aplicado al volver. Se limpian
 // en la misma tick para disparar UNA sola recarga.
 const hasFilters = computed(
-  () => !!search.value.trim() || !!from.value || !!to.value || storeId.value != null
+  () =>
+    !!search.value.trim() ||
+    !!from.value ||
+    !!to.value ||
+    storeId.value != null ||
+    paymentStatus.value !== 'todos'
 )
 
 function clearFilters() {
@@ -55,6 +61,7 @@ function clearFilters() {
   from.value = undefined
   to.value = undefined
   storeId.value = undefined
+  paymentStatus.value = 'todos'
 }
 
 // ───────────────────────────────────────────────
@@ -518,7 +525,8 @@ function downloadWorkbook(rows: any[], filenamePrefix: string) {
     { wch: 10 }, { wch: 18 }, { wch: 25 }, { wch: 12 },
     { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 14 },
     { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 10 },
-    { wch: 12 }, { wch: 12 }, { wch: 14 }
+    { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
+    { wch: 14 }
   ]
 
   const fecha = new Date().toISOString().slice(0, 10)
@@ -531,6 +539,7 @@ async function exportFiltered() {
   try {
     const query: Record<string, any> = {}
     if (storeId.value) query.storeId = storeId.value
+    if (paymentStatus.value !== 'todos') query.paymentStatus = paymentStatus.value
     if (from.value) query.from = from.value
     if (to.value) query.to = to.value
     if (search.value) query.q = search.value
@@ -622,6 +631,7 @@ async function exportAll() {
       />
       <div class="flex flex-wrap items-center gap-3">
         <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeItems" class="w-60" />
+        <USelect v-model="paymentStatus" :items="PAYMENT_STATUS_FILTER_OPTIONS" class="w-44" />
         <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       </div>
     </div>

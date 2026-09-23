@@ -12,6 +12,7 @@ import {
   stores,
   tickets
 } from '../../db/schema'
+import { parsePaymentStatusFilter, paymentStatusCondition } from '../../utils/paymentStatus'
 
 /**
  * Texto contra el que se busca cada método de pago en `?q`. Sin acentos, para
@@ -58,6 +59,20 @@ export default defineEventHandler(async (event) => {
     )`)
   }
 }
+
+  // Estado de cobro (?paymentStatus=pendiente|parcial|pagado). Misma regla que
+  // el `paymentStatus` del map de abajo, escrita en SQL para que la paginación
+  // y los `totals` la respeten (ver `server/utils/paymentStatus.ts`).
+  const paymentStatusFilter = parsePaymentStatusFilter(query.paymentStatus)
+  if (paymentStatusFilter) {
+    filters.push(
+      paymentStatusCondition(paymentStatusFilter, {
+        paid: sql`(select coalesce(sum(sp.amount), 0) from sale_payments sp where sp.invoice_id = ${invoices.id})`,
+        toPay: sql`${invoices.totalToPay}`,
+        voided: sql`(${invoices.status} = 'anulada')`
+      })
+    )
+  }
 
   if (query.from) filters.push(gte(invoices.issuedAt, new Date(String(query.from))))
   if (query.to) filters.push(lt(invoices.issuedAt, new Date(String(query.to))))

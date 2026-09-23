@@ -7,9 +7,10 @@ import {
   EXPENSE_TYPE_LABELS,
   EXPENSE_PAYMENT_STATUS_LABELS,
   EXPENSE_PAYMENT_STATUS_COLORS,
+  PAYMENT_STATUS_FILTER_OPTIONS,
   type ExpenseType
 } from '~/types/inventario'
-const { expenses, total, totals, page, pageSize, pending, error, storeId, type, from, to, search, paidBy, refresh } = useExpenses()
+const { expenses, total, totals, page, pageSize, pending, error, storeId, type, paymentStatus, from, to, search, paidBy, refresh } = useExpenses()
 const { data: stores } = useStores()
 const { me, canWrite, seesAllStores } = useMe()
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -64,6 +65,7 @@ const hasFilters = computed(
     !!from.value ||
     !!to.value ||
     !!type.value ||
+    paymentStatus.value !== 'todos' ||
     storeId.value != null
 )
 
@@ -74,6 +76,7 @@ function clearFilters() {
   from.value = undefined
   to.value = undefined
   type.value = undefined
+  paymentStatus.value = 'todos'
   storeId.value = undefined
 }
 
@@ -546,6 +549,7 @@ onMounted(() => {
       <div class="flex flex-wrap items-center gap-3">
         <USelect v-if="seesAllStores" v-model="storeFilter" :items="storeFilterItems" class="w-60" />
         <USelect v-model="type" :items="expenseTypeFilterItems" placeholder="Tipo de gasto" class="w-48" />
+        <USelect v-model="paymentStatus" :items="PAYMENT_STATUS_FILTER_OPTIONS" class="w-44" />
         <BotonLimpiarFiltros :active="hasFilters" @clear="clearFilters" />
       </div>
     </div>

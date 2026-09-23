@@ -4,6 +4,7 @@
 import { and, count, desc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm'
 import { useDb } from '../../db'
 import { expenses, expenseItems, expensePayments, tickets } from '../../db/schema'
+import { parsePaymentStatusFilter, paymentStatusCondition } from '../../utils/paymentStatus'
 
 function toDateOnly(v: unknown): string | null {
   const s = String(v ?? '')
@@ -92,6 +93,21 @@ export default defineEventHandler(async (event) => {
     // Nadie con ese nombre pagó nada: resultado vacío, sin ir a la BD otra vez.
     if (payerExpenseIds.length === 0) return emptyResult()
     filters.push(inArray(expenses.id, payerExpenseIds))
+  }
+
+  // Estado de pago (?paymentStatus=pendiente|parcial|pagado). Misma regla que
+  // el `paymentStatus` del map de abajo, escrita en SQL para que la paginación
+  // y los `totals` la respeten (ver `server/utils/paymentStatus.ts`).
+  const paymentStatusFilter = parsePaymentStatusFilter(query.paymentStatus)
+  if (paymentStatusFilter) {
+    filters.push(
+      paymentStatusCondition(paymentStatusFilter, {
+        paid: sql`(select coalesce(sum(xp.amount), 0) from expense_payments xp where xp.expense_id = ${expenses.id})`,
+        toPay: sql`${expenses.totalToPay}`,
+        voided: sql`(${expenses.status} = 'anulado')`,
+        requirePositiveToPay: true
+      })
+    )
   }
 
   const whereClause = filters.length ? and(...filters) : undefined
