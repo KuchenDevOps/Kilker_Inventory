@@ -1169,3 +1169,61 @@ export interface NewTransferInput {
   note?: string
   items: { productId: number; quantity: number }[]
 }
+
+// ───────────────────────────────────────────────
+//  PEDIDOS A PROVEEDORES
+// ───────────────────────────────────────────────
+export type PurchaseOrderStatus = 'pendiente' | 'aprobado' | 'rechazado'
+
+export const PURCHASE_ORDER_STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
+  pendiente: 'Pendiente',
+  aprobado: 'Aprobado',
+  rechazado: 'Rechazado'
+}
+
+/** Espejo de PURCHASE_ORDER_APPROVER_ROLES (server/utils/purchaseOrders.ts). Solo esconde botones. */
+export const PURCHASE_ORDER_APPROVER_ROLES: UserRole[] = ['admin', 'admin_tienda']
+
+export interface ApiPurchaseOrder {
+  id: number
+  storeId: number
+  storeName: string
+  storeCode: string
+  supplierName: string
+  supplierContact: string | null
+  note: string | null
+  status: PurchaseOrderStatus
+  createdAt: string
+  updatedAt: string
+  createdByName: string | null
+  decidedAt: string | null
+  decidedByName: string | null
+  decisionNote: string | null
+  itemsCount: number
+  /** numeric → string (suma de line_total). */
+  total: string
+}
+
+export interface ApiPurchaseOrderItem {
+  id: number
+  productId: number
+  sku: string
+  name: string
+  unit: ProductUnit
+  quantity: string
+  unitPrice: string
+  lineTotal: string
+}
+
+export interface ApiPurchaseOrderDetail extends ApiPurchaseOrder {
+  items: ApiPurchaseOrderItem[]
+}
+
+/**
+ * Folio de presentación: ORD-0001 (se deriva del id; no se guarda).
+ * Mismo prefijo que purchaseOrderFolioSql (server/utils/purchaseOrders.ts): con
+ * uno distinto, la búsqueda por folio no encontraría lo que muestra la pantalla.
+ */
+export function purchaseOrderFolio(id: number): string {
+  return `ORD-${String(id).padStart(4, '0')}`
+}
