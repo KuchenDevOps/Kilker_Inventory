@@ -74,6 +74,18 @@ const allNav: NavEntry[] = [
     ]
   },
   {
+    section: 'Compras',
+    icon: 'i-lucide-clipboard-list',
+    children: [
+      {
+        label: 'Pedidos a proveedores',
+        to: '/pedidos',
+        icon: 'i-lucide-clipboard-list',
+        roles: ['admin', 'admin_tienda', 'empleado', 'observador']
+      }
+    ]
+  },
+  {
     section: 'Transferencias',
     icon: 'i-lucide-truck',
     children: [

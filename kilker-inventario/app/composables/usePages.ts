@@ -12,7 +12,9 @@ import type {
   ApiTicket,
   ApiCorte,
   PaymentStatusFilter,
-  TicketTarget
+  TicketTarget,
+  ApiPurchaseOrder,
+  PurchaseOrderStatus
 } from '~/types/inventario'
 
 /**
@@ -609,4 +611,73 @@ export function useUsersHistory() {
   })
 
   return { users, total, page, pageSize, pending, error, refresh }
+}
+
+/** Pedidos a proveedores; rol acotado → su tienda (lo impone el servidor). */
+export function usePurchaseOrdersHistory() {
+  const ns = 'purchase-orders'
+  const orders = useState<ApiPurchaseOrder[]>(ns, () => [])
+  const total = useState(`${ns}-total`, () => 0)
+  const page = useState(`${ns}-page`, () => 1)
+  const pageSize = useState(`${ns}-pagesize`, () => 100)
+  const pending = useState(`${ns}-pending`, () => false)
+  const error = useState<string | null>(`${ns}-error`, () => null)
+
+  // Filtros compartidos (sobreviven a la navegación, como en el resto de listados).
+  const status = useState<'todos' | PurchaseOrderStatus>(`${ns}-status`, () => 'todos')
+  // 0 = todas las sucursales (USelect no admite un item con valor undefined).
+  const storeId = useState<number>(`${ns}-store`, () => 0)
+  const q = useState(`${ns}-q`, () => '')
+  const from = useState<string | undefined>(`${ns}-from`, () => undefined)
+  const to = useState<string | undefined>(`${ns}-to`, () => undefined)
+
+  const user = useSupabaseUser()
+  const apiFetch = useApiFetch()
+
+  async function refresh() {
+    if (!user.value) {
+      orders.value = []
+      total.value = 0
+      return
+    }
+    pending.value = true
+    error.value = null
+    try {
+      const res = await apiFetch<{ data: ApiPurchaseOrder[]; total: number }>(
+        '/api/purchase-orders',
+        {
+          query: {
+            page: page.value,
+            pageSize: pageSize.value,
+            status: status.value === 'todos' ? undefined : status.value,
+            storeId: storeId.value || undefined,
+            q: q.value.trim() || undefined,
+            from: from.value,
+            to: to.value
+          }
+        }
+      )
+      orders.value = res.data
+      total.value = res.total
+    } catch (e) {
+      error.value = apiErrorMessage(e)
+      orders.value = []
+    } finally {
+      pending.value = false
+    }
+  }
+
+  useSharedScope(`${ns}-history`, () => {
+    // Filtros → página 1 y recarga (el watcher agrupa cambios síncronos).
+    watch([user, status, storeId, from, to], () => { page.value = 1; void refresh() }, { immediate: true })
+    // La búsqueda con un pequeño debounce para no pegarle al servidor por tecla.
+    let t: ReturnType<typeof setTimeout> | undefined
+    watch(q, () => {
+      clearTimeout(t)
+      t = setTimeout(() => { page.value = 1; void refresh() }, 300)
+    })
+    watch(page, () => void refresh())
+  })
+
+  return { orders, total, page, pageSize, pending, error, status, storeId, q, from, to, refresh }
 }

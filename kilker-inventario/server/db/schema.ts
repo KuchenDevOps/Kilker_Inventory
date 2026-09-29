@@ -975,7 +975,72 @@ export const banksMovements = pgTable(
 ).enableRLS()
 
 
+// ───────────────────────────────────────────────
+//  PEDIDOS A PROVEEDORES
+// ───────────────────────────────────────────────
+// Documento aislado: se arma para mandárselo a un proveedor (PDF) y se marca
+// aprobado/rechazado. NO mueve inventario, kardex, FIFO ni dinero.
+export const purchaseOrderStatus = pgEnum('purchase_order_status', [
+  'pendiente',
+  'aprobado',
+  'rechazado'
+])
 
+export const purchaseOrders = pgTable(
+  'purchase_orders',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    storeId: bigint('store_id', { mode: 'number' })
+      .notNull()
+      .references(() => stores.id),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => profiles.id),
+    // Proveedor en texto libre: no hay catálogo de proveedores.
+    supplierName: text('supplier_name').notNull(),
+    supplierContact: text('supplier_contact'),
+    note: text('note'),
+    status: purchaseOrderStatus('status').notNull().default('pendiente'),
+    decidedBy: uuid('decided_by').references(() => profiles.id),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    ...timestamps()
+  },
+  (t) => [index('purchase_orders_store_created_idx').on(t.storeId, t.createdAt)]
+).enableRLS()
+
+export const purchaseOrderItems = pgTable(
+  'purchase_order_items',
+  {
+    id: bigint('id', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    // CASCADE: las líneas no existen sin su pedido (y editar las reemplaza).
+    orderId: bigint('order_id', { mode: 'number' })
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'cascade' }),
+    productId: bigint('product_id', { mode: 'number' })
+      .notNull()
+      .references(() => products.id),
+    // Snapshot: el PDF debe decir lo que se pidió aunque cambie el catálogo.
+    sku: text('sku').notNull(),
+    name: text('name').notNull(),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    // Precio al que se PIDE (negociado con el proveedor), no products.cost.
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
+    // Lo calcula Postgres, igual que el IVA: una sola definición del importe.
+    lineTotal: numeric('line_total', { precision: 18, scale: 2 })
+      .notNull()
+      .generatedAlwaysAs(sql`round("quantity" * "unit_price", 2)`)
+  },
+  (t) => [
+    index('purchase_order_items_order_idx').on(t.orderId),
+    check('purchase_order_items_quantity_pos', sql`${t.quantity} > 0`),
+    check('purchase_order_items_unit_price_nonneg', sql`${t.unitPrice} >= 0`)
+  ]
+).enableRLS()
 
 
 
